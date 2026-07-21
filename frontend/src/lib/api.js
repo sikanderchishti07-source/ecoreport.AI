@@ -88,11 +88,23 @@ export const listLimits = () => api.get("/limits").then((r) => r.data);
 
 // Reports (Phase 5/6)
 export const generateReport = async (campaignId, lang = "en", format = "docx") => {
-  const res = await api.post(
-    `/campaigns/${campaignId}/report`,
-    null,
-    { params: { lang, format }, responseType: "blob", timeout: 600000 }
-  );
+  let res;
+  try {
+    res = await api.post(
+      `/campaigns/${campaignId}/report`,
+      null,
+      { params: { lang, format }, responseType: "blob", timeout: 600000 }
+    );
+  } catch (e) {
+    // Error bodies arrive as Blobs in blob mode — decode so the real
+    // message (e.g. the window-mismatch explanation) reaches the user.
+    if (e?.response?.data instanceof Blob) {
+      try {
+        e.response.data = JSON.parse(await e.response.data.text());
+      } catch {}
+    }
+    throw e;
+  }
   const dispo = res.headers["content-disposition"] || "";
   const m = dispo.match(/filename="?([^";]+)"?/);
   const filename = m ? m[1] : `AAQ_Report.${format}`;
