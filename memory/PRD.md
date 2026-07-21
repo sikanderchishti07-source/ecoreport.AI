@@ -4,63 +4,65 @@
 Build "EcoReport AI" — an Ambient Air Quality Monitoring Report Generation System that ingests raw hourly monitoring data (SO2, NO, NO2, NOx, CO, H2S, O3, PM10, PM2.5) plus meteorology (Temp, RH, Pressure, Wind Speed/Direction), and generates KSA-NCEC-compliant regulatory reports matching a reference BSA Lab report structure (cover, doc-control, TOC, exec summary, methodology, calibration, per-pollutant summary tables + time-series/rolling/wind-rose charts, compliance verdicts, conclusions, appendices with calibration certificates and NCEC license).
 
 ## Users & Personas
-- **Environmental consultants / lab engineers (KSA)** — upload data, QA-flag rows, generate reports.
-- **Site/project supervisors** — review campaigns and reports.
-- **Regulators / clients** — recipients of the generated PDF reports (Phase 3+).
+- Environmental consultants / lab engineers (KSA) — upload, QA-flag, generate.
+- Site/project supervisors — review campaigns and reports.
+- Regulators / clients — recipients of the generated PDF reports (Phase 3+).
 
-## Delivery approach
-User requested strict phased delivery. Each phase verified before the next.
-- **Phase 0** — Read reference report, produce structural breakdown, confirm understanding. ✅ done
-- **Phase 1 — Schema + app skeleton (this phase).** ✅ done
-- Phase 2 — Calculation engine (hourly/daily aggregates, 8-hr rolling for CO/O3, exceedance counting, wind-rose binning).
-- Phase 3 — English report generation (PDF matching BSA reference structure).
+## Delivery approach — phased (user-requested, verified per phase)
+- **Phase 0** — Structural breakdown of reference report. ✅ done
+- **Phase 1 — Schema + app skeleton.** ✅ done (this iteration)
+- Phase 2 — Calculation engine.
+- Phase 3 — English report generation.
 - Phase 4 — Graphs (time-series, rolling, wind-rose, class-frequency).
-- Phase 5 — Arabic / bilingual (RTL) support.
+- Phase 5 — Arabic / bilingual (RTL).
 - Phase 6 — Report versioning.
-- Phase 7 — Object storage for report artifacts + auth.
+- Phase 7 — Object storage + auth.
 
 ## Confirmed constraints (Phase 0/1)
-- Raw data columns: `timestamp, SO2, NO, NO2, NOx, CO, H2S, O3, PM10, PM25, Temp, RH, Pressure, WindSpeed, WindDirection`.
+- Raw data columns (canonical): `timestamp, SO2, NO, NO2, NOx, CO, H2S, O3, PM10, PM25, Temp, RH, Pressure, WindSpeed, WindDirection`.
 - Units: pollutants µg/m³, Temp °C, RH %, Pressure hPa, WindSpeed m/s, WindDirection ° (0–360).
-- Ingestion: CSV **and** XLSX, comma delimiter, ISO-8601 timestamps, hourly cadence.
-- QA flag: **not present** in the file — user flags rows manually in the app.
-- 8-hour rolling means for CO and O3 must display **blank/hidden** for the first 7 hours (insufficient data). **Not configurable.**
-- Wind-rose speed bins: **configurable per campaign**; default preset `[Calm, 2.10-3.60, ≥3.60]`.
+- Ingestion: **CSV, XLSX, and XLS** (with `xlrd`). ISO-8601 timestamps. Hourly cadence.
+- QA flag not present in raw file — user flags rows manually via the app.
+- 8-hour rolling means (CO, O3) must display blank/hidden for the first 7 hours (insufficient data). Not configurable.
+- Wind-rose speed bins configurable per campaign; default `[Calm, 2.10-3.60, ≥3.60]`.
+
+## Real-world vendor file adaptation (learned from `tree holding facilities project qiddiyah.xls`)
+- Vendor exports the file with **two-row header**: row 0 has merged "AQMS" cells (pandas reads them as `Unnamed: 0`, `AQMS`, `AQMS.1`…); row 1 has the actual parameter names (`AMBTEMP, BARPRESS, OZONE, NOX, WDR, WSP, RELHUM, …`); row 2 is a `Date` sub-label; data starts row 3.
+- Added `_promote_header_if_needed` heuristic to detect merged-header pattern and promote the parameter row; and `_detect_timestamp_by_content` to pick up the timestamp column even when its header cell is blank.
+- Vendor exports include analyzer flow rates + aux met: `COFlow, SO2Flow, PMFlow, PMCoarse, RAINFALL, SOLARRAD`. These are transparently reported as "ignored columns" (schema-out-of-scope) but do NOT block ingestion.
+- Values below detection limit come through as negatives (e.g. `NO=-1.36, H2S=-16.69`). Currently stored raw. **Phase 2 decision**: keep raw and floor to 0 for compliance/statistics? Or preserve as-is? Need user answer.
+- Analyzer warm-up hours (all-NaN except one aux column) are ingested as valid empty rows — expected behavior.
 
 ## Regulatory basis
-- KSA NCEC 2020 Ambient Air Quality Standards (Royal Decree M/165, 19/11/1441 AH). Seeded on backend startup.
-- USEPA reference methods cited (methodology only, no compliance role).
+KSA NCEC 2020 (Royal Decree M/165, 19/11/1441 AH). 14 limits seeded on startup. USEPA methods cited (methodology only).
 
 ## Phase 1 — What's been implemented (2026-02)
 ### Backend (`/app/backend`)
-- `models.py` — Pydantic v2 models: `Campaign`, `Reading`, `PollutantLimit`, `UploadLog`, `WindClassBin`.
+- `models.py` — Pydantic v2: Campaign, Reading, PollutantLimit, UploadLog (with `recognized_columns` + `ignored_columns`), WindClassBin, DEFAULT_WIND_BINS.
 - `db.py` — Motor client, ISO-string datetime helpers, NCEC seed, indexes.
-- `routes/campaigns.py` — POST/GET/PUT/DELETE `/api/campaigns` (+ per-id detail).
-- `routes/readings.py` — POST `/api/campaigns/{id}/upload` (CSV+XLSX), GET `/api/campaigns/{id}/readings`, GET `/api/campaigns/{id}/uploads`, PATCH `/api/readings/{id}` (manual flag), DELETE `/api/campaigns/{id}/readings`.
-- `routes/limits.py` — GET `/api/limits` (read-only, seeded).
-- `server.py` — FastAPI app, CORS, startup seed + indexes.
+- `routes/campaigns.py` — POST/GET/PUT/DELETE `/api/campaigns` (+cascade).
+- `routes/readings.py` — CSV/XLSX/XLS ingest with vendor-header auto-detect + timestamp-by-content fallback, per-campaign readings list, manual flag PATCH, clear-all DELETE, upload-log GET.
+- `routes/limits.py` — GET `/api/limits`.
+- `server.py` — FastAPI app + startup seed + indexes.
 
 ### Frontend (`/app/frontend`)
-- Dark technical theme (Zinc/Slate + IBM Plex Sans/Mono) via design_agent guidelines.
-- `AppShell` — sticky top nav (Campaigns, NCEC Limits) + Sonner Toaster.
-- `CampaignsList` — dense list with status pill, coordinates (monospaced), reading counts, delete-with-confirm.
-- `CampaignForm` — create/edit; sections for Project, Site, Monitoring window, Report metadata.
-- `CampaignDetail` — 4 tabs (Overview, Readings, Settings, Reports placeholder).
-  - Readings tab: dense monospaced table, per-row valid/invalid Switch, green/red row tints, clear-all with confirm.
-  - Settings tab: wind-rose bin editor (add/remove rows, reset to defaults, save).
-  - Reports tab: intentional placeholder for later phases.
-- `UploadPage` — drag-and-drop dropzone, expected-columns preview, per-row error report.
-- `LimitsPage` — dense read-only NCEC 2020 table, grouped by pollutant.
-- Full `data-testid` coverage in `/app/frontend/src/constants/testIds/eco.js`.
+- Dark technical theme (Zinc/Slate + IBM Plex Sans/Mono).
+- AppShell (sticky top nav + Sonner toaster).
+- CampaignsList (dense list, status pills, delete-with-confirm).
+- CampaignForm (create/edit; Project/Site/Window/Report-metadata sections).
+- CampaignDetail (4 tabs: Overview · Readings · Settings · Reports placeholder).
+  - Readings: dense monospaced table, per-row Switch flag, red row tint for invalid, sticky header + timestamp col, clear-all with confirm.
+  - Settings: wind-rose bin editor (add/remove/reset/save).
+- UploadPage (drag-drop dropzone, expected-columns preview, **recognized/ignored column pills**, per-row error report).
+- LimitsPage (dense read-only NCEC 2020 table).
+- Full `data-testid` coverage in `constants/testIds/eco.js`.
 
-## Not in Phase 1 (deferred by explicit user request)
-- Calculation engine (aggregates, rolling means, exceedance counts) — Phase 2.
-- Report generation, graphs, PDF export — Phase 3–4.
-- Arabic/bilingual — Phase 5.
-- Versioning — Phase 6.
-- Auth + object storage for reports — Phase 7.
+### Testing
+- testing_agent_v3 iteration 1: **14/14 backend + all critical frontend flows passed**.
+- Real vendor `.xls` verified via manual curl + Playwright: **25 rows ingested, 0 skipped, 15 recognized, 6 ignored** — no code changes needed after adaptation.
 
 ## Prioritized backlog
-- **P0** — Verify Phase 1 with user, then begin Phase 2 calculation engine.
-- **P1** — Accept the promised sample raw-data file to lock in real-world column casing / quirks.
-- **P2** — Add campaign duplication ("clone" for repeat monitoring campaigns at same site).
+- **P0** — User confirms Phase 1 (schema + skeleton + vendor adapter) → start Phase 2 calc engine.
+- **P0** — In Phase 2, confirm treatment of negative (below-detection) values in compliance/statistics.
+- **P1** — Campaign duplication ("clone") action for repeat monitoring campaigns at same site.
+- **P2** — Timezone handling: sample data is naïve; report must be "KSA time" per §2.5.4. Consider explicit timezone field on Campaign.

@@ -119,7 +119,7 @@ export default function UploadPage() {
         <UploadCloud className="w-8 h-8 mx-auto text-muted-foreground" />
         <p className="mt-3 text-sm">
           <span className="text-primary underline decoration-dotted">Click to browse</span>{" "}
-          or drop a .csv / .xlsx file here
+          or drop a .csv / .xlsx / .xls file here
         </p>
         {file && (
           <div className="mt-4 inline-flex items-center gap-2 text-xs font-mono border border-border rounded-sm px-2 py-1 bg-background/60">
@@ -182,6 +182,48 @@ export default function UploadPage() {
                 </Button>
               </div>
             )}
+
+            {(result.upload_log.recognized_columns?.length > 0 ||
+              result.upload_log.ignored_columns?.length > 0) && (
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+                    Recognized columns ({result.upload_log.recognized_columns?.length || 0})
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(result.upload_log.recognized_columns || []).map((c) => (
+                      <span
+                        key={c}
+                        className="text-[11px] font-mono border border-emerald-900 bg-emerald-950/30 text-emerald-300 rounded-sm px-1.5 py-0.5"
+                      >
+                        {c}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+                    Ignored columns ({result.upload_log.ignored_columns?.length || 0})
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(result.upload_log.ignored_columns || []).length === 0 ? (
+                      <span className="text-[11px] text-muted-foreground">None</span>
+                    ) : (
+                      (result.upload_log.ignored_columns || []).map((c) => (
+                        <span
+                          key={c}
+                          className="text-[11px] font-mono border border-border text-muted-foreground rounded-sm px-1.5 py-0.5"
+                          title="Not part of the AAQ schema — dropped from ingest"
+                        >
+                          {c}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {result.upload_log.errors.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 text-amber-400 text-sm mb-2">

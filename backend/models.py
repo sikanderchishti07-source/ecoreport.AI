@@ -163,10 +163,12 @@ class UploadLog(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     campaign_id: str
     filename: str
-    file_type: str  # "csv" | "xlsx"
+    file_type: str  # "csv" | "xlsx" | "xls"
     rows_ingested: int
     rows_skipped: int
     errors: List[str] = Field(default_factory=list)
+    recognized_columns: List[str] = Field(default_factory=list)
+    ignored_columns: List[str] = Field(default_factory=list)
     uploaded_at: datetime = Field(default_factory=utcnow)
 
 
