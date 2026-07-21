@@ -8,6 +8,8 @@ from fastapi import APIRouter, FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from db import create_indexes, seed_pollutant_limits
+from auth import current_user
+from routes import auth_routes as auth_router
 from routes import campaigns as campaigns_router
 from routes import limits as limits_router
 from routes import readings as readings_router
@@ -37,12 +39,16 @@ async def health() -> dict:
 
 
 # Mount domain routers under /api
-api.include_router(campaigns_router.router)
-api.include_router(readings_router.router)
-api.include_router(limits_router.router)
-api.include_router(summary_router.router)
-api.include_router(report_router.router)
-api.include_router(history_router.router)
+from fastapi import Depends as _Depends
+
+api.include_router(auth_router.router)  # open: setup/login
+_protected = [_Depends(current_user)]
+api.include_router(campaigns_router.router, dependencies=_protected)
+api.include_router(readings_router.router, dependencies=_protected)
+api.include_router(limits_router.router, dependencies=_protected)
+api.include_router(summary_router.router, dependencies=_protected)
+api.include_router(report_router.router, dependencies=_protected)
+api.include_router(history_router.router, dependencies=_protected)
 
 app.include_router(api)
 
