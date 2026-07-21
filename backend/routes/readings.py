@@ -13,6 +13,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile,
 from db import db, to_mongo
 from models import (
     ALL_MEASUREMENT_FIELDS,
+    POLLUTANT_FIELDS,
     Reading,
     ReadingFlagUpdate,
     UploadLog,
@@ -234,6 +235,8 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...)) -> Upl
     ingested: List[Reading] = []
     errors: List[str] = []
     skipped = 0
+    auto_flagged_readings = 0
+    auto_flagged_field_counts: dict[str, int] = {}
     to_insert = []
 
     for idx, row in df.iterrows():
@@ -257,6 +260,24 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...)) -> Upl
                             reading_kwargs[field] = float(val)
                         except (TypeError, ValueError):
                             reading_kwargs[field] = None
+
+            # Auto-flag rule: pollutant concentrations cannot be negative.
+            # Below-zero values are treated as instrument/calibration error
+            # and are nulled at the field level, so downstream calculations
+            # (Phase 2+) automatically exclude them. Meteorology fields are
+            # NOT auto-flagged (temperature can legitimately be negative).
+            auto_flags: list[str] = []
+            for pf in POLLUTANT_FIELDS:
+                v = reading_kwargs.get(pf)
+                if v is not None and v < 0:
+                    auto_flags.append(pf)
+                    reading_kwargs[pf] = None
+            reading_kwargs["auto_flagged_fields"] = auto_flags
+            if auto_flags:
+                auto_flagged_readings += 1
+                for f in auto_flags:
+                    auto_flagged_field_counts[f] = auto_flagged_field_counts.get(f, 0) + 1
+
             reading = Reading(**reading_kwargs)
             ingested.append(reading)
             to_insert.append(to_mongo(reading.model_dump()))
@@ -280,6 +301,8 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...)) -> Upl
         errors=errors[:20],
         recognized_columns=recognized,
         ignored_columns=ignored,
+        auto_flagged_readings=auto_flagged_readings,
+        auto_flagged_field_counts=auto_flagged_field_counts,
     )
     await db.upload_logs.insert_one(to_mongo(upload_log.model_dump()))
 

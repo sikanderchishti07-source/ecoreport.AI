@@ -12,6 +12,7 @@ import {
   X,
   Trash2,
   FileWarning,
+  AlertTriangle,
 } from "lucide-react";
 
 import {
@@ -146,6 +147,10 @@ export default function CampaignDetail() {
   const resetBins = () => setBins(DEFAULT_BINS);
 
   const validCount = useMemo(() => readings.filter((r) => r.valid).length, [readings]);
+  const autoFlaggedCount = useMemo(
+    () => readings.filter((r) => (r.auto_flagged_fields || []).length > 0).length,
+    [readings]
+  );
 
   if (loading || !campaign) {
     return <div className="text-sm text-muted-foreground">Loading…</div>;
@@ -207,10 +212,11 @@ export default function CampaignDetail() {
 
         {/* OVERVIEW */}
         <TabsContent value="overview" className="mt-4 space-y-4">
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-5 gap-3">
             <StatCard label="Readings ingested" value={readings.length} mono />
             <StatCard label="Valid readings" value={validCount} mono accent="text-emerald-400" />
             <StatCard label="Invalid readings" value={readings.length - validCount} mono accent="text-red-400" />
+            <StatCard label="Auto-flagged" value={autoFlaggedCount} mono accent="text-amber-400" />
             <StatCard label="Uploads" value={uploads.length} mono />
           </div>
 
@@ -279,7 +285,13 @@ export default function CampaignDetail() {
             <>
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>
-                  Showing {readings.length} readings · toggle validity per row (manual QA).
+                  Showing {readings.length} readings · toggle validity per row (manual QA)
+                  {autoFlaggedCount > 0 && (
+                    <span className="ml-2 inline-flex items-center gap-1 text-amber-400">
+                      <AlertTriangle className="w-3 h-3" />
+                      {autoFlaggedCount} row(s) auto-flagged for negative pollutant values
+                    </span>
+                  )}
                 </span>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
@@ -326,21 +338,45 @@ export default function CampaignDetail() {
                     </tr>
                   </thead>
                   <tbody>
-                    {readings.map((r) => (
+                    {readings.map((r) => {
+                      const autoFlags = r.auto_flagged_fields || [];
+                      return (
                       <tr
                         key={r.id}
                         data-testid={CAMPAIGN_DETAIL.readingRow(r.id)}
                         className={`border-t border-border ${r.valid ? "row-valid" : "row-invalid"}`}
                       >
                         <td className="text-left px-2 py-1.5 whitespace-nowrap sticky left-0 bg-background/95">
-                          {new Date(r.timestamp).toLocaleString(undefined, {
-                            year: "numeric", month: "2-digit", day: "2-digit",
-                            hour: "2-digit", minute: "2-digit",
-                          })}
+                          <div className="inline-flex items-center gap-1.5">
+                            {autoFlags.length > 0 && (
+                              <span
+                                title={`Auto-flagged (negative → instrument/calibration error): ${autoFlags.join(", ")}`}
+                                className="inline-flex items-center text-amber-400"
+                                data-testid={`campaign-detail-reading-autoflag-${r.id}`}
+                              >
+                                <AlertTriangle className="w-3 h-3" />
+                              </span>
+                            )}
+                            <span>
+                              {new Date(r.timestamp).toLocaleString(undefined, {
+                                year: "numeric", month: "2-digit", day: "2-digit",
+                                hour: "2-digit", minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
                         </td>
-                        {NUMERIC_COLS.map((c) => (
-                          <td key={c} className="text-right px-2 py-1.5">{fmt(r[c])}</td>
-                        ))}
+                        {NUMERIC_COLS.map((c) => {
+                          const isAutoFlagged = autoFlags.includes(c);
+                          return (
+                            <td
+                              key={c}
+                              className={`text-right px-2 py-1.5 ${isAutoFlagged ? "text-amber-500/70 italic" : ""}`}
+                              title={isAutoFlagged ? `auto-flagged: negative value nulled (instrument/calibration error)` : undefined}
+                            >
+                              {isAutoFlagged ? "flagged" : fmt(r[c])}
+                            </td>
+                          );
+                        })}
                         <td className="text-center px-2 py-1.5">
                           <Switch
                             data-testid={CAMPAIGN_DETAIL.readingFlagToggle(r.id)}
@@ -349,7 +385,8 @@ export default function CampaignDetail() {
                           />
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

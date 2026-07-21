@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 
 from bson import ObjectId
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
@@ -135,6 +135,7 @@ class Reading(ReadingBase):
     campaign_id: str
     valid: bool = True
     invalidation_reason: Optional[str] = None
+    auto_flagged_fields: List[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -169,6 +170,10 @@ class UploadLog(BaseModel):
     errors: List[str] = Field(default_factory=list)
     recognized_columns: List[str] = Field(default_factory=list)
     ignored_columns: List[str] = Field(default_factory=list)
+    # Auto-flagging: negative pollutant values are treated as
+    # instrument/calibration errors and their per-field values are nulled.
+    auto_flagged_readings: int = 0
+    auto_flagged_field_counts: Dict[str, int] = Field(default_factory=dict)
     uploaded_at: datetime = Field(default_factory=utcnow)
 
 

@@ -224,6 +224,35 @@ export default function UploadPage() {
               </div>
             )}
 
+            {result.upload_log.auto_flagged_readings > 0 && (
+              <div
+                data-testid="upload-result-auto-flagged"
+                className="border border-amber-900/60 bg-amber-950/20 rounded-sm p-3"
+              >
+                <div className="flex items-center gap-2 text-amber-300 text-sm">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>
+                    Auto-flagged{" "}
+                    <span className="font-mono">{result.upload_log.auto_flagged_readings}</span>{" "}
+                    reading(s) with negative pollutant values — treated as instrument/calibration errors and
+                    excluded from calculations.
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-2 pl-6">
+                  {Object.entries(result.upload_log.auto_flagged_field_counts || {})
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([field, count]) => (
+                      <span
+                        key={field}
+                        className="text-[11px] font-mono border border-amber-800 text-amber-300 bg-amber-950/40 rounded-sm px-1.5 py-0.5"
+                      >
+                        {field} <span className="text-amber-400/80">× {count}</span>
+                      </span>
+                    ))}
+                </div>
+              </div>
+            )}
+
             {result.upload_log.errors.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 text-amber-400 text-sm mb-2">
