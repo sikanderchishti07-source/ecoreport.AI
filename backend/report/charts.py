@@ -21,9 +21,9 @@ import numpy as np
 from calc import COMPASS_16, rolling_8h, _effective, _compass_bin, _speed_class
 from models import Reading, WindClassBin
 
-SERIES_COLOR = "#4472C4"   # Excel default blue
-LIMIT_COLOR = "#ED7D31"    # Excel default orange
-SECOND_COLOR = "#A5A5A5"
+SERIES_COLOR = "#1F6FB2"   # brand blue
+LIMIT_COLOR = "#C00000"    # limit line — clear alarm red
+SECOND_COLOR = "#2F9E63"   # accent green (secondary series)
 FIG_SIZE = (7.5, 3.4)
 DPI = 150
 
@@ -116,7 +116,7 @@ def dual_series_chart(
 # ---------------------------------------------------------------------------
 # Wind rose + wind class frequency distribution
 # ---------------------------------------------------------------------------
-ROSE_COLORS = ["#2E75B6", "#70AD47", "#FFC000", "#C00000", "#7030A0", "#ED7D31"]
+ROSE_COLORS = ["#0F3D6E", "#1F6FB2", "#5BA3D9", "#9DC7E8", "#2F9E63", "#F2B705"]
 
 
 def wind_rose_chart(

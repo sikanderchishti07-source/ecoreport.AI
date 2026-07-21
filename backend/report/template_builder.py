@@ -21,9 +21,17 @@ from docx.shared import Cm, Pt, RGBColor
 ASSETS = os.path.join(os.path.dirname(__file__), "assets")
 OUT = os.path.join(os.path.dirname(__file__), "master_template.docx")
 
-GREEN = RGBColor(0x37, 0x7D, 0x22)
+# Brand palette — blue-dominant with a restrained green accent
+NAVY = RGBColor(0x0F, 0x3D, 0x6E)
+BLUE = RGBColor(0x1F, 0x6F, 0xB2)
+GREEN = RGBColor(0x2F, 0x9E, 0x63)
 DARK = RGBColor(0x1F, 0x1F, 0x1F)
-GRAY_FILL = "D9D9D9"
+WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+NAVY_FILL = "0F3D6E"
+BLUE_FILL = "1F6FB2"
+SKY_FILL = "E8F1F9"
+GRAY_FILL = NAVY_FILL   # legacy alias: all header cells now use the navy fill
+_DARK_FILLS = {NAVY_FILL, BLUE_FILL}
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +63,10 @@ def _update_fields_on_open(doc):
 
 
 def _shade(cell, fill=GRAY_FILL):
+    if fill in _DARK_FILLS:
+        for p in cell.paragraphs:
+            for r in p.runs:
+                r.font.color.rgb = WHITE
     tcPr = cell._tc.get_or_add_tcPr()
     shd = OxmlElement("w:shd")
     shd.set(qn("w:val"), "clear")
@@ -115,7 +127,7 @@ def _caption(doc, kind: str, text: str):
     r.bold = True
     _field(p, f" SEQ {kind} \\* ARABIC ")
     for run in p.runs:
-        run.font.color.rgb = DARK
+        run.font.color.rgb = NAVY
         run.font.size = Pt(10)
         run.bold = True
         run.italic = False
@@ -184,12 +196,14 @@ def _header_footer(section):
     r1.italic = True
     r1.bold = True
     r1.font.size = Pt(10)
+    r1.font.color.rgb = NAVY
     mp2 = mid.add_paragraph()
     mp2.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r2 = mp2.add_run("{{ project_name }}")
     r2.italic = True
     r2.bold = True
     r2.font.size = Pt(10)
+    r2.font.color.rgb = BLUE
     rp = right.paragraphs[0]
     rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     try:
@@ -202,8 +216,8 @@ def _header_footer(section):
     borders = OxmlElement("w:pBdr")
     bot = OxmlElement("w:bottom")
     bot.set(qn("w:val"), "single")
-    bot.set(qn("w:sz"), "8")
-    bot.set(qn("w:color"), "377D22")
+    bot.set(qn("w:sz"), "14")
+    bot.set(qn("w:color"), BLUE_FILL)
     borders.append(bot)
     pPr.append(borders)
 
@@ -211,7 +225,21 @@ def _header_footer(section):
     ftr.is_linked_to_previous = False
     fp = ftr.paragraphs[0]
     fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    fPr = fp._p.get_or_add_pPr()
+    fBdr = OxmlElement("w:pBdr")
+    ftop = OxmlElement("w:top")
+    ftop.set(qn("w:val"), "single")
+    ftop.set(qn("w:sz"), "8")
+    ftop.set(qn("w:color"), NAVY_FILL)
+    fBdr.append(ftop)
+    fPr.append(fBdr)
+    pre = fp.add_run("Page ")
+    pre.font.size = Pt(9)
+    pre.font.color.rgb = NAVY
     _field(fp, " PAGE ")
+    for r in fp.runs:
+        r.font.size = Pt(9)
+        r.font.color.rgb = NAVY
 
 
 # ---------------------------------------------------------------------------
@@ -225,9 +253,19 @@ def build(out_path: str = OUT) -> str:
     for lvl in range(1, 4):
         hs = doc.styles[f"Heading {lvl}"]
         hs.font.name = "Times New Roman"
-        hs.font.color.rgb = DARK
+        hs.font.color.rgb = {1: NAVY, 2: NAVY, 3: BLUE}[lvl]
         hs.font.size = Pt({1: 14, 2: 12, 3: 11}[lvl])
         hs.font.bold = True
+    # accent rule under every level-1 heading
+    h1 = doc.styles["Heading 1"]
+    pPr = h1.element.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bot = OxmlElement("w:bottom")
+    bot.set(qn("w:val"), "single")
+    bot.set(qn("w:sz"), "12")
+    bot.set(qn("w:color"), BLUE_FILL)
+    pBdr.append(bot)
+    pPr.append(pBdr)
 
     sec = doc.sections[0]
     sec.page_width, sec.page_height = Cm(21.0), Cm(29.7)  # A4
@@ -235,35 +273,110 @@ def build(out_path: str = OUT) -> str:
     sec.left_margin = sec.right_margin = Cm(2.2)
 
     # ---------------- COVER (no header/footer) ----------------
+    def _band(fill, height_pt=None):
+        """Full-width single-cell shaded band table."""
+        t = doc.add_table(rows=1, cols=1)
+        t.alignment = WD_TABLE_ALIGNMENT.CENTER
+        t.autofit = False
+        c = t.rows[0].cells[0]
+        c.width = Cm(16.6)
+        tcPr = c._tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:fill"), fill)
+        tcPr.append(shd)
+        # remove default cell borders visual noise: no explicit borders added
+        return t, c
+
+    def _band_line(cell, text, size, bold=False, color=WHITE, space_before=0,
+                   space_after=0, align=WD_ALIGN_PARAGRAPH.CENTER, first=False):
+        p = cell.paragraphs[0] if first and not cell.paragraphs[0].text \
+            else cell.add_paragraph()
+        p.alignment = align
+        p.paragraph_format.space_before = Pt(space_before)
+        p.paragraph_format.space_after = Pt(space_after)
+        r = p.add_run(text)
+        r.bold = bold
+        r.font.size = Pt(size)
+        r.font.color.rgb = color
+        return p
+
+    # logos row
     cov = doc.add_table(rows=1, cols=2)
     lcell, rcell = cov.rows[0].cells
     try:
         lcell.paragraphs[0].add_run().add_picture(
-            os.path.join(ASSETS, "logo_left.png"), height=Cm(2.4))
+            os.path.join(ASSETS, "logo_left.png"), height=Cm(2.0))
         rp = rcell.paragraphs[0]
         rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         rp.add_run().add_picture(
-            os.path.join(ASSETS, "logo_right.png"), height=Cm(2.4))
+            os.path.join(ASSETS, "logo_right.png"), height=Cm(2.0))
     except Exception:
         pass
-    _p(doc, space_after=4)
+    _p(doc, space_after=14)
+
+    # hero band — deep navy with white display title and a green keyline
+    _t, hero = _band(NAVY_FILL)
+    _band_line(hero, "AIR QUALITY", 30, bold=True, space_before=16, first=True)
+    _band_line(hero, "MONITORING REPORT", 30, bold=True)
+    _band_line(hero, "Ambient Air Quality  ·  KSA NCEC 2020 Standards", 10,
+               color=RGBColor(0xBF, 0xD9, 0xEF), space_before=4, space_after=14)
+    # thin green keyline band directly under the hero
+    _t2, key = _band("2F9E63")
+    kp = key.paragraphs[0]
+    kp.paragraph_format.space_after = Pt(0)
+    kr = kp.add_run(" ")
+    kr.font.size = Pt(2)
+
+    _p(doc, space_after=16)
+    _p(doc, "prepared for", size=12, align="center", space_after=2,
+       color=RGBColor(0x6B, 0x6B, 0x6B))
+    _p(doc, "{{ project_name }}", size=24, bold=True, align="center",
+       color=NAVY, space_after=16)
+
+    # optional cover photo
     _p(doc, "{%p if cover_photo %}", size=1, space_after=0)
-    ph = _p(doc, "{{ cover_photo }}", align="center", space_after=8)
+    _p(doc, "{{ cover_photo }}", align="center", space_after=10)
     _p(doc, "{%p endif %}", size=1, space_after=0)
-    _p(doc, space_after=10)
-    _p(doc, "Air Quality Monitoring Report", size=22, bold=True, align="center",
-       color=GREEN, space_after=2)
-    _p(doc, "for", size=16, align="center", space_after=2)
-    _p(doc, "{{ project_name }}", size=20, bold=True, align="center", space_after=14)
-    _p(doc, "Prepared by", size=13, align="center", space_after=2)
-    _p(doc, "{{ provider }}", size=14, bold=True, align="center", space_after=10)
-    _p(doc, "Submitted to", size=13, align="center", space_after=2)
-    _p(doc, "{{ client }}", size=14, bold=True, align="center", space_after=22)
-    _p(doc, "{{ provider_legal_name }}", size=11, bold=True, align="center", space_after=1)
-    _p(doc, "Tel.: {{ provider_tel }}    Fax: {{ provider_fax }}", size=10,
-       align="center", space_after=1)
-    _p(doc, "{{ provider_address }}", size=10, align="center", space_after=1)
-    _p(doc, "E-mail: {{ provider_email }}", size=10, align="center", space_after=1)
+
+    # info card — light blue project summary
+    card = doc.add_table(rows=4, cols=2)
+    card.alignment = WD_TABLE_ALIGNMENT.CENTER
+    card.style = "Table Grid"
+    for i, (k, v) in enumerate([
+        ("Client", "{{ client }}"),
+        ("Report Number", "{{ report_number }}"),
+        ("Monitoring Period", "{{ monitoring_window_text }}"),
+        ("Revision / Date", "{{ revision }}  —  {{ reporting_date }}"),
+    ]):
+        kc, vc = card.cell(i, 0), card.cell(i, 1)
+        kc.width, vc.width = Cm(4.6), Cm(12.0)
+        _cell_text(kc, k, bold=True, size=10)
+        for pr in kc.paragraphs:
+            for rr in pr.runs:
+                rr.font.color.rgb = NAVY
+        tcPr = kc._tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:fill"), SKY_FILL)
+        tcPr.append(shd)
+        _cell_text(vc, v, size=10)
+    _p(doc, space_after=18)
+
+    _p(doc, "Prepared by", size=11, align="center", space_after=1,
+       color=RGBColor(0x6B, 0x6B, 0x6B))
+    _p(doc, "{{ provider }}", size=13, bold=True, align="center",
+       color=NAVY, space_after=14)
+
+    # footer contact band
+    _t3, foot = _band(NAVY_FILL)
+    _band_line(foot, "{{ provider_legal_name }}", 10, bold=True,
+               space_before=8, first=True)
+    _band_line(foot, "Tel.: {{ provider_tel }}    Fax: {{ provider_fax }}    "
+                     "E-mail: {{ provider_email }}", 9,
+               color=RGBColor(0xBF, 0xD9, 0xEF))
+    _band_line(foot, "{{ provider_address }}", 9,
+               color=RGBColor(0xBF, 0xD9, 0xEF), space_after=8)
 
     # ---------------- CONTENT SECTION (with header/footer) ----------------
     sec2 = doc.add_section(WD_SECTION.NEW_PAGE)
