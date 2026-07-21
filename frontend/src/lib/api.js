@@ -8,6 +8,16 @@ export const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
+// Operator attribution for the audit trail (Phase 6)
+export const getOperator = () => localStorage.getItem("ecoreport_operator") || "";
+export const setOperator = (name) =>
+  localStorage.setItem("ecoreport_operator", (name || "").trim());
+api.interceptors.request.use((config) => {
+  const op = getOperator();
+  if (op) config.headers["X-User"] = op;
+  return config;
+});
+
 // Campaigns
 export const listCampaigns = () => api.get("/campaigns").then((r) => r.data);
 export const getCampaign = (id) => api.get(`/campaigns/${id}`).then((r) => r.data);
@@ -38,3 +48,33 @@ export const uploadReadings = (campaignId, file) => {
 
 // Limits
 export const listLimits = () => api.get("/limits").then((r) => r.data);
+
+
+// Reports (Phase 5/6)
+export const generateReport = async (campaignId, lang = "en", format = "docx") => {
+  const res = await api.post(
+    `/campaigns/${campaignId}/report`,
+    null,
+    { params: { lang, format }, responseType: "blob", timeout: 600000 }
+  );
+  const dispo = res.headers["content-disposition"] || "";
+  const m = dispo.match(/filename="?([^";]+)"?/);
+  const filename = m ? m[1] : `AAQ_Report.${format}`;
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  return filename;
+};
+export const listReports = (campaignId) =>
+  api.get(`/campaigns/${campaignId}/reports`).then((r) => r.data);
+export const reportDownloadUrl = (reportId) =>
+  `${API_BASE}/reports/${reportId}/download`;
+
+// Audit trail & archive search (Phase 6)
+export const campaignAudit = (campaignId) =>
+  api.get(`/campaigns/${campaignId}/audit`).then((r) => r.data);
+export const searchArchive = (q) =>
+  api.get(`/search`, { params: { q } }).then((r) => r.data);
