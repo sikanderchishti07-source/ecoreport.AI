@@ -8,11 +8,13 @@ import uuid
 from datetime import datetime, timezone
 from typing import List
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from audit import audit
+from auth import current_username
 from db import db, to_mongo
+import storage
 from models import Campaign, PollutantLimit, Reading
 from report.generate import convert_to_pdf, generate_report
 
@@ -25,7 +27,7 @@ REPORT_DIR = os.environ.get("REPORT_DIR", os.path.join(tempfile.gettempdir(), "e
 @router.post("/campaigns/{campaign_id}/report")
 async def create_report(campaign_id: str, lang: str = "en",
                         format: str = "docx",
-                        x_user: str = Header(default="system")):
+                        x_user: str = Depends(current_username)):
     if lang not in ("en", "ar", "bilingual"):
         raise HTTPException(status_code=422,
                             detail="lang must be en, ar, or bilingual")
@@ -64,9 +66,12 @@ async def create_report(campaign_id: str, lang: str = "en",
         log.exception("report generation failed")
         raise HTTPException(status_code=500, detail=f"Report generation failed: {exc}")
 
+    storage_meta = storage.store_report(out_path, campaign_id, fname)
     report_id = str(uuid.uuid4())
     await db.report_logs.insert_one(to_mongo({
         "id": report_id,
+        "storage": storage_meta["storage"],
+        "s3_key": storage_meta["s3_key"],
         "campaign_id": campaign_id,
         "project_name": campaign.project_name,
         "version": version,

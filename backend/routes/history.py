@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from db import db
+import storage
 
 router = APIRouter(tags=["history"])
 
@@ -64,14 +65,15 @@ async def download_report(report_id: str):
     doc = await db.report_logs.find_one({"id": report_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Report version not found")
-    path = doc.get("path")
-    if not path or not os.path.exists(path):
+    path = storage.fetch_report(doc)
+    if not path:
         raise HTTPException(
             status_code=410,
-            detail=("Report file no longer exists on the server (files are "
-                    "kept on local disk until cloud storage is enabled in "
-                    "Phase 7). Regenerate the report to produce a new "
-                    "version."))
+            detail=("Report file is no longer available — it was stored on "
+                    "local disk only and the server has been redeployed since "
+                    "it was generated. Enable S3 cloud storage "
+                    "(STORAGE_BACKEND=s3) so future reports survive "
+                    "redeploys, and regenerate this report."))
     media = ("application/pdf" if doc.get("format") == "pdf" else
              "application/vnd.openxmlformats-officedocument"
              ".wordprocessingml.document")

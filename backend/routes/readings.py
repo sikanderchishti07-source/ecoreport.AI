@@ -9,7 +9,8 @@ from typing import List, Optional, Tuple
 
 import pandas as pd
 from audit import audit
-from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status, Header
+from auth import current_username
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status, Header, Depends
 
 from db import db, to_mongo
 from models import (
@@ -206,7 +207,7 @@ async def _load_dataframe(file: UploadFile) -> tuple[pd.DataFrame, str]:
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_readings(campaign_id: str, file: UploadFile = File(...),
-                          x_user: str = Header(default="system")) -> UploadResult:
+                          x_user: str = Depends(current_username)) -> UploadResult:
     campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -350,7 +351,7 @@ async def list_upload_logs(campaign_id: str) -> List[UploadLog]:
 
 @router.patch("/readings/{reading_id}", response_model=Reading)
 async def flag_reading(reading_id: str, payload: ReadingFlagUpdate,
-                       x_user: str = Header(default="system")) -> Reading:
+                       x_user: str = Depends(current_username)) -> Reading:
     existing = await db.readings.find_one({"id": reading_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Reading not found")
@@ -374,7 +375,7 @@ async def flag_reading(reading_id: str, payload: ReadingFlagUpdate,
     response_class=Response,
 )
 async def clear_readings(campaign_id: str,
-                         x_user: str = Header(default="system")) -> Response:
+                         x_user: str = Depends(current_username)) -> Response:
     n = await db.readings.count_documents({"campaign_id": campaign_id})
     await db.readings.delete_many({"campaign_id": campaign_id})
     await audit("readings.clear", "readings", campaign_id, x_user,

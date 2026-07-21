@@ -4,9 +4,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import List
 
-from fastapi import APIRouter, Header, HTTPException, Response, status
+from fastapi import APIRouter, Header, HTTPException, Response, status, Depends
 
 from audit import audit, diff_fields
+from auth import current_username, require_admin
 from db import db, from_mongo, to_mongo
 from models import Campaign, CampaignCreate, CampaignUpdate
 
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
 @router.post("", response_model=Campaign, status_code=status.HTTP_201_CREATED)
 async def create_campaign(payload: CampaignCreate,
-                          x_user: str = Header(default="system")) -> Campaign:
+                          x_user: str = Depends(current_username)) -> Campaign:
     campaign = Campaign(**payload.model_dump())
     await db.campaigns.insert_one(to_mongo(campaign.model_dump()))
     await audit("campaign.create", "campaign", campaign.id, x_user,
@@ -54,7 +55,7 @@ async def get_campaign(campaign_id: str) -> Campaign:
 
 @router.put("/{campaign_id}", response_model=Campaign)
 async def update_campaign(campaign_id: str, payload: CampaignUpdate,
-                          x_user: str = Header(default="system")) -> Campaign:
+                          x_user: str = Depends(current_username)) -> Campaign:
     existing = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -76,7 +77,8 @@ async def update_campaign(campaign_id: str, payload: CampaignUpdate,
 
 @router.delete("/{campaign_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def delete_campaign(campaign_id: str,
-                          x_user: str = Header(default="system")) -> Response:
+                          admin: dict = Depends(require_admin)) -> Response:
+    x_user = admin["name"]
     existing = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     res = await db.campaigns.delete_one({"id": campaign_id})
     if res.deleted_count == 0:
