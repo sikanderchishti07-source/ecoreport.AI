@@ -9,7 +9,7 @@ from typing import List, Optional
 import pandas as pd
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
 
-from db import db, from_mongo, to_mongo
+from db import db, to_mongo
 from models import (
     ALL_MEASUREMENT_FIELDS,
     Reading,
