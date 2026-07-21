@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
 import pandas as pd
-from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
+from audit import audit
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status, Header
 
 from db import db, to_mongo
 from models import (
@@ -204,7 +205,8 @@ async def _load_dataframe(file: UploadFile) -> tuple[pd.DataFrame, str]:
     response_model=UploadResult,
     status_code=status.HTTP_201_CREATED,
 )
-async def upload_readings(campaign_id: str, file: UploadFile = File(...)) -> UploadResult:
+async def upload_readings(campaign_id: str, file: UploadFile = File(...),
+                          x_user: str = Header(default="system")) -> UploadResult:
     campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -306,6 +308,12 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...)) -> Upl
     )
     await db.upload_logs.insert_one(to_mongo(upload_log.model_dump()))
 
+    await audit("readings.upload", "readings", campaign_id, x_user,
+                {"filename": upload_log.filename,
+                 "rows_ingested": upload_log.rows_ingested,
+                 "rows_skipped": upload_log.rows_skipped,
+                 "auto_flagged_readings": upload_log.auto_flagged_readings})
+
     return UploadResult(upload_log=upload_log, preview=ingested[:10])
 
 
@@ -341,7 +349,8 @@ async def list_upload_logs(campaign_id: str) -> List[UploadLog]:
 
 
 @router.patch("/readings/{reading_id}", response_model=Reading)
-async def flag_reading(reading_id: str, payload: ReadingFlagUpdate) -> Reading:
+async def flag_reading(reading_id: str, payload: ReadingFlagUpdate,
+                       x_user: str = Header(default="system")) -> Reading:
     existing = await db.readings.find_one({"id": reading_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Reading not found")
@@ -351,6 +360,11 @@ async def flag_reading(reading_id: str, payload: ReadingFlagUpdate) -> Reading:
     }
     await db.readings.update_one({"id": reading_id}, {"$set": updates})
     fresh = await db.readings.find_one({"id": reading_id}, {"_id": 0})
+    await audit("reading.flag", "reading", reading_id, x_user,
+                {"campaign_id": existing.get("campaign_id"),
+                 "timestamp": str(existing.get("timestamp")),
+                 "valid_from": existing.get("valid"), "valid_to": payload.valid,
+                 "reason": updates["invalidation_reason"]})
     return Reading(**fresh)
 
 
@@ -359,8 +373,12 @@ async def flag_reading(reading_id: str, payload: ReadingFlagUpdate) -> Reading:
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-async def clear_readings(campaign_id: str) -> Response:
+async def clear_readings(campaign_id: str,
+                         x_user: str = Header(default="system")) -> Response:
+    n = await db.readings.count_documents({"campaign_id": campaign_id})
     await db.readings.delete_many({"campaign_id": campaign_id})
+    await audit("readings.clear", "readings", campaign_id, x_user,
+                {"rows_deleted": n})
     await db.campaigns.update_one(
         {"id": campaign_id}, {"$set": {"status": "draft"}}
     )
