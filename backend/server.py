@@ -1,5 +1,4 @@
 """EcoReport AI — FastAPI backend entrypoint (Phase 1 skeleton)."""
-from routes import report as report_router
 from __future__ import annotations
 
 import logging
@@ -12,6 +11,8 @@ from db import create_indexes, seed_pollutant_limits
 from routes import campaigns as campaigns_router
 from routes import limits as limits_router
 from routes import readings as readings_router
+from routes import history as history_router
+from routes import report as report_router
 from routes import summary as summary_router
 
 logging.basicConfig(
@@ -36,11 +37,12 @@ async def health() -> dict:
 
 
 # Mount domain routers under /api
-api.include_router(report_router.router)
 api.include_router(campaigns_router.router)
 api.include_router(readings_router.router)
 api.include_router(limits_router.router)
 api.include_router(summary_router.router)
+api.include_router(report_router.router)
+api.include_router(history_router.router)
 
 app.include_router(api)
 
