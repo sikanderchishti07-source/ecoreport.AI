@@ -10,9 +10,11 @@ from typing import Dict, List, Optional
 
 from models import Campaign, CampaignSummary, PeriodEvaluation, PollutantEvaluation
 
+from report.i18n_dynamic import (ALLOWANCE, CAPTURE_ROW_NAMES, DYN, FIG_REFS,
+                                 PERIOD_ADJ, PERIOD_NAMES,
+                                 POLLUTANT_NARRATIVE_NAMES, days_text, fmt_date)
+
 NR = "N/R*"          # not reportable marker used inside tables
-NR_FOOTNOTE = ("*N/R: insufficient data — not reportable (data capture below 75% "
-               "for this averaging period).")
 
 
 def fmt(v: Optional[float], dp: int = 1) -> str:
@@ -32,38 +34,32 @@ def _period(p: PollutantEvaluation, label: str) -> Optional[PeriodEvaluation]:
     return None
 
 
-def _footnote(evals: List[PeriodEvaluation]) -> str:
+def _footnote(evals: List[PeriodEvaluation], lang: str = "en") -> str:
     """Adaptive footnote under each summary table:
     - any non-compliant verdict -> exceedance statement
     - all observed exceedance counts zero -> classic 'no exceedances' line
     - exceedances observed but allowance not evaluable -> informational note."""
+    D = DYN[lang]
     evals = [e for e in evals if e is not None]
     if any(e.verdict == "non-compliant" for e in evals):
-        periods = ", ".join(e.averaging_period for e in evals
-                            if e.verdict == "non-compliant")
-        return (f"*Exceedance(s) of the NCEC standard were recorded for the "
-                f"{periods} averaging period(s).")
+        periods = ", ".join(PERIOD_NAMES[lang][e.averaging_period]
+                            for e in evals if e.verdict == "non-compliant")
+        return D["fn_noncompliant"].format(periods=periods)
     if all(e.exceedance_count == 0 for e in evals):
-        return "*There were no exceedances of NCEC standards."
+        return D["fn_clean"]
     n = sum(e.exceedance_count for e in evals)
-    return (f"*{n} value(s) above the NCEC exceedance level were observed; the "
-            f"applicable allowance is defined over a longer reference period than "
-            f"this monitoring campaign, so the count is reported for information "
-            f"only.")
+    return D["fn_informational"].format(n=n)
 
 
-def _compliance_sentence(evals: List[PeriodEvaluation], periods_text: str) -> str:
+def _compliance_sentence(evals: List[PeriodEvaluation], periods_text: str,
+                         lang: str = "en") -> str:
+    D = DYN[lang]
     evals = [e for e in evals if e is not None]
     if any(e.verdict == "non-compliant" for e in evals):
-        return (f"Accordingly, exceedances of the permissible limits in NCEC "
-                f"{periods_text} standards were recorded.")
+        return D["cs_noncompliant"].format(periods=periods_text)
     if all(e.exceedance_count == 0 for e in evals):
-        return (f"Accordingly, the results did not exceed the permissible limits "
-                f"in NCEC {periods_text} standards.")
-    return (f"Values above the NCEC exceedance level were observed; the applicable "
-            f"allowance is defined over a longer reference period than this "
-            f"monitoring campaign and the observed count is therefore reported "
-            f"for information only.")
+        return D["cs_clean"].format(periods=periods_text)
+    return D["cs_informational"]
 
 
 def _daily_avg(p: PollutantEvaluation) -> Optional[float]:
@@ -75,15 +71,17 @@ def _daily_avg(p: PollutantEvaluation) -> Optional[float]:
     return p.hourly_mean
 
 
-def build_context(campaign: Campaign, summary: CampaignSummary) -> Dict:
+def build_context(campaign: Campaign, summary: CampaignSummary,
+                  lang: str = "en") -> Dict:
+    D = DYN[lang]
     P: Dict[str, PollutantEvaluation] = {p.pollutant: p for p in summary.pollutants}
     hours = summary.monitoring_hours
     start = summary.monitoring_start
     end = summary.monitoring_end
-    window_text = (f"{start.strftime('%B %d, %Y, %I:%M %p').replace(' 0', ' ')} to "
-                   f"{end.strftime('%B %d, %Y, %I:%M %p').replace(' 0', ' ')}")
+    window_text = D["window_to"].format(a=fmt_date(start, lang, with_time=True),
+                                        b=fmt_date(end, lang, with_time=True))
     days = max(round(hours / 24), 1)
-    period_text = "one day" if days == 1 else f"{days} days"
+    period_text = days_text(days, lang)
 
     def pol_ctx(key: str, table_periods: List[str], narrative_name: str,
                 fig_refs: str, extra_8h: bool = False) -> Dict:
@@ -97,8 +95,8 @@ def build_context(campaign: Campaign, summary: CampaignSummary) -> Dict:
             "h_max": fmt(p.hourly_max),
             "h_min": fmt(p.hourly_min),
             "daily_avg": fmt(_daily_avg(p)),
-            "footnote": _footnote(evs) + (
-                f"\n{NR_FOOTNOTE}" if any(
+            "footnote": _footnote(evs, lang) + (
+                "\n" + D["nr_footnote"] if any(
                     v == NR for v in (fmt(p.hourly_max), fmt(p.hourly_min))
                 ) else ""),
         }
@@ -113,15 +111,13 @@ def build_context(campaign: Campaign, summary: CampaignSummary) -> Dict:
         if e24:
             d["limit_24h"] = fmt_limit(e24.limit_ugm3)
             d["exceed_24h"] = str(e24.exceedance_count)
-        periods_text = " & ".join(
-            {"1 Hour": "hourly", "24 Hour": "daily",
-             "8 Hour (rolling)": "8-hour"}[per] for per in table_periods)
+        periods_text = D["join_and"].join(
+            PERIOD_ADJ[lang][per] for per in table_periods)
         d["narrative"] = (
-            f"The recorded data of {narrative_name} was captured for {hours} hours "
-            f"at the location. The results were summarized in the following table, "
-            f"and represented on {fig_refs} which includes the maximum permissible "
-            f"limits in NCEC's 2020 ambient air quality standards. "
-            + _compliance_sentence(evs, periods_text))
+            D["narrative"].format(
+                name=POLLUTANT_NARRATIVE_NAMES[lang][key], hours=hours,
+                figs=FIG_REFS[lang][fig_refs])
+            + _compliance_sentence(evs, periods_text, lang))
         return d
 
     so2 = pol_ctx("SO2", ["1 Hour", "24 Hour"], "Sulphur dioxide (SO2)", "a graph")
@@ -147,24 +143,20 @@ def build_context(campaign: Campaign, summary: CampaignSummary) -> Dict:
 
     nox_group = {
         "narrative": (
-            f"The recorded data of Oxides of Nitrogen (NO, NO2, NOx) was captured "
-            f"for {hours} hours at the location. The results were summarized in the "
-            f"following table, and represented on graphs which include the maximum "
-            f"permissible limits in NCEC's 2020 ambient air quality standards. "
-            + _compliance_sentence([_period(P["NO2"], "1 Hour")], "hourly")
-            + " NO and NOx have no applicable NCEC limit and are reported as "
-              "supporting data only."),
-        "footnote": _footnote([_period(P["NO2"], "1 Hour")]),
+            D["narrative_group_nox"].format(
+                name=POLLUTANT_NARRATIVE_NAMES[lang]["NOX_GROUP"], hours=hours)
+            + _compliance_sentence([_period(P["NO2"], "1 Hour")],
+                                   PERIOD_ADJ[lang]["1 Hour"], lang)
+            + D["nox_supporting"]),
+        "footnote": _footnote([_period(P["NO2"], "1 Hour")], lang),
     }
     pm_group = {
         "narrative": (
-            f"The recorded data of Particulate Matter (PM10 & PM2.5) was captured "
-            f"for {hours} hours at the location. The results were summarized in the "
-            f"following tables, and represented on graphs which include the maximum "
-            f"permissible limits in NCEC's 2020 ambient air quality standards. "
+            D["narrative_group_pm"].format(
+                name=POLLUTANT_NARRATIVE_NAMES[lang]["PM_GROUP"], hours=hours)
             + _compliance_sentence(
                 [_period(P["PM10"], "24 Hour"), _period(P["PM25"], "24 Hour")],
-                "daily")),
+                PERIOD_ADJ[lang]["24 Hour"], lang)),
     }
 
     # Table 1 — data capture rows
@@ -174,14 +166,15 @@ def build_context(campaign: Campaign, summary: CampaignSummary) -> Dict:
         return {"name": name, "total": str(hours), "available": str(avail),
                 "exception": str(hours - avail), "capture": fmt(cap_pct)}
 
+    CR = CAPTURE_ROW_NAMES[lang]
     capture_rows = [
-        cap_row("Temp. (°C)", met.temp_capture_pct),
-        cap_row("Humidity (%)", met.rh_capture_pct),
-        cap_row("Pressure (hPa)", met.pressure_capture_pct),
-        cap_row("Wind Direction (°)", met.wind_direction_capture_pct),
-        cap_row("Wind Speed (m/s)", met.wind_speed_capture_pct),
+        cap_row(CR["temp"], met.temp_capture_pct),
+        cap_row(CR["rh"], met.rh_capture_pct),
+        cap_row(CR["pressure"], met.pressure_capture_pct),
+        cap_row(CR["wd"], met.wind_direction_capture_pct),
+        cap_row(CR["ws"], met.wind_speed_capture_pct),
     ] + [
-        cap_row(f"{lbl} (µg/m³)", P[key].hourly_capture_pct,
+        cap_row(CR["pollutant"].format(sym=lbl), P[key].hourly_capture_pct,
                 P[key].hourly_valid_count)
         for key, lbl in [("NO", "NO"), ("NO2", "NO₂"), ("NOx", "NOx"),
                          ("O3", "O₃"), ("H2S", "H₂S"), ("CO", "CO"),
@@ -195,23 +188,20 @@ def build_context(campaign: Campaign, summary: CampaignSummary) -> Dict:
         [met.temp_capture_pct, met.rh_capture_pct, met.pressure_capture_pct,
          met.wind_speed_capture_pct, met.wind_direction_capture_pct])
     capture_sentence = (
-        "Hourly data capture rates are 100% for all the monitored parameters at "
-        "the location." if all_100 else
-        f"The average hourly data capture rate across the monitored parameters at "
-        f"the location was {fmt(summary.overall_hourly_capture_pct)}%. Parameters "
-        f"below the 75% data-capture requirement are marked as not reportable in "
-        f"the relevant tables.")
+        D["capture_all_100"] if all_100 else
+        D["capture_partial"].format(pct=fmt(summary.overall_hourly_capture_pct)))
 
     # NCEC Table 5 rows (from campaign summary's evaluations for consistency)
     ncec_rows = []
     for key, lbl in [("SO2", "SO₂"), ("CO", "CO"), ("O3", "O3"), ("H2S", "H₂S"),
                      ("NO2", "NO2"), ("PM10", "PM10"), ("PM25", "PM2.5")]:
         for e in P[key].period_evaluations:
+            allowance = e.allowance_description or "None"
             ncec_rows.append({
                 "pollutant": lbl,
-                "period": e.averaging_period,
+                "period": PERIOD_NAMES[lang][e.averaging_period],
                 "limit": fmt_limit(e.limit_ugm3),
-                "allowance": e.allowance_description or "None",
+                "allowance": ALLOWANCE[lang].get(allowance, allowance),
             })
 
     # Wind tables
@@ -240,21 +230,18 @@ def build_context(campaign: Campaign, summary: CampaignSummary) -> Dict:
     # Conclusions
     def conclusion(key: str, title: str, has_8h=False) -> Dict:
         p = P[key]
-        lines = [f"The hourly maximum concentration was {fmt(p.hourly_max)} µg/m³."
-                 + (f" The 8-hour maximum concentration was "
-                    f"{fmt(p.rolling_8h_max)} µg/m³." if has_8h else "")]
+        lines = [D["concl_hmax"].format(v=fmt(p.hourly_max))
+                 + (D["concl_8hmax"].format(v=fmt(p.rolling_8h_max))
+                    if has_8h else "")]
         evs = [e for e in p.period_evaluations
                if e.averaging_period != "1 Year"]
         if any(e.verdict == "non-compliant" for e in evs):
-            lines.append("Exceedance(s) of NCEC standards were recorded.")
+            lines.append(D["concl_exceed"])
         elif all(e.exceedance_count == 0 for e in evs):
-            lines.append("There were no exceedances of NCEC standards.")
+            lines.append(D["concl_clean"])
         else:
-            lines.append("Observed values above the NCEC exceedance level are "
-                         "reported for information only (allowance reference "
-                         "period exceeds the campaign length).")
-        lines.append(f"The daily average concentration was "
-                     f"{fmt(_daily_avg(p))} µg/m³.")
+            lines.append(D["concl_informational"])
+        lines.append(D["concl_davg"].format(v=fmt(_daily_avg(p))))
         return {"title": title, "lines": lines}
 
     conclusion_blocks = [
@@ -271,21 +258,14 @@ def build_context(campaign: Campaign, summary: CampaignSummary) -> Dict:
     n_flagged = summary.manually_flagged_readings
     n_auto = summary.auto_flagged_readings
     if n_flagged == 0 and n_auto == 0:
-        appendix1 = ("No Data Exception due to the short period of monitoring and "
-                     "all maintenance and multipoint calibration took place before "
-                     "and after the monitoring time.")
+        appendix1 = D["app1_none"]
     else:
         parts = []
         if n_auto:
-            parts.append(f"{n_auto} hourly record(s) contained negative pollutant "
-                         f"values that were invalidated at field level as "
-                         f"instrument/calibration artifacts")
+            parts.append(D["app1_auto"].format(n=n_auto))
         if n_flagged:
-            parts.append(f"{n_flagged} hourly record(s) were manually invalidated "
-                         f"during data validation")
-        appendix1 = ("Data exceptions during the monitoring period: "
-                     + "; ".join(parts) + ". All remaining data were validated "
-                     "per the procedures in Section 2.5.")
+            parts.append(D["app1_manual"].format(n=n_flagged))
+        appendix1 = D["app1_wrap"].format(parts=D["join_semi"].join(parts))
 
     # Table 4 — instruments (campaign override later; gold-standard defaults now)
     instruments = getattr(campaign, "instruments", None) or [
@@ -332,14 +312,14 @@ def build_context(campaign: Campaign, summary: CampaignSummary) -> Dict:
         "inlet_height_m": f"{campaign.inlet_height_m:g}",
         "report_number": campaign.report_number or "—",
         "revision": campaign.revision,
-        "reporting_date": (campaign.reporting_date.strftime("%d %B %Y")
+        "reporting_date": (fmt_date(campaign.reporting_date, lang)
                            if campaign.reporting_date else "—"),
         "prepared_by": campaign.prepared_by or "—",
         "project_supervision": campaign.project_supervision or "—",
         # window
         "monitoring_hours": hours,
         "monitoring_period_text": period_text,
-        "monitoring_start_date": start.strftime("%B %d, %Y"),
+        "monitoring_start_date": fmt_date(start, lang),
         "monitoring_window_text": window_text,
         "overall_capture": fmt(summary.overall_hourly_capture_pct),
         "capture_sentence": capture_sentence,
@@ -365,19 +345,14 @@ def build_context(campaign: Campaign, summary: CampaignSummary) -> Dict:
             "ws_mean": fmt(met.wind_speed_mean),
             "prevailing": met.prevailing_wind_direction or "—",
         },
-        "met_conclusion_1": (
-            f"Hourly maximum and minimum temperatures were {fmt(met.temp_max)} °C "
-            f"and {fmt(met.temp_min)} °C, respectively."),
-        "met_conclusion_2": (
-            f"Hourly maximum and minimum relative humidity were {fmt(met.rh_max)} % "
-            f"and {fmt(met.rh_min)} %, respectively."),
-        "met_conclusion_3": (
-            f"Hourly maximum and minimum barometric pressure were "
-            f"{fmt(met.pressure_max)} hPa and {fmt(met.pressure_min)} hPa, "
-            f"respectively."),
-        "met_conclusion_4": (
-            f"The maximum and minimum hourly wind speed were {fmt(met.wind_speed_max)} "
-            f"m/s and {fmt(met.wind_speed_min)} m/s, respectively."),
+        "met_conclusion_1": D["met1"].format(mx=fmt(met.temp_max),
+                                             mn=fmt(met.temp_min)),
+        "met_conclusion_2": D["met2"].format(mx=fmt(met.rh_max),
+                                             mn=fmt(met.rh_min)),
+        "met_conclusion_3": D["met3"].format(mx=fmt(met.pressure_max),
+                                             mn=fmt(met.pressure_min)),
+        "met_conclusion_4": D["met4"].format(mx=fmt(met.wind_speed_max),
+                                             mn=fmt(met.wind_speed_min)),
         # wind tables
         "wind_class_labels": non_calm,
         "wind_pct_rows": wind_pct_rows,
