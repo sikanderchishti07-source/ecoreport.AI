@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 
 from db import db, to_mongo
 from models import Campaign, PollutantLimit, Reading
-from report.generate import generate_report
+from report.generate import convert_to_pdf, generate_report
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["report"])
@@ -21,7 +21,14 @@ REPORT_DIR = os.environ.get("REPORT_DIR", os.path.join(tempfile.gettempdir(), "e
 
 
 @router.post("/campaigns/{campaign_id}/report")
-async def create_report(campaign_id: str):
+async def create_report(campaign_id: str, lang: str = "en",
+                        format: str = "docx"):
+    if lang not in ("en", "ar", "bilingual"):
+        raise HTTPException(status_code=422,
+                            detail="lang must be en, ar, or bilingual")
+    if format not in ("docx", "pdf"):
+        raise HTTPException(status_code=422,
+                            detail="format must be docx or pdf")
     campaign_doc = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if not campaign_doc:
         raise HTTPException(status_code=404, detail="Campaign not found")
@@ -39,11 +46,14 @@ async def create_report(campaign_id: str):
     limits: List[PollutantLimit] = [PollutantLimit(**d) for d in limit_docs]
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    fname = f"AAQ_Report_{campaign_id[:8]}_{ts}.docx"
+    fname = f"AAQ_Report_{campaign_id[:8]}_{ts}_{lang}.docx"
     out_path = os.path.join(REPORT_DIR, campaign_id, fname)
 
     try:
-        generate_report(campaign, readings, limits, out_path)
+        generate_report(campaign, readings, limits, out_path, lang=lang)
+        if format == "pdf":
+            out_path = convert_to_pdf(out_path)
+            fname = os.path.basename(out_path)
     except Exception as exc:  # noqa: BLE001
         log.exception("report generation failed")
         raise HTTPException(status_code=500, detail=f"Report generation failed: {exc}")
@@ -53,15 +63,15 @@ async def create_report(campaign_id: str):
         "campaign_id": campaign_id,
         "filename": fname,
         "path": out_path,
+        "lang": lang,
+        "format": format,
         "generated_at": datetime.now(timezone.utc),
     }))
 
-    return FileResponse(
-        out_path,
-        media_type=("application/vnd.openxmlformats-officedocument"
-                    ".wordprocessingml.document"),
-        filename=fname,
-    )
+    media = ("application/pdf" if format == "pdf" else
+             "application/vnd.openxmlformats-officedocument"
+             ".wordprocessingml.document")
+    return FileResponse(out_path, media_type=media, filename=fname)
 
 
 @router.get("/campaigns/{campaign_id}/reports")
