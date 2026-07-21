@@ -181,6 +181,36 @@ def _detect_timestamp_by_content(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
+def _smart_parse_timestamps(series: pd.Series) -> tuple[pd.Series, bool]:
+    """Parse a timestamp column with day-first awareness.
+
+    Vendor exports in KSA commonly use DD/MM/YYYY. Ambiguous strings like
+    06/07/2026 parse to different months depending on convention, which can
+    silently shift a whole dataset outside the campaign window. We parse the
+    column BOTH ways and keep the interpretation that (a) parses more rows,
+    then (b) produces the more chronologically ordered sequence, with a tie
+    going to day-first (the regional convention). Real datetime cells (from
+    Excel) are unaffected — both parses agree.
+    Returns (parsed_series, used_dayfirst)."""
+    a = pd.to_datetime(series, errors="coerce", dayfirst=False)
+    b = pd.to_datetime(series, errors="coerce", dayfirst=True)
+    na_a, na_b = int(a.isna().sum()), int(b.isna().sum())
+    if na_a != na_b:
+        return (a, False) if na_a < na_b else (b, True)
+
+    def order_score(s: pd.Series) -> int:
+        v = s.dropna()
+        if len(v) < 2:
+            return 0
+        diffs = v.diff().dropna()
+        return int((diffs > pd.Timedelta(0)).sum())
+
+    sa, sb = order_score(a), order_score(b)
+    if sa == sb:
+        return b, True          # tie -> regional convention (day-first)
+    return (a, False) if sa > sb else (b, True)
+
+
 async def _load_dataframe(file: UploadFile) -> tuple[pd.DataFrame, str]:
     filename = (file.filename or "").lower()
     contents = await file.read()
@@ -241,6 +271,14 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
     auto_flagged_readings = 0
     auto_flagged_field_counts: dict[str, int] = {}
     to_insert = []
+
+    used_dayfirst = False
+    if "timestamp" in df.columns:
+        parsed_ts, used_dayfirst = _smart_parse_timestamps(df["timestamp"])
+        df["timestamp"] = parsed_ts
+        if used_dayfirst:
+            errors.append(
+                "Note: timestamps were read as day/month/year (DD/MM/YYYY).")
 
     for idx, row in df.iterrows():
         try:

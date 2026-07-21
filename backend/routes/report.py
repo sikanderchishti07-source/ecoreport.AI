@@ -50,6 +50,30 @@ async def create_report(campaign_id: str, lang: str = "en",
     limit_docs = await db.pollutant_limits.find({}, {"_id": 0}).to_list(length=200)
     limits: List[PollutantLimit] = [PollutantLimit(**d) for d in limit_docs]
 
+    # Guard: a report with zero readings inside the monitoring window would be
+    # an empty shell of N/R tables and blank charts. Fail early with the exact
+    # mismatch so the user can fix the campaign dates or re-upload the data.
+    from calc import _as_utc
+    w_start, w_end = _as_utc(campaign.monitoring_start), _as_utc(campaign.monitoring_end)
+    in_window = sum(1 for r in readings if w_start <= _as_utc(r.timestamp) < w_end)
+    if in_window == 0:
+        d_min = min(_as_utc(r.timestamp) for r in readings)
+        d_max = max(_as_utc(r.timestamp) for r in readings)
+        fmt = "%d %b %Y %H:%M"
+        raise HTTPException(
+            status_code=400,
+            detail=(f"No readings fall inside this campaign's monitoring window. "
+                    f"Your uploaded data covers {d_min.strftime(fmt)} to "
+                    f"{d_max.strftime(fmt)} (UTC), but the campaign window is "
+                    f"{w_start.strftime(fmt)} to {w_end.strftime(fmt)}. "
+                    f"Edit the campaign's monitoring start/end dates to match "
+                    f"the data (or re-upload the correct file), then generate "
+                    f"again."))
+    total_hours = max(int((w_end - w_start).total_seconds() // 3600), 1)
+    if in_window < 0.05 * total_hours:
+        log.warning("report window covers only %s readings of %s window hours",
+                    in_window, total_hours)
+
     # Version number: sequential per campaign across all languages/formats
     version = await db.report_logs.count_documents(
         {"campaign_id": campaign_id}) + 1
