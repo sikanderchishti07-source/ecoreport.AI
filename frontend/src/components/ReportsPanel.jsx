@@ -12,7 +12,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  campaignAudit, generateReport, listReports, reportDownloadUrl,
+  campaignAudit, downloadReportVersion, generateReport, listReports,
 } from "@/lib/api";
 
 const LANGS = [
@@ -225,12 +225,20 @@ export default function ReportsPanel({ campaignId, readingCount }) {
                   <TableCell className="text-xs">{r.generated_by || "—"}</TableCell>
                   <TableCell className="text-right">
                     {r.id ? (
-                      <a
-                        href={reportDownloadUrl(r.id)}
+                      <button
+                        onClick={() =>
+                          downloadReportVersion(r.id, r.filename).catch((e) =>
+                            toast.error(
+                              e?.response?.status === 410
+                                ? "This file is no longer on the server — regenerate to create a new version."
+                                : "Download failed"
+                            )
+                          )
+                        }
                         className="text-xs text-primary hover:underline inline-flex items-center gap-1"
                       >
                         <FileDown className="w-3.5 h-3.5" /> {r.filename}
-                      </a>
+                      </button>
                     ) : (
                       <span className="text-xs text-muted-foreground">{r.filename}</span>
                     )}
