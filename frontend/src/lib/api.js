@@ -8,15 +8,51 @@ export const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-// Operator attribution for the audit trail (Phase 6)
-export const getOperator = () => localStorage.getItem("ecoreport_operator") || "";
-export const setOperator = (name) =>
-  localStorage.setItem("ecoreport_operator", (name || "").trim());
+// ---- Auth (Phase 7) ----
+export const getToken = () => localStorage.getItem("ecoreport_token") || "";
+export const getUser = () => {
+  try {
+    return JSON.parse(localStorage.getItem("ecoreport_user") || "null");
+  } catch {
+    return null;
+  }
+};
+export const setSession = (token, user) => {
+  localStorage.setItem("ecoreport_token", token);
+  localStorage.setItem("ecoreport_user", JSON.stringify(user));
+};
+export const clearSession = () => {
+  localStorage.removeItem("ecoreport_token");
+  localStorage.removeItem("ecoreport_user");
+};
+
 api.interceptors.request.use((config) => {
-  const op = getOperator();
-  if (op) config.headers["X-User"] = op;
+  const t = getToken();
+  if (t) config.headers["Authorization"] = `Bearer ${t}`;
   return config;
 });
+api.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (err?.response?.status === 401 &&
+        !window.location.pathname.startsWith("/login")) {
+      clearSession();
+      window.location.href = "/login";
+    }
+    return Promise.reject(err);
+  }
+);
+
+export const authStatus = () => api.get("/auth/status").then((r) => r.data);
+export const authSetup = (payload) =>
+  api.post("/auth/setup", payload).then((r) => r.data);
+export const authLogin = (payload) =>
+  api.post("/auth/login", payload).then((r) => r.data);
+export const listUsers = () => api.get("/auth/users").then((r) => r.data);
+export const createUser = (payload) =>
+  api.post("/auth/users", payload).then((r) => r.data);
+export const updateUser = (id, payload) =>
+  api.patch(`/auth/users/${id}`, payload).then((r) => r.data);
 
 // Campaigns
 export const listCampaigns = () => api.get("/campaigns").then((r) => r.data);
@@ -70,8 +106,17 @@ export const generateReport = async (campaignId, lang = "en", format = "docx") =
 };
 export const listReports = (campaignId) =>
   api.get(`/campaigns/${campaignId}/reports`).then((r) => r.data);
-export const reportDownloadUrl = (reportId) =>
-  `${API_BASE}/reports/${reportId}/download`;
+export const downloadReportVersion = async (reportId, filename) => {
+  const res = await api.get(`/reports/${reportId}/download`, {
+    responseType: "blob", timeout: 300000,
+  });
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "report";
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
 // Audit trail & archive search (Phase 6)
 export const campaignAudit = (campaignId) =>
