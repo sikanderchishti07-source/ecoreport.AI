@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Annotated, Any, Dict, List, Optional
 
 from bson import ObjectId
@@ -147,13 +148,39 @@ class ReadingFlagUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 # Regulatory reference limits (seeded, read-only in the app).
 # ---------------------------------------------------------------------------
+class AllowanceWindow(str, Enum):
+    """Governs how the compliance verdict is evaluated for a given limit.
+
+    - SINGLE_EXCEEDANCE: any single exceedance = violation (evaluable from any
+      campaign length; e.g. H2S 1h/24h "None allowed").
+    - ANNUAL: N allowed exceedances per calendar year (only evaluable when the
+      campaign covers >= 75% of the year, i.e. 6570 hours).
+    - DAYS_30: N allowed exceedances in any rolling 30-day window (needs >=75%
+      of 30 days = 540 hours coverage; e.g. CO 8h "2 in 30 days").
+    - ANNUAL_MEAN: the limit IS the annual arithmetic mean (SO2/NO2/PM10/PM25
+      1-year limits). Needs >=75% annual data capture to evaluate.
+    """
+    SINGLE_EXCEEDANCE = "single_exceedance"
+    ANNUAL = "annual"
+    DAYS_30 = "days_30"
+    ANNUAL_MEAN = "annual_mean"
+
+
+class AllowanceRule(BaseModel):
+    """Structured form of 'Number of Allowable Exceedances'."""
+    count: Optional[int] = None
+    window: AllowanceWindow
+    description: str  # human display, e.g. "24 times per year"
+
+
 class PollutantLimit(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     pollutant: str
-    averaging_period: str  # human label: "1 Hour" | "8 Hour" | "24 Hour" | "1 Year"
-    averaging_period_hours: Optional[float] = None  # 1, 8, 24, 8760 (None => 1y)
+    averaging_period: str  # human label: "1 Hour" | "8 Hour (rolling)" | "24 Hour" | "1 Year"
+    averaging_period_hours: Optional[float] = None  # 1, 8, 24 (None => 1y)
     limit_ugm3: float
-    allowable_exceedances: Optional[str] = None
+    allowable_exceedances: Optional[str] = None  # legacy free-text (display)
+    allowance: Optional[AllowanceRule] = None  # NEW structured field
     source: str = "KSA NCEC 2020"
 
 
@@ -180,3 +207,110 @@ class UploadLog(BaseModel):
 class UploadResult(BaseModel):
     upload_log: UploadLog
     preview: List[Reading] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — Calculation engine output models.
+# ---------------------------------------------------------------------------
+COMPLIANCE_POLLUTANTS = ("SO2", "NO2", "CO", "H2S", "O3", "PM10", "PM25")
+SUPPORTING_POLLUTANTS = ("NO", "NOx")
+
+INSUFFICIENT_STR = "insufficient data \u2014 not reportable"
+
+
+class PeriodEvaluation(BaseModel):
+    """One row per (pollutant × averaging period) — matches BSA report tables."""
+    averaging_period: str
+    limit_ugm3: float
+    allowance_description: str
+    # Data-quality gate
+    expected_readings: int
+    valid_readings: int
+    capture_pct: float
+    sufficient: bool
+    # Statistics (None when sufficient=False)
+    max_value: Optional[float] = None
+    min_value: Optional[float] = None
+    mean_value: Optional[float] = None
+    # Exceedance
+    exceedance_count: int  # informational — always reported
+    exceedance_evaluable: bool
+    verdict: str  # "compliant" | "non-compliant" | INSUFFICIENT_STR
+    verdict_reason: str
+
+
+class PollutantEvaluation(BaseModel):
+    pollutant: str
+    is_supporting: bool  # true for NO, NOx — no compliance verdict
+    # Campaign-level hourly capture and stats
+    hourly_capture_pct: float
+    hourly_valid_count: int
+    hourly_expected_count: int
+    hourly_max: Optional[float] = None
+    hourly_min: Optional[float] = None
+    hourly_mean: Optional[float] = None
+    # Optional 8-hr rolling stats (populated only for CO and O3)
+    rolling_8h_max: Optional[float] = None
+    rolling_8h_min: Optional[float] = None
+    rolling_8h_mean: Optional[float] = None
+    rolling_8h_valid_count: int = 0
+    rolling_8h_expected_count: int = 0
+    # Per-averaging-period NCEC evaluations (empty for supporting pollutants)
+    period_evaluations: List[PeriodEvaluation] = Field(default_factory=list)
+
+
+class MeteorologySummary(BaseModel):
+    monitoring_hours: int
+    temp_capture_pct: float
+    temp_max: Optional[float] = None
+    temp_min: Optional[float] = None
+    temp_mean: Optional[float] = None
+    rh_capture_pct: float
+    rh_max: Optional[float] = None
+    rh_min: Optional[float] = None
+    rh_mean: Optional[float] = None
+    pressure_capture_pct: float
+    pressure_max: Optional[float] = None
+    pressure_min: Optional[float] = None
+    pressure_mean: Optional[float] = None
+    wind_speed_capture_pct: float
+    wind_speed_max: Optional[float] = None
+    wind_speed_min: Optional[float] = None
+    wind_speed_mean: Optional[float] = None
+    wind_direction_capture_pct: float
+    prevailing_wind_direction: Optional[str] = None
+
+
+class WindDirectionRow(BaseModel):
+    direction: str  # "N", "NNE", ...
+    counts_by_class: Dict[str, int]
+    total: int
+    frequency_pct: float
+
+
+class WindRoseSummary(BaseModel):
+    bins: List[WindClassBin]
+    direction_rows: List[WindDirectionRow]  # 16 rows (N..NNW)
+    class_totals: Dict[str, int]
+    class_frequency_pct: Dict[str, float]
+    total_valid: int
+    total_hours: int
+    calms_count: int
+    calms_pct: float
+    prevailing_direction: Optional[str] = None
+    mean_wind_speed: Optional[float] = None
+
+
+class CampaignSummary(BaseModel):
+    campaign_id: str
+    monitoring_start: datetime
+    monitoring_end: datetime
+    monitoring_hours: int
+    total_readings: int
+    manually_flagged_readings: int
+    auto_flagged_readings: int
+    overall_hourly_capture_pct: float
+    generated_at: datetime = Field(default_factory=utcnow)
+    pollutants: List[PollutantEvaluation]
+    meteorology: MeteorologySummary
+    wind_rose: WindRoseSummary

@@ -11,6 +11,7 @@ from db import create_indexes, seed_pollutant_limits
 from routes import campaigns as campaigns_router
 from routes import limits as limits_router
 from routes import readings as readings_router
+from routes import summary as summary_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +38,7 @@ async def health() -> dict:
 api.include_router(campaigns_router.router)
 api.include_router(readings_router.router)
 api.include_router(limits_router.router)
+api.include_router(summary_router.router)
 
 app.include_router(api)
 
