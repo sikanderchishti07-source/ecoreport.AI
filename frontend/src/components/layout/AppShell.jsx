@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { NavLink, Outlet, Link } from "react-router-dom";
-import { Activity, Gauge, Ruler } from "lucide-react";
+import { Activity, Gauge, Ruler, UserRound } from "lucide-react";
 import { NAV } from "@/constants/testIds";
 import { Toaster } from "sonner";
+import { getOperator, setOperator } from "@/lib/api";
 
 const linkBase =
   "px-3 py-2 text-sm rounded-sm border border-transparent hover:bg-zinc-900 hover:border-border transition-colors";
@@ -9,6 +11,11 @@ const linkActive = "bg-zinc-900 border-border text-foreground";
 const linkIdle = "text-muted-foreground";
 
 export default function AppShell() {
+  const [operator, setOperatorState] = useState(getOperator());
+  const onOperatorChange = (e) => {
+    setOperatorState(e.target.value);
+    setOperator(e.target.value);
+  };
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <header className="sticky top-0 z-30 border-b border-border bg-background/95 backdrop-blur">
@@ -27,6 +34,19 @@ export default function AppShell() {
             </span>
           </Link>
           <nav className="flex items-center gap-1">
+            <div
+              className="hidden sm:flex items-center gap-1.5 mr-2 border border-border rounded-sm px-2 h-9 bg-zinc-900/40"
+              title="Your name — recorded in the audit trail on every action"
+            >
+              <UserRound className="w-3.5 h-3.5 text-muted-foreground" />
+              <input
+                value={operator}
+                onChange={onOperatorChange}
+                placeholder="Your name"
+                className="bg-transparent outline-none text-xs w-28 placeholder:text-muted-foreground"
+                data-testid="operator-name-input"
+              />
+            </div>
             <NavLink
               to="/campaigns"
               data-testid={NAV.campaigns}
