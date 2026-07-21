@@ -1,4 +1,5 @@
 """EcoReport AI — FastAPI backend entrypoint (Phase 1 skeleton)."""
+from routes import report as report_router
 from __future__ import annotations
 
 import logging
@@ -35,6 +36,7 @@ async def health() -> dict:
 
 
 # Mount domain routers under /api
+api.include_router(report_router.router)
 api.include_router(campaigns_router.router)
 api.include_router(readings_router.router)
 api.include_router(limits_router.router)
