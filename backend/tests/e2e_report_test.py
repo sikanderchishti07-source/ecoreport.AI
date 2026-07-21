@@ -80,3 +80,19 @@ out = "/home/claude/outputs_report/AAQ_Report_Qiddiyah_SAMPLE.docx"
 path = generate_report(campaign, readings, limits, out,
                        charts_dir="/home/claude/outputs_report/charts")
 print("\nreport written:", path, os.path.getsize(path), "bytes")
+
+# --- Phase 5: Arabic, bilingual, and PDF outputs ---
+out_ar = "/home/claude/outputs_report/AAQ_Report_Qiddiyah_SAMPLE_AR.docx"
+generate_report(campaign, readings, limits, out_ar,
+                charts_dir="/home/claude/outputs_report/charts", lang="ar")
+print("AR report:", out_ar, os.path.getsize(out_ar), "bytes")
+
+out_bi = "/home/claude/outputs_report/AAQ_Report_Qiddiyah_SAMPLE_BILINGUAL.docx"
+generate_report(campaign, readings, limits, out_bi,
+                charts_dir="/home/claude/outputs_report/charts", lang="bilingual")
+print("Bilingual report:", out_bi, os.path.getsize(out_bi), "bytes")
+
+from report.generate import convert_to_pdf
+for p in (out_ar, out_bi):
+    pdf = convert_to_pdf(p)
+    print("PDF:", pdf, os.path.getsize(pdf), "bytes")
