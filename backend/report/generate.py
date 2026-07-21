@@ -7,6 +7,7 @@ Charts are regenerated from the raw data on every call.
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from typing import Dict, List, Optional, Tuple
 
@@ -166,12 +167,28 @@ def convert_to_pdf(docx_path: str, out_dir: Optional[str] = None) -> str:
             "Install it (e.g. `apt-get install libreoffice fonts-hosny-amiri "
             "fonts-noto-core`) and retry.")
     out_dir = out_dir or os.path.dirname(os.path.abspath(docx_path))
+    pdf_path = os.path.join(
+        out_dir, os.path.splitext(os.path.basename(docx_path))[0] + ".pdf")
+
+    # Preferred path: UNO bridge — updates TOC / List of Figures / List of
+    # Tables before export so index pages are populated in the PDF.
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "report.uno_pdf", docx_path, pdf_path],
+            check=True, capture_output=True, timeout=420,
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        if os.path.exists(pdf_path):
+            return pdf_path
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "UNO PDF path failed — falling back to plain conversion "
+            "(TOC pages may be empty)", exc_info=True)
+
     subprocess.run(
         [soffice, "--headless", "--convert-to", "pdf", "--outdir", out_dir,
          docx_path],
         check=True, capture_output=True, timeout=300)
-    pdf_path = os.path.join(
-        out_dir, os.path.splitext(os.path.basename(docx_path))[0] + ".pdf")
     if not os.path.exists(pdf_path):
         raise RuntimeError("PDF conversion produced no output file.")
     return pdf_path
