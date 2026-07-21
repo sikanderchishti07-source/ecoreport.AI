@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import ReportsPanel from "@/components/ReportsPanel";
 import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
@@ -504,14 +505,7 @@ export default function CampaignDetail() {
 
         {/* REPORTS (placeholder) */}
         <TabsContent value="reports" className="mt-4">
-          <div className="border border-dashed border-border rounded-sm p-10 text-center">
-            <h3 className="text-sm font-semibold">Reports</h3>
-            <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
-              Report generation lands in later phases: calculation engine → English report → graphs →
-              Arabic/bilingual → versioning → storage & auth.
-              For now, once readings are ingested and QA-flagged you can proceed to Phase 2.
-            </p>
-          </div>
+          <ReportsPanel campaignId={id} readingCount={campaign?.reading_count} />
         </TabsContent>
       </Tabs>
     </div>

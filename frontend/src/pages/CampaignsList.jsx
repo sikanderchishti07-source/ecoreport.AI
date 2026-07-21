@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus, Trash2, ArrowRight, MapPin } from "lucide-react";
+import { Plus, Trash2, ArrowRight, MapPin, Search, X } from "lucide-react";
 
-import { listCampaigns, deleteCampaign } from "@/lib/api";
+import { listCampaigns, deleteCampaign, searchArchive } from "@/lib/api";
 import { CAMPAIGNS_LIST } from "@/constants/testIds";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +50,8 @@ export default function CampaignsList() {
   const nav = useNavigate();
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [searchMeta, setSearchMeta] = useState(null); // {count, reports}
 
   const load = async () => {
     setLoading(true);
@@ -66,6 +68,37 @@ export default function CampaignsList() {
   useEffect(() => {
     load();
   }, []);
+
+  // Server-side archive search (project, client, site, report number)
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setSearchMeta(null);
+      load();
+      return;
+    }
+    const t = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const data = await searchArchive(q);
+        const reportInfo = {};
+        data.results.forEach((r) => {
+          reportInfo[r.campaign.id] = {
+            count: r.report_count,
+            latest: r.latest_report,
+          };
+        });
+        setCampaigns(data.results.map((r) => r.campaign));
+        setSearchMeta({ count: data.count, reports: reportInfo });
+      } catch {
+        toast.error("Search failed");
+      } finally {
+        setLoading(false);
+      }
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
 
   const handleDelete = async (id) => {
     try {
@@ -94,6 +127,29 @@ export default function CampaignsList() {
           <Plus className="w-4 h-4 mr-2" /> New Campaign
         </Button>
       </header>
+
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 border border-border rounded-sm px-3 h-10 bg-zinc-900/40 w-full max-w-md">
+          <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search archive — project, client, site, or report number…"
+            className="bg-transparent outline-none text-sm w-full placeholder:text-muted-foreground"
+            data-testid="archive-search-input"
+          />
+          {query && (
+            <button onClick={() => setQuery("")} title="Clear">
+              <X className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+            </button>
+          )}
+        </div>
+        {searchMeta && (
+          <span className="text-xs text-muted-foreground whitespace-nowrap">
+            {searchMeta.count} match{searchMeta.count === 1 ? "" : "es"}
+          </span>
+        )}
+      </div>
 
       <section className="border border-border rounded-sm overflow-hidden">
         <div className="grid grid-cols-12 bg-zinc-900/50 text-[11px] uppercase tracking-wider text-muted-foreground px-4 py-2 border-b border-border">
