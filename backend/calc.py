@@ -106,16 +106,41 @@ def _speed_class(ws: float, bins: List[WindClassBin]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Rolling 8-hr and daily aggregation
 # ---------------------------------------------------------------------------
-def rolling_8h(readings: List[Reading], field: str) -> List[Optional[float]]:
-    """For each hourly reading position i, compute the 8-hr rolling mean over
-    [i-7, i]. Blank for i < 7 (insufficient window). Blank if fewer than 6 of
-    the 8 window hours are valid."""
+def _as_utc(dt: datetime) -> datetime:
+    """Coerce naive datetimes to UTC so aware/naive mixes never crash."""
+    if dt.tzinfo is None:
+        from datetime import timezone as _tz
+        return dt.replace(tzinfo=_tz.utc)
+    return dt
+
+
+def _hour_slot(dt: datetime) -> datetime:
+    return _as_utc(dt).replace(minute=0, second=0, microsecond=0)
+
+
+def rolling_8h(
+    readings: List[Reading],
+    field: str,
+    window_start: Optional[datetime] = None,
+) -> List[Optional[float]]:
+    """For each hourly reading, compute the 8-hr rolling mean over the CLOCK
+    hours [t-7h, t] (timestamp-based, so gaps in the file do NOT silently
+    stretch the window). Blank for the first 7 hours of the monitoring window
+    (insufficient window — non-configurable). Blank if fewer than 6 of the 8
+    clock-hour slots are valid."""
     n = len(readings)
     out: List[Optional[float]] = [None] * n
-    for i in range(n):
-        if i < 7:
+    if n == 0:
+        return out
+    by_hour: Dict[datetime, Optional[float]] = {}
+    for r in readings:
+        by_hour[_hour_slot(r.timestamp)] = _effective(r, field)
+    first = _hour_slot(window_start) if window_start else _hour_slot(readings[0].timestamp)
+    for i, r in enumerate(readings):
+        ts = _hour_slot(r.timestamp)
+        if ts - first < timedelta(hours=7):
             continue
-        window = [_effective(readings[i - j], field) for j in range(8)]
+        window = [by_hour.get(ts - timedelta(hours=j)) for j in range(8)]
         valid = [v for v in window if v is not None]
         if len(valid) < 6:
             continue
@@ -123,21 +148,38 @@ def rolling_8h(readings: List[Reading], field: str) -> List[Optional[float]]:
     return out
 
 
-def daily_means(readings: List[Reading], field: str) -> List[Tuple[date, Optional[float], int, int]]:
+def daily_means(
+    readings: List[Reading],
+    field: str,
+    window_start: Optional[datetime] = None,
+    window_end: Optional[datetime] = None,
+) -> List[Tuple[date, Optional[float], int, int]]:
     """Group readings by calendar day (UTC). Return list of tuples
-    (day, mean_or_None, valid_hours, expected_hours). A day's mean is None
-    when its 75% capture threshold (proportional to expected hours of the day
-    within the monitoring window) is not met."""
+    (day, mean_or_None, valid_hours, expected_hours). Expected hours for a day
+    are the CLOCK hours of that day intersecting the monitoring window (so
+    hours missing entirely from the file still count against capture). A day's
+    mean is None when its 75% capture threshold is not met."""
     by_day: Dict[date, List[Reading]] = defaultdict(list)
     for r in readings:
-        by_day[r.timestamp.date()].append(r)
+        by_day[_as_utc(r.timestamp).date()].append(r)
+    ws = _as_utc(window_start) if window_start else None
+    we = _as_utc(window_end) if window_end else None
     out: List[Tuple[date, Optional[float], int, int]] = []
     for day, rows in sorted(by_day.items()):
-        expected = len(rows)  # actual rows in monitoring window for this day
+        if ws is not None and we is not None:
+            from datetime import time as _time, timezone as _tz
+            day_start = datetime.combine(day, _time.min, tzinfo=_tz.utc)
+            day_end = day_start + timedelta(days=1)
+            ov = (min(day_end, we) - max(day_start, ws)).total_seconds() / 3600.0
+            expected = max(int(round(ov)), 0)
+            # Never let the denominator drop below rows actually present.
+            expected = max(expected, len(rows))
+        else:
+            expected = len(rows)  # fallback: rows present for this day
         if expected == 0:
             continue
         vals = [v for v in (_effective(r, field) for r in rows) if v is not None]
-        if expected >= 1 and len(vals) / expected >= 0.75 and vals:
+        if len(vals) / expected >= 0.75 and vals:
             out.append((day, sum(vals) / len(vals), len(vals), expected))
         else:
             out.append((day, None, len(vals), expected))
@@ -248,9 +290,10 @@ def _evaluate_8h_rolling(
     limit: PollutantLimit,
     readings: List[Reading],
     monitored_hours: int,
+    window_start: Optional[datetime] = None,
 ) -> PeriodEvaluation:
     field = limit.pollutant
-    rolling = rolling_8h(readings, field)
+    rolling = rolling_8h(readings, field, window_start=window_start)
     valid_rolling = [v for v in rolling if v is not None]
     expected = max(monitored_hours - 7, 0)
     capture_pct = (len(valid_rolling) / expected * 100.0) if expected else 0.0
@@ -281,9 +324,11 @@ def _evaluate_daily(
     limit: PollutantLimit,
     readings: List[Reading],
     monitored_hours: int,
+    window_start: Optional[datetime] = None,
+    window_end: Optional[datetime] = None,
 ) -> PeriodEvaluation:
     field = limit.pollutant
-    daily = daily_means(readings, field)
+    daily = daily_means(readings, field, window_start=window_start, window_end=window_end)
     valid_days = [d for d in daily if d[1] is not None]
     expected = len(daily)  # number of calendar days touched by the monitoring window
     capture_pct = (len(valid_days) / expected * 100.0) if expected else 0.0
@@ -365,14 +410,17 @@ def _evaluate_limit(
     limit: PollutantLimit,
     readings: List[Reading],
     monitored_hours: int,
+    window_start: Optional[datetime] = None,
+    window_end: Optional[datetime] = None,
 ) -> PeriodEvaluation:
     hours = limit.averaging_period_hours
     if hours == 1:
         return _evaluate_hourly(limit, readings, monitored_hours)
     if hours == 8:
-        return _evaluate_8h_rolling(limit, readings, monitored_hours)
+        return _evaluate_8h_rolling(limit, readings, monitored_hours, window_start=window_start)
     if hours == 24:
-        return _evaluate_daily(limit, readings, monitored_hours)
+        return _evaluate_daily(limit, readings, monitored_hours,
+                               window_start=window_start, window_end=window_end)
     return _evaluate_annual(limit, readings, monitored_hours)
 
 
@@ -384,6 +432,8 @@ def _pollutant_evaluation(
     readings: List[Reading],
     limits_for_pollutant: List[PollutantLimit],
     monitored_hours: int,
+    window_start: Optional[datetime] = None,
+    window_end: Optional[datetime] = None,
 ) -> PollutantEvaluation:
     is_supporting = pollutant in SUPPORTING_POLLUTANTS
 
@@ -399,7 +449,7 @@ def _pollutant_evaluation(
     r8_expected = 0
     # 8-hour rolling only for CO and O3
     if pollutant in ("CO", "O3"):
-        rolling = rolling_8h(readings, pollutant)
+        rolling = rolling_8h(readings, pollutant, window_start=window_start)
         valid_rolling = [v for v in rolling if v is not None]
         r8_expected = max(monitored_hours - 7, 0)
         r8_valid_count = len(valid_rolling)
@@ -417,7 +467,10 @@ def _pollutant_evaluation(
                 l.averaging_period,
             ),
         ):
-            period_evals.append(_evaluate_limit(lim, readings, monitored_hours))
+            period_evals.append(_evaluate_limit(
+                lim, readings, monitored_hours,
+                window_start=window_start, window_end=window_end,
+            ))
 
     return PollutantEvaluation(
         pollutant=pollutant,
@@ -550,6 +603,14 @@ def build_campaign_summary(
     and PollutantLimits from the DB."""
     m_hours = monitoring_hours(campaign)
 
+    # Only readings inside [monitoring_start, monitoring_end) count toward
+    # statistics and capture %. Out-of-window rows (e.g. a trailing 00:00
+    # endpoint row, or pre-campaign warm-up hours) are excluded here so
+    # capture can never exceed 100%.
+    w_start = _as_utc(campaign.monitoring_start)
+    w_end = _as_utc(campaign.monitoring_end)
+    readings = [r for r in readings if w_start <= _as_utc(r.timestamp) < w_end]
+
     # Group limits by pollutant for fast lookup
     limits_by_pol: Dict[str, List[PollutantLimit]] = defaultdict(list)
     for lim in limits:
@@ -558,7 +619,8 @@ def build_campaign_summary(
     pollutants: List[PollutantEvaluation] = []
     for pol in ALL_POLLUTANTS:
         pollutants.append(_pollutant_evaluation(
-            pol, readings, limits_by_pol.get(pol, []), m_hours
+            pol, readings, limits_by_pol.get(pol, []), m_hours,
+            window_start=w_start, window_end=w_end,
         ))
 
     met = _meteorology_summary(readings, m_hours)
