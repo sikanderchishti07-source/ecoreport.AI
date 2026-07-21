@@ -7,13 +7,28 @@ import CampaignForm from "@/pages/CampaignForm";
 import CampaignDetail from "@/pages/CampaignDetail";
 import UploadPage from "@/pages/UploadPage";
 import LimitsPage from "@/pages/LimitsPage";
+import LoginPage from "@/pages/LoginPage";
+import UsersPage from "@/pages/UsersPage";
+import { getToken } from "@/lib/api";
+
+function RequireAuth({ children }) {
+  if (!getToken()) return <Navigate to="/login" replace />;
+  return children;
+}
 
 export default function App() {
   return (
     <div className="App">
       <BrowserRouter>
         <Routes>
-          <Route element={<AppShell />}>
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            element={
+              <RequireAuth>
+                <AppShell />
+              </RequireAuth>
+            }
+          >
             <Route index element={<Navigate to="/campaigns" replace />} />
             <Route path="/campaigns" element={<CampaignsList />} />
             <Route path="/campaigns/new" element={<CampaignForm mode="create" />} />
@@ -21,6 +36,7 @@ export default function App() {
             <Route path="/campaigns/:id/edit" element={<CampaignForm mode="edit" />} />
             <Route path="/campaigns/:id/upload" element={<UploadPage />} />
             <Route path="/limits" element={<LimitsPage />} />
+            <Route path="/users" element={<UsersPage />} />
             <Route path="*" element={<Navigate to="/campaigns" replace />} />
           </Route>
         </Routes>
