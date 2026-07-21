@@ -1,56 +1,30 @@
-import { useEffect } from "react";
+import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+import AppShell from "@/components/layout/AppShell";
+import CampaignsList from "@/pages/CampaignsList";
+import CampaignForm from "@/pages/CampaignForm";
+import CampaignDetail from "@/pages/CampaignDetail";
+import UploadPage from "@/pages/UploadPage";
+import LimitsPage from "@/pages/LimitsPage";
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
-
-function App() {
+export default function App() {
   return (
     <div className="App">
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
+          <Route element={<AppShell />}>
+            <Route index element={<Navigate to="/campaigns" replace />} />
+            <Route path="/campaigns" element={<CampaignsList />} />
+            <Route path="/campaigns/new" element={<CampaignForm mode="create" />} />
+            <Route path="/campaigns/:id" element={<CampaignDetail />} />
+            <Route path="/campaigns/:id/edit" element={<CampaignForm mode="edit" />} />
+            <Route path="/campaigns/:id/upload" element={<UploadPage />} />
+            <Route path="/limits" element={<LimitsPage />} />
+            <Route path="*" element={<Navigate to="/campaigns" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>
     </div>
   );
 }
-
-export default App;

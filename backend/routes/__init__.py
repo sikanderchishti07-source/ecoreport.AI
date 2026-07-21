@@ -1,0 +1,1 @@
+# EcoReport AI route modules.
