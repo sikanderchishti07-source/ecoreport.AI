@@ -61,8 +61,35 @@ KSA NCEC 2020 (Royal Decree M/165, 19/11/1441 AH). 14 limits seeded on startup. 
 - testing_agent_v3 iteration 1: **14/14 backend + all critical frontend flows passed**.
 - Real vendor `.xls` verified via manual curl + Playwright: **25 rows ingested, 0 skipped, 15 recognized, 6 ignored** — no code changes needed after adaptation.
 
+## Phase 2 — Locked scope (waiting on averaging-period table before coding)
+
+### Data-quality rules (finalised)
+1. **Negative pollutant readings** → field-level auto-null on ingest, tracked in `Reading.auto_flagged_fields`, excluded from all calculations. Applies to `SO2, NO, NO2, NOx, CO, H2S, O3, PM10, PM25` only (meteorology not affected). ✅ implemented Phase 1.
+2. **75 % data-capture completeness gate** — for each pollutant × averaging period, if `valid_readings / expected_readings < 0.75`, replace all statistics/compliance verdicts/exceedance counts for that pollutant × period with the literal string **"insufficient data — not reportable"**.
+   - "Valid" = not auto-flagged AND not manually-flagged AND not null.
+   - Missing hours (no row in DB) count against capture.
+   - **Expected readings are pro-rated to the actual monitoring-window hours** that fall inside the averaging period (locked default).
+   - **Annual rows** are always shown even for short campaigns; if the campaign is shorter than the annual window, the row displays "insufficient data — not reportable" rather than being omitted (locked default).
+
+### Evaluation rules per averaging period
+| Period | Expected | Insufficient condition | On insufficient |
+|---|---|---|---|
+| 1-hr summary | campaign monitoring-hours | campaign valid-hours / monitoring-hours < 75 % | Max/Min/Daily-avg + exceedance count = "insufficient data — not reportable" |
+| 8-hr rolling (CO, O₃) | 8 hourly values in `[t−7h, t]` | < 6 valid hours in the window | Blank rolling value at t; campaign-level summary marked "insufficient" if valid-rolling / possible-rolling < 75 % |
+| 24-hr daily | 24 hourly values per day (prorated for partial days) | day has < 18 valid hours → day = insufficient; campaign-level summary insufficient if valid-days / total-days < 75 % | Daily line hidden; summary text |
+| 1-year | 1 valid daily value per calendar day | valid-days / 365 (or 366) < 75 % | Annual row always shown with the "insufficient" text |
+
+### 8-hr rolling first-7-hours rule (from Phase 0)
+Blank/hidden for the first 7 hours (insufficient window), non-configurable. Not a 75 % violation — just a warm-up gap.
+
+### Wind-rose bins
+Configurable per campaign, default `[Calm, 2.10-3.60, ≥3.60]`. Already implemented Phase 1.
+
+### Still open before Phase 2 coding starts
+- **Averaging-period table from user's reference report** — expected in next user message. Will be reconciled against seeded KSA NCEC 2020 limits (from BSA Table 5) before code lands.
+
 ## Prioritized backlog
-- **P0** — User confirms Phase 1 (schema + skeleton + vendor adapter) → start Phase 2 calc engine.
-- **P0** — In Phase 2, confirm treatment of negative (below-detection) values in compliance/statistics.
-- **P1** — Campaign duplication ("clone") action for repeat monitoring campaigns at same site.
-- **P2** — Timezone handling: sample data is naïve; report must be "KSA time" per §2.5.4. Consider explicit timezone field on Campaign.
+- **P0 (blocked on user)** — Averaging-period table → then start Phase 2 calc engine.
+- **P1** — Campaign duplication ("clone") action.
+- **P1** — Timezone handling: sample data is naïve; report must be "KSA time" per §2.5.4. Consider explicit timezone field on Campaign.
+- **P2** — QA audit-trail CSV export (every excluded reading + reason) for regulatory defensibility.
