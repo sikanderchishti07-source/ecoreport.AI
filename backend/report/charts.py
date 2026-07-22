@@ -17,9 +17,11 @@ matplotlib.use("Agg")
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Patch
 
 from calc import COMPASS_16, rolling_8h, _effective, _compass_bin, _speed_class
 from models import Reading, WindClassBin
+from report import chart_theme as T
 
 SERIES_COLOR = "#1F6FB2"   # brand blue
 LIMIT_COLOR = "#C00000"    # limit line — clear alarm red
@@ -69,26 +71,42 @@ def timeseries_chart(
     `values` overrides the raw field (used for 8-hr rolling series)."""
     xs = [r.timestamp for r in readings]
     ys = list(values) if values is not None else [_effective(r, field) for r in readings]
-    fig, ax = plt.subplots(figsize=FIG_SIZE)
-    ax.plot(xs, [y if y is not None else math.nan for y in ys],
-            color=SERIES_COLOR, linewidth=1.4, label=series_label)
-    handles_extra = []
-    if limit is not None:
-        ax.axhline(limit, color=LIMIT_COLOR, linewidth=1.6,
-                   label=limit_label or f"NCEC limit")
+    xn = mdates.date2num(xs)
+
+    fig, ax = T.new_figure()
+    valid = [v for v in ys if v is not None]
     if log:
         ax.set_yscale("log")
-        valid = [y for y in ys if y is not None and y > 0]
-        top = max([limit or 0] + valid) if (valid or limit) else 10
-        ax.set_ylim(1, 10 ** math.ceil(math.log10(max(top, 10)) ))
+        top = max([limit or 0] + [v for v in valid if v > 0]) if (valid or limit) else 10
+        ax.set_ylim(1, 10 ** math.ceil(math.log10(max(top, 10))))
     else:
-        valid = [y for y in ys if y is not None]
         top = max([limit or 0] + valid) if (valid or limit) else 1
-        ax.set_ylim(0, top * 1.12 if top else 1)
-    _fmt_axes(ax, ylabel)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22),
-              ncol=2, fontsize=8, frameon=False)
-    return _save(fig, out_path)
+        ax.set_ylim(0, top * 1.18 if top else 1)
+
+    if not log:
+        T.gradient_under(ax, xn, [math.nan if v is None else v for v in ys])
+    exceeded = T.exceedance_fill(ax, xn, ys, limit) if limit is not None else False
+    T.series_line(ax, xs, ys, label=series_label)
+    if limit is not None:
+        T.limit_line(ax, limit, limit_label or "NCEC limit", xn, ys)
+    T.peak_marker(ax, xs, ys)
+
+    T.style_axes(ax, ylabel)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b\n%H:%M"))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=8))
+
+    T.header(fig, series_label, "Hourly averages at the monitoring station"
+             + (" · compared with the NCEC 2020 standard" if limit is not None else ""))
+    T.stat_chips(fig, T.fmt_stats(ys))
+    handles = [plt.Line2D([], [], color=T.BLUE, lw=2.0, label=series_label)]
+    if limit is not None:
+        handles.append(plt.Line2D([], [], color=T.RED, lw=1.4, ls=(0, (7, 3)),
+                                  label=limit_label or "NCEC limit"))
+    if exceeded:
+        handles.append(Patch(facecolor=T.RED, alpha=0.18, label="Exceedance"))
+    T.legend_below(ax, handles)
+    T.footnote(fig)
+    return T.save(fig, out_path)
 
 
 def dual_series_chart(
@@ -102,15 +120,21 @@ def dual_series_chart(
     xs = [r.timestamp for r in readings]
     ya = [_effective(r, field_a) for r in readings]
     yb = [_effective(r, field_b) for r in readings]
-    fig, ax = plt.subplots(figsize=FIG_SIZE)
-    ax.plot(xs, [v if v is not None else math.nan for v in ya],
-            color=SERIES_COLOR, linewidth=1.4, label=label_a)
-    ax.plot(xs, [v if v is not None else math.nan for v in yb],
-            color=LIMIT_COLOR, linewidth=1.4, label=label_b)
-    _fmt_axes(ax, ylabel)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22),
-              ncol=2, fontsize=8, frameon=False)
-    return _save(fig, out_path)
+    fig, ax = T.new_figure()
+    allv = [v for v in ya + yb if v is not None]
+    ax.set_ylim(0, (max(allv) * 1.18) if allv else 1)
+    T.series_line(ax, xs, ya, color=T.BLUE, label=label_a)
+    T.series_line(ax, xs, yb, color=T.GREEN, label=label_b, width=1.8)
+    T.style_axes(ax, ylabel)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b\n%H:%M"))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=8))
+    T.header(fig, f"{label_a} vs {label_b}",
+             "Hourly averages at the monitoring station")
+    T.legend_below(ax, [plt.Line2D([], [], color=T.BLUE, lw=2.0, label=label_a),
+                        plt.Line2D([], [], color=T.GREEN, lw=1.8, label=label_b)],
+                   ncol=2)
+    T.footnote(fig)
+    return T.save(fig, out_path)
 
 
 # ---------------------------------------------------------------------------
@@ -145,29 +169,62 @@ def wind_rose_chart(
         counts[cls][idx] += 1
 
     theta = np.deg2rad(np.arange(0, 360, 22.5))
-    width = np.deg2rad(20)
-    fig = plt.figure(figsize=(6.2, 6.2))
-    ax = fig.add_subplot(111, projection="polar")
+    width = np.deg2rad(20.5)
+    T.apply_theme()
+    fig = plt.figure(figsize=(6.6, 6.9))
+    ax = fig.add_axes([0.10, 0.14, 0.80, 0.72], projection="polar")
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
-    bottom = np.zeros(16)
+    ax.set_facecolor("#FCFDFE")
+
+    freqs = []
+    for b in non_calm_bins:
+        freqs.append(np.array(counts[b.label]) / total * 100.0 if total
+                     else np.zeros(16))
+    stacked = np.sum(freqs, axis=0) if freqs else np.zeros(16)
+    hole = (stacked.max() * 0.16) if stacked.max() else 0.2
+
+    bottom = np.full(16, hole)
     for i, b in enumerate(non_calm_bins):
-        freq = np.array(counts[b.label]) / total * 100.0 if total else np.zeros(16)
-        ax.bar(theta, freq, width=width, bottom=bottom,
-               color=ROSE_COLORS[i % len(ROSE_COLORS)],
-               edgecolor="white", linewidth=0.6,
+        ax.bar(theta, freqs[i], width=width, bottom=bottom,
+               color=T.ROSE_SCALE[i % len(T.ROSE_SCALE)],
+               edgecolor="white", linewidth=1.15, zorder=3,
                label=f"{b.label} m/s")
-        bottom += freq
+        bottom += freqs[i]
+
+    rmax = max(bottom.max() * 1.12, hole * 2)
+    ax.set_ylim(0, rmax)
     ax.set_xticks(theta)
-    ax.set_xticklabels(COMPASS_16, fontsize=9)
-    ax.tick_params(axis="y", labelsize=8)
+    ax.set_xticklabels(COMPASS_16, fontsize=8.4, color=T.INK)
+    for lbl, ang in zip(ax.get_xticklabels(), np.arange(0, 360, 22.5)):
+        if ang % 90 == 0:
+            lbl.set_fontweight("bold")
+            lbl.set_fontsize(10)
+    rings = np.linspace(hole + (rmax - hole) * 0.33, rmax * 0.96, 3)
+    ax.set_yticks(rings)
+    ax.set_yticklabels([f"{v - hole:.0f}%" for v in rings], fontsize=7.4,
+                       color=T.FAINT)
     ax.set_rlabel_position(112.5)
-    ax.grid(linewidth=0.4, alpha=0.6)
-    ax.set_title("Wind Rose — frequency (%) by direction and wind class",
-                 fontsize=10, pad=18)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.06),
-              ncol=min(len(non_calm_bins), 3), fontsize=8, frameon=False)
-    return _save(fig, out_path)
+    ax.grid(color="#E6ECF2", linewidth=0.9)
+    ax.spines["polar"].set_color(T.AXIS)
+
+    if total and stacked.max():
+        prevailing = COMPASS_16[int(np.argmax(stacked))]
+        ax.text(0, 0, f"{prevailing}\nprevailing", ha="center", va="center",
+                fontsize=8.6, fontweight="bold", color=T.NAVY, zorder=6,
+                linespacing=1.35)
+
+    fig.text(0.10, 0.955, "Wind Rose", fontsize=13, fontweight="bold",
+             color=T.NAVY, va="top")
+    fig.text(0.10, 0.915, f"Frequency of counts by direction · "
+             f"{total} valid hourly records", fontsize=8.4, color=T.MUTED,
+             va="top")
+    ax.legend(title="Wind speed (m/s)", loc="upper center",
+              bbox_to_anchor=(0.5, -0.06),
+              ncol=min(len(non_calm_bins), 4), fontsize=8,
+              title_fontsize=8.4, frameon=False)
+    fig.text(0.10, 0.028, T.SOURCE_NOTE, fontsize=6.8, color=T.FAINT)
+    return T.save(fig, out_path)
 
 
 def wind_class_frequency_chart(
@@ -176,19 +233,21 @@ def wind_class_frequency_chart(
 ) -> str:
     labels = list(class_frequency_pct.keys())
     vals = [class_frequency_pct[k] for k in labels]
-    fig, ax = plt.subplots(figsize=(6.5, 3.2))
-    bars = ax.bar(labels, vals, color=[ROSE_COLORS[i % len(ROSE_COLORS)]
-                                       for i in range(len(labels))])
+    fig, ax = T.new_figure(height=3.6)
+    bars = ax.bar(labels, vals, width=0.62, zorder=3,
+                  color=[T.ROSE_SCALE[i % len(T.ROSE_SCALE)]
+                         for i in range(len(labels))],
+                  edgecolor="white", linewidth=1.0)
+    top = max(vals + [1]) * 1.2
+    ax.set_ylim(0, top)
     for b, v in zip(bars, vals):
-        ax.text(b.get_x() + b.get_width() / 2, v + 0.6, f"{v:.1f}%",
-                ha="center", fontsize=8)
-    ax.set_ylabel("Frequency (%)", fontsize=9)
-    ax.set_xlabel("Wind Class (m/s)", fontsize=9)
-    ax.set_ylim(0, max(vals + [1]) * 1.18)
-    ax.tick_params(labelsize=8)
-    ax.spines[["top", "right"]].set_visible(False)
-    ax.grid(axis="y", linewidth=0.4, alpha=0.5)
-    return _save(fig, out_path)
+        ax.text(b.get_x() + b.get_width() / 2, v + top * 0.03, f"{v:.1f}%",
+                ha="center", fontsize=8.2, fontweight="bold", color=T.NAVY)
+    T.style_axes(ax, "Frequency of occurrence (%)", "Wind class (m/s)")
+    T.header(fig, "Wind Class Frequency Distribution",
+             "Share of valid hourly records in each wind speed class")
+    T.footnote(fig)
+    return T.save(fig, out_path)
 
 
 # ---------------------------------------------------------------------------
