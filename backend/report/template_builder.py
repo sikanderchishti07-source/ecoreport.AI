@@ -197,13 +197,15 @@ def _header_footer(section):
     r1.bold = True
     r1.font.size = Pt(10)
     r1.font.color.rgb = NAVY
+    r1.font.size = Pt(9.5)
     mp2 = mid.add_paragraph()
     mp2.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r2 = mp2.add_run("{{ project_name }}")
     r2.italic = True
     r2.bold = True
     r2.font.size = Pt(10)
-    r2.font.color.rgb = BLUE
+    r2.font.color.rgb = NAVY
+    r2.font.size = Pt(9.5)
     rp = right.paragraphs[0]
     rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     try:
@@ -245,6 +247,22 @@ def _header_footer(section):
 # ---------------------------------------------------------------------------
 # Document assembly
 # ---------------------------------------------------------------------------
+
+def _modernise_settings(doc):
+    """Drop the legacy compatibility flag and force field update on open, so
+    Word populates the Table of Contents / List of Figures / List of Tables
+    without the reader pressing Ctrl+A F9."""
+    settings = doc.settings.element
+    for tag in ("w:compat",):
+        el = settings.find(qn(tag))
+        if el is not None:
+            settings.remove(el)
+    if settings.find(qn("w:updateFields")) is None:
+        uf = OxmlElement("w:updateFields")
+        uf.set(qn("w:val"), "true")
+        settings.append(uf)
+
+
 def build(out_path: str = OUT) -> str:
     doc = Document()
     st = doc.styles["Normal"]
@@ -349,26 +367,26 @@ def build(out_path: str = OUT) -> str:
         return p
 
     # 1 — white strip with the two logos
-    top = _block(None, pad=(1.1, 0.7, 1.8, 1.8))
+    top = _block(None, pad=(0.7, 0.4, 1.8, 1.8))
     ltab = top.add_table(rows=1, cols=2, width=Cm(17.4)) if False else top.add_table(rows=1, cols=2)
     lc, rc = ltab.rows[0].cells
     try:
         lc.paragraphs[0].add_run().add_picture(
-            os.path.join(ASSETS, "logo_left.png"), height=Cm(1.5))
+            os.path.join(ASSETS, "logo_left.png"), height=Cm(1.25))
         rp = rc.paragraphs[0]
         rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         rp.add_run().add_picture(
-            os.path.join(ASSETS, "logo_right.png"), height=Cm(1.5))
+            os.path.join(ASSETS, "logo_right.png"), height=Cm(1.25))
     except Exception:
         pass
 
     # 2 — navy hero block, edge to edge
-    hero = _block(NAVY_FILL, pad=(2.3, 2.3, 1.8, 1.8))
+    hero = _block(NAVY_FILL, pad=(1.5, 1.5, 1.8, 1.8))
     _line(hero, "AMBIENT AIR QUALITY", 11, bold=True,
           color=RGBColor(0x8F, 0xC2, 0xE8), after=10, spacing=60)
-    _line(hero, "AIR QUALITY", 34, bold=True, after=2)
-    _line(hero, "MONITORING REPORT", 34, bold=True, after=12)
-    _line(hero, "{{ project_name }}", 15, bold=True,
+    _line(hero, "AIR QUALITY", 27, bold=True, after=2)
+    _line(hero, "MONITORING REPORT", 27, bold=True, after=8)
+    _line(hero, "{{ project_name }}", 13, bold=True,
           color=RGBColor(0xD6, 0xE7, 0xF5), after=0)
 
     # 3 — slim accent rules (green over gold)
@@ -380,7 +398,7 @@ def build(out_path: str = OUT) -> str:
         ar.font.size = Pt(pt)
 
     # 4 — white body: optional photo + project details card
-    body = _block(None, pad=(1.4, 0.6, 1.8, 1.8))
+    body = _block(None, pad=(0.8, 0.3, 1.8, 1.8))
     bp = body.paragraphs[0]
     bp.paragraph_format.space_after = Pt(10)
     br = bp.add_run("{%p if cover_photo %}")
@@ -420,7 +438,7 @@ def build(out_path: str = OUT) -> str:
         vr.font.color.rgb = DARK
 
     pb = body.add_paragraph()
-    pb.paragraph_format.space_before = Pt(16)
+    pb.paragraph_format.space_before = Pt(10)
     pb.paragraph_format.space_after = Pt(2)
     r1 = pb.add_run("PREPARED BY")
     r1.bold = True
@@ -440,7 +458,7 @@ def build(out_path: str = OUT) -> str:
     r3.font.color.rgb = RGBColor(0x6B, 0x6B, 0x6B)
 
     # 5 — navy contact footer, edge to edge
-    foot = _block(NAVY_FILL, pad=(0.55, 0.55, 1.8, 1.8))
+    foot = _block(NAVY_FILL, pad=(0.4, 0.4, 1.8, 1.8))
     _line(foot, "{{ provider_legal_name }}", 9.5, bold=True, after=1)
     _line(foot, "Tel. {{ provider_tel }}   |   Fax {{ provider_fax }}   |   "
                 "{{ provider_email }}", 8.5,
@@ -1245,6 +1263,7 @@ def build(out_path: str = OUT) -> str:
     _p(doc, "{%p endif %}", size=1, space_after=0)
 
     _update_fields_on_open(doc)
+    _modernise_settings(doc)
     doc.save(out_path)
     return out_path
 

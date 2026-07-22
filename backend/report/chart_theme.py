@@ -70,8 +70,8 @@ FIG_W, FIG_H = INSERT_W_MM / MM_PER_IN, 3.35
 ROSE_W = ROSE_W_MM / MM_PER_IN
 AX_LEFT, AX_RIGHT = 0.095, 0.975
 AX_BOTTOM, AX_TOP = 0.235, 0.735      # room for header above, legend below
-TITLE_Y, SUB_Y = 0.945, 0.868
-CHIP_Y, CHIP_H = 0.845, 0.072
+TITLE_Y, SUB_Y = 0.955, 0.885
+CHIP_Y, CHIP_H = 0.882, 0.078
 FOOT_Y = 0.035
 
 SOURCE_NOTE = "Generated from validated monitoring data"
@@ -111,14 +111,16 @@ def header(fig, title: str, subtitle: str = "") -> None:
     fig.text(AX_LEFT, TITLE_Y, title, fontsize=12.5, fontweight="bold",
              color=NAVY, va="top")
     if subtitle:
-        fig.text(AX_LEFT, SUB_Y, subtitle, fontsize=8.4, color=MUTED, va="top")
+        # keep clear of the metric chips on the right
+        fig.text(AX_LEFT, SUB_Y, subtitle, fontsize=8.0, color=MUTED, va="top",
+                 wrap=True)
 
 
 def stat_chips(fig, stats: Sequence[tuple]) -> None:
     """Right-aligned metric chips, e.g. [("MAX","14.7"),("MEAN","3.1")]."""
     if not stats:
         return
-    w, gap = 0.132, 0.010
+    w, gap = 0.118, 0.010
     total = len(stats) * w + (len(stats) - 1) * gap
     x = AX_RIGHT - total
     for label, value in stats:
