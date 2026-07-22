@@ -9,6 +9,7 @@ import UploadPage from "@/pages/UploadPage";
 import LimitsPage from "@/pages/LimitsPage";
 import LoginPage from "@/pages/LoginPage";
 import UsersPage from "@/pages/UsersPage";
+import StationsPage from "@/pages/StationsPage";
 import { getToken } from "@/lib/api";
 
 function RequireAuth({ children }) {
@@ -36,6 +37,7 @@ export default function App() {
             <Route path="/campaigns/:id/edit" element={<CampaignForm mode="edit" />} />
             <Route path="/campaigns/:id/upload" element={<UploadPage />} />
             <Route path="/limits" element={<LimitsPage />} />
+            <Route path="/labs" element={<StationsPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="*" element={<Navigate to="/campaigns" replace />} />
           </Route>
