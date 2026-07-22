@@ -14,6 +14,7 @@ from routes import campaigns as campaigns_router
 from routes import limits as limits_router
 from routes import readings as readings_router
 from routes import history as history_router
+from routes import media as media_router
 from routes import report as report_router
 from routes import summary as summary_router
 
@@ -49,6 +50,7 @@ api.include_router(limits_router.router, dependencies=_protected)
 api.include_router(summary_router.router, dependencies=_protected)
 api.include_router(report_router.router, dependencies=_protected)
 api.include_router(history_router.router, dependencies=_protected)
+api.include_router(media_router.router, dependencies=_protected)
 
 app.include_router(api)
 

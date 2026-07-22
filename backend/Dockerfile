@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-noto-core \
         python3-uno \
         fonts-ibm-plex \
+        poppler-utils \
         fontconfig \
     && rm -rf /var/lib/apt/lists/*
 

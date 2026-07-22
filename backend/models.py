@@ -77,6 +77,8 @@ class CampaignCreate(CampaignBase):
 
 
 class CampaignUpdate(BaseModel):
+    station_id: Optional[str] = None
+    instruments: Optional[List["Instrument"]] = None
     model_config = ConfigDict(extra="ignore")
 
     project_name: Optional[str] = None
@@ -98,6 +100,8 @@ class CampaignUpdate(BaseModel):
 
 class Campaign(CampaignBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    station_id: Optional[str] = None
+    instruments: List["Instrument"] = Field(default_factory=list)
     status: str = "draft"  # draft | ingested | ready | archived
     reading_count: int = 0
     created_at: datetime = Field(default_factory=utcnow)
@@ -314,3 +318,72 @@ class CampaignSummary(BaseModel):
     pollutants: List[PollutantEvaluation]
     meteorology: MeteorologySummary
     wind_rose: WindRoseSummary
+
+
+# ---------------------------------------------------------------------------
+# Instruments (Table 4) and mobile-lab library
+# ---------------------------------------------------------------------------
+class Instrument(BaseModel):
+    parameter: str                      # e.g. "SO2" or "NO, NO2, NOX"
+    technique: str = ""                 # make / model / EQ reference
+    sn: str = ""                        # serial number
+    calibration_date: Optional[str] = None
+
+
+class StationBase(BaseModel):
+    """A mobile laboratory: its standard instrument set, saved once and
+    loaded into any campaign."""
+    name: str                           # e.g. "Mobile Lab 2"
+    code: Optional[str] = None          # plate / asset number
+    notes: Optional[str] = None
+    instruments: List[Instrument] = Field(default_factory=list)
+
+
+class StationCreate(StationBase):
+    pass
+
+
+class Station(StationBase):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class StationUpdate(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+    notes: Optional[str] = None
+    instruments: Optional[List[Instrument]] = None
+
+
+# ---------------------------------------------------------------------------
+# Attachments — field photos, calibration certificates, licence, site map
+# ---------------------------------------------------------------------------
+ATTACHMENT_KINDS = ("site_photo", "calibration", "license", "site_map",
+                    "cover_photo")
+
+
+class Attachment(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    kind: str                           # one of ATTACHMENT_KINDS
+    filename: str
+    path: str
+    caption: Optional[str] = None
+    instrument_sn: Optional[str] = None  # links a certificate to Table 4
+    order: int = 0
+    size_bytes: int = 0
+    storage: str = "local"
+    s3_key: Optional[str] = None
+    uploaded_by: str = "system"
+    uploaded_at: datetime = Field(default_factory=utcnow)
+
+
+class AttachmentUpdate(BaseModel):
+    caption: Optional[str] = None
+    instrument_sn: Optional[str] = None
+    order: Optional[int] = None
+
+
+Campaign.model_rebuild()
+CampaignUpdate.model_rebuild()
