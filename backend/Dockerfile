@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-hosny-amiri \
         fonts-noto-core \
         python3-uno \
+        fonts-ibm-plex \
         fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
