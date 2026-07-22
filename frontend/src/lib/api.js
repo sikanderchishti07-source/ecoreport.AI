@@ -135,3 +135,32 @@ export const campaignAudit = (campaignId) =>
   api.get(`/campaigns/${campaignId}/audit`).then((r) => r.data);
 export const searchArchive = (q) =>
   api.get(`/search`, { params: { q } }).then((r) => r.data);
+
+
+// Mobile labs (stations) — Phase 8
+export const listStations = () => api.get("/stations").then((r) => r.data);
+export const createStation = (p) => api.post("/stations", p).then((r) => r.data);
+export const updateStation = (id, p) =>
+  api.put(`/stations/${id}`, p).then((r) => r.data);
+export const deleteStation = (id) => api.delete(`/stations/${id}`);
+export const loadStationIntoCampaign = (campaignId, stationId) =>
+  api.post(`/campaigns/${campaignId}/load-station/${stationId}`).then((r) => r.data);
+
+// Attachments — photos, certificates, licence, site map
+export const listAttachments = (campaignId, kind) =>
+  api.get(`/campaigns/${campaignId}/attachments`, { params: kind ? { kind } : {} })
+    .then((r) => r.data);
+export const uploadAttachments = (campaignId, kind, files, extra = {}) => {
+  const fd = new FormData();
+  fd.append("kind", kind);
+  if (extra.caption) fd.append("caption", extra.caption);
+  if (extra.instrument_sn) fd.append("instrument_sn", extra.instrument_sn);
+  Array.from(files).forEach((f) => fd.append("files", f));
+  return api.post(`/campaigns/${campaignId}/attachments`, fd, {
+    headers: { "Content-Type": "multipart/form-data" }, timeout: 300000,
+  }).then((r) => r.data);
+};
+export const updateAttachment = (id, p) =>
+  api.patch(`/attachments/${id}`, p).then((r) => r.data);
+export const deleteAttachment = (id) => api.delete(`/attachments/${id}`);
+export const attachmentFileUrl = (id) => `${API_BASE}/attachments/${id}/file`;
