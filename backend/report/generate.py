@@ -84,8 +84,10 @@ def generate_report(
     out_path: str,
     site_map_path: Optional[str] = None,
     site_photo_path: Optional[str] = None,
+    site_photo_paths: Optional[List[str]] = None,
     cover_photo_path: Optional[str] = None,
     calibration_image_paths: Optional[List[str]] = None,
+    calibration_items: Optional[List[dict]] = None,
     license_image_paths: Optional[List[str]] = None,
     charts_dir: Optional[str] = None,
     lang: str = "en",
@@ -137,6 +139,18 @@ def generate_report(
         return [InlineImage(tpl, p, width=Mm(width_mm))
                 for p in (paths or []) if os.path.exists(p)]
 
+    # Figure 2 — field photos in a 2x2 grid
+    rows = []
+    if site_photo_paths:
+        imgs = [InlineImage(tpl, p, width=Mm(74)) for p in site_photo_paths
+                if p and os.path.exists(p)]
+        for i in range(0, len(imgs), 2):
+            pair = imgs[i:i + 2]
+            if len(pair) == 1:
+                pair.append("")
+            rows.append(pair)
+    ctx["site_photo_rows"] = rows
+
     ctx["fig_site_map"] = (InlineImage(tpl, site_map_path, width=Mm(150))
                            if site_map_path and os.path.exists(site_map_path)
                            else None)
@@ -146,7 +160,11 @@ def generate_report(
     ctx["cover_photo"] = (InlineImage(tpl, cover_photo_path, width=Mm(150))
                           if cover_photo_path and os.path.exists(cover_photo_path)
                           else None)
-    ctx["calibration_images"] = _img_list(calibration_image_paths)
+    ctx["calibration_images"] = [
+        {"title": (c.get("title") or "Calibration certificate"),
+         "image": InlineImage(tpl, c["path"], width=Mm(150))}
+        for c in (calibration_items or [])
+        if c.get("path") and os.path.exists(c["path"])]
     ctx["license_images"] = _img_list(license_image_paths)
 
     tpl.render(ctx)

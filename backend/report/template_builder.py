@@ -634,6 +634,15 @@ def build(out_path: str = OUT) -> str:
     _p(doc, "{{ fig_site_map }}", align="center")
     _p(doc, "{%p endif %}", size=1, space_after=0)
     _caption(doc, "Figure", "Location of the Ambient Air quality monitor")
+    grid = doc.add_table(rows=3, cols=2)
+    grid.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _tr_tag_row(grid, 0, "{%tr for row in site_photo_rows %}")
+    mid = grid.rows[1]
+    for k, cell in enumerate(mid.cells):
+        cp = cell.paragraphs[0]
+        cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        cp.add_run("{{ row[%d] }}" % k)
+    _tr_tag_row(grid, 2, "{%tr endfor %}")
     _p(doc, "{%p if fig_site_photo %}", size=1, space_after=0)
     _p(doc, "{{ fig_site_photo }}", align="center")
     _p(doc, "{%p endif %}", size=1, space_after=0)
@@ -1217,8 +1226,9 @@ def build(out_path: str = OUT) -> str:
         pp.add_run(body)
     _heading(doc, "Appendix 3 Calibration certificates", 1)
     _p(doc, "{%p if calibration_images %}", size=1, space_after=0)
-    _p(doc, "{%p for img in calibration_images %}", size=1, space_after=0)
-    _p(doc, "{{ img }}", align="center")
+    _p(doc, "{%p for c in calibration_images %}", size=1, space_after=0)
+    _p(doc, "{{ c.title }}", bold=True, size=10, color=NAVY, space_after=4)
+    _p(doc, "{{ c.image }}", align="center")
     _p(doc, "{%p endfor %}", size=1, space_after=0)
     _p(doc, "{%p else %}", size=1, space_after=0)
     _p(doc, "[Calibration certificates to be attached — upload scanned "
