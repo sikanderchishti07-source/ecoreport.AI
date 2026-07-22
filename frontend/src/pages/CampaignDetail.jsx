@@ -29,6 +29,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import ReportsPanel from "@/components/ReportsPanel";
+import InstrumentsPanel from "@/components/InstrumentsPanel";
+import AttachmentsPanel from "@/components/AttachmentsPanel";
 import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
@@ -205,6 +207,12 @@ export default function CampaignDetail() {
           </TabsTrigger>
           <TabsTrigger value="settings" data-testid={CAMPAIGN_DETAIL.tabSettings} className="rounded-sm">
             Settings
+          </TabsTrigger>
+          <TabsTrigger value="instruments" className="rounded-sm">
+            Instruments
+          </TabsTrigger>
+          <TabsTrigger value="attachments" className="rounded-sm">
+            Attachments
           </TabsTrigger>
           <TabsTrigger value="reports" data-testid={CAMPAIGN_DETAIL.tabReports} className="rounded-sm">
             Reports
@@ -504,6 +512,14 @@ export default function CampaignDetail() {
         </TabsContent>
 
         {/* REPORTS (placeholder) */}
+        <TabsContent value="instruments" className="mt-4">
+          {campaign && <InstrumentsPanel campaign={campaign} onSaved={load} />}
+        </TabsContent>
+
+        <TabsContent value="attachments" className="mt-4">
+          {campaign && <AttachmentsPanel campaign={campaign} />}
+        </TabsContent>
+
         <TabsContent value="reports" className="mt-4">
           <ReportsPanel campaignId={id} readingCount={campaign?.reading_count} />
         </TabsContent>
