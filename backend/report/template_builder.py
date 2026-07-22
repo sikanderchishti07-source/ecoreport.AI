@@ -272,114 +272,187 @@ def build(out_path: str = OUT) -> str:
     sec.top_margin = sec.bottom_margin = Cm(2.2)
     sec.left_margin = sec.right_margin = Cm(2.2)
 
-    # ---------------- COVER (no header/footer) ----------------
-    def _band(fill, height_pt=None):
-        """Full-width single-cell shaded band table."""
+    # ---------------- COVER (full-bleed, no header/footer) ----------------
+    # Zero margins so colour blocks run edge-to-edge like a design cover.
+    sec.top_margin = sec.bottom_margin = Cm(0)
+    sec.left_margin = sec.right_margin = Cm(0)
+
+    def _pad(cell, top=0, bottom=0, left=0, right=0):
+        tcPr = cell._tc.get_or_add_tcPr()
+        mar = OxmlElement("w:tcMar")
+        for tag, val in (("top", top), ("bottom", bottom),
+                         ("left", left), ("right", right)):
+            e = OxmlElement(f"w:{tag}")
+            e.set(qn("w:w"), str(int(val * 567)))   # cm -> twips
+            e.set(qn("w:type"), "dxa")
+            mar.append(e)
+        tcPr.append(mar)
+
+    def _block(fill, pad=(0, 0, 0, 0)):
         t = doc.add_table(rows=1, cols=1)
-        t.alignment = WD_TABLE_ALIGNMENT.CENTER
         t.autofit = False
         c = t.rows[0].cells[0]
-        c.width = Cm(16.6)
-        tcPr = c._tc.get_or_add_tcPr()
-        shd = OxmlElement("w:shd")
-        shd.set(qn("w:val"), "clear")
-        shd.set(qn("w:fill"), fill)
-        tcPr.append(shd)
-        # remove default cell borders visual noise: no explicit borders added
-        return t, c
+        c.width = Cm(21.0)
+        tblPr = t._tbl.tblPr
+        w = tblPr.find(qn("w:tblW"))
+        if w is None:
+            w = OxmlElement("w:tblW")
+            tblPr.append(w)
+        w.set(qn("w:w"), "5000")
+        w.set(qn("w:type"), "pct")
+        ind = tblPr.find(qn("w:tblInd"))
+        if ind is None:
+            ind = OxmlElement("w:tblInd")
+            tblPr.append(ind)
+        ind.set(qn("w:w"), "0")
+        ind.set(qn("w:type"), "dxa")
+        cm = OxmlElement("w:tblCellMar")
+        for tag in ("top", "left", "bottom", "right"):
+            e = OxmlElement(f"w:{tag}")
+            e.set(qn("w:w"), "0")
+            e.set(qn("w:type"), "dxa")
+            cm.append(e)
+        tblPr.append(cm)
+        lay = OxmlElement("w:tblLayout")
+        lay.set(qn("w:type"), "fixed")
+        tblPr.append(lay)
+        grid = t._tbl.find(qn("w:tblGrid"))
+        if grid is not None:
+            for gc in grid.findall(qn("w:gridCol")):
+                gc.set(qn("w:w"), str(int(21.2 * 567)))
+        if fill:
+            tcPr = c._tc.get_or_add_tcPr()
+            shd = OxmlElement("w:shd")
+            shd.set(qn("w:val"), "clear")
+            shd.set(qn("w:fill"), fill)
+            tcPr.append(shd)
+        _pad(c, *pad)
+        return c
 
-    def _band_line(cell, text, size, bold=False, color=WHITE, space_before=0,
-                   space_after=0, align=WD_ALIGN_PARAGRAPH.CENTER, first=False):
-        p = cell.paragraphs[0] if first and not cell.paragraphs[0].text \
-            else cell.add_paragraph()
+    def _line(cell, text, size, bold=False, color=WHITE, before=0, after=0,
+              align=WD_ALIGN_PARAGRAPH.LEFT, spacing=None, first=[False]):
+        p = cell.add_paragraph() if cell.paragraphs[0].text or first[0] \
+            else cell.paragraphs[0]
+        first[0] = True
         p.alignment = align
-        p.paragraph_format.space_before = Pt(space_before)
-        p.paragraph_format.space_after = Pt(space_after)
+        p.paragraph_format.space_before = Pt(before)
+        p.paragraph_format.space_after = Pt(after)
         r = p.add_run(text)
         r.bold = bold
         r.font.size = Pt(size)
         r.font.color.rgb = color
+        if spacing:
+            rPr = r._r.get_or_add_rPr()
+            sp = OxmlElement("w:spacing")
+            sp.set(qn("w:val"), str(spacing))
+            rPr.append(sp)
         return p
 
-    # logos row
-    cov = doc.add_table(rows=1, cols=2)
-    lcell, rcell = cov.rows[0].cells
+    # 1 — white strip with the two logos
+    top = _block(None, pad=(1.1, 0.7, 1.8, 1.8))
+    ltab = top.add_table(rows=1, cols=2, width=Cm(17.4)) if False else top.add_table(rows=1, cols=2)
+    lc, rc = ltab.rows[0].cells
     try:
-        lcell.paragraphs[0].add_run().add_picture(
-            os.path.join(ASSETS, "logo_left.png"), height=Cm(2.0))
-        rp = rcell.paragraphs[0]
+        lc.paragraphs[0].add_run().add_picture(
+            os.path.join(ASSETS, "logo_left.png"), height=Cm(1.5))
+        rp = rc.paragraphs[0]
         rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         rp.add_run().add_picture(
-            os.path.join(ASSETS, "logo_right.png"), height=Cm(2.0))
+            os.path.join(ASSETS, "logo_right.png"), height=Cm(1.5))
     except Exception:
         pass
-    _p(doc, space_after=14)
 
-    # hero band — deep navy with white display title and a green keyline
-    _t, hero = _band(NAVY_FILL)
-    _band_line(hero, "AIR QUALITY", 30, bold=True, space_before=16, first=True)
-    _band_line(hero, "MONITORING REPORT", 30, bold=True)
-    _band_line(hero, "Ambient Air Quality  ·  KSA NCEC 2020 Standards", 10,
-               color=RGBColor(0xBF, 0xD9, 0xEF), space_before=4, space_after=14)
-    # thin green keyline band directly under the hero
-    _t2, key = _band("2F9E63")
-    kp = key.paragraphs[0]
-    kp.paragraph_format.space_after = Pt(0)
-    kr = kp.add_run(" ")
-    kr.font.size = Pt(2)
+    # 2 — navy hero block, edge to edge
+    hero = _block(NAVY_FILL, pad=(2.3, 2.3, 1.8, 1.8))
+    _line(hero, "AMBIENT AIR QUALITY", 11, bold=True,
+          color=RGBColor(0x8F, 0xC2, 0xE8), after=10, spacing=60)
+    _line(hero, "AIR QUALITY", 34, bold=True, after=2)
+    _line(hero, "MONITORING REPORT", 34, bold=True, after=12)
+    _line(hero, "{{ project_name }}", 15, bold=True,
+          color=RGBColor(0xD6, 0xE7, 0xF5), after=0)
 
-    _p(doc, space_after=16)
-    _p(doc, "prepared for", size=12, align="center", space_after=2,
-       color=RGBColor(0x6B, 0x6B, 0x6B))
-    _p(doc, "{{ project_name }}", size=24, bold=True, align="center",
-       color=NAVY, space_after=16)
+    # 3 — slim accent rules (green over gold)
+    for fill, pt in (("2F9E63", 5), ("C9A227", 2)):
+        acc = _block(fill)
+        ap = acc.paragraphs[0]
+        ap.paragraph_format.space_after = Pt(0)
+        ar = ap.add_run(" ")
+        ar.font.size = Pt(pt)
 
-    # optional cover photo
-    _p(doc, "{%p if cover_photo %}", size=1, space_after=0)
-    _p(doc, "{{ cover_photo }}", align="center", space_after=10)
-    _p(doc, "{%p endif %}", size=1, space_after=0)
+    # 4 — white body: optional photo + project details card
+    body = _block(None, pad=(1.4, 0.6, 1.8, 1.8))
+    bp = body.paragraphs[0]
+    bp.paragraph_format.space_after = Pt(10)
+    br = bp.add_run("{%p if cover_photo %}")
+    br.font.size = Pt(1)
+    p_ph = body.add_paragraph()
+    p_ph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_ph.add_run("{{ cover_photo }}")
+    p_end = body.add_paragraph()
+    pe = p_end.add_run("{%p endif %}")
+    pe.font.size = Pt(1)
 
-    # info card — light blue project summary
-    card = doc.add_table(rows=4, cols=2)
-    card.alignment = WD_TABLE_ALIGNMENT.CENTER
+    card = body.add_table(rows=5, cols=2)
     card.style = "Table Grid"
     for i, (k, v) in enumerate([
-        ("Client", "{{ client }}"),
-        ("Report Number", "{{ report_number }}"),
-        ("Monitoring Period", "{{ monitoring_window_text }}"),
-        ("Revision / Date", "{{ revision }}  —  {{ reporting_date }}"),
+        ("CLIENT", "{{ client }}"),
+        ("SITE", "{{ site_name }}"),
+        ("MONITORING PERIOD", "{{ monitoring_window_text }}"),
+        ("REPORT NUMBER", "{{ report_number }}"),
+        ("REVISION / DATE", "{{ revision }}   |   {{ reporting_date }}"),
     ]):
         kc, vc = card.cell(i, 0), card.cell(i, 1)
-        kc.width, vc.width = Cm(4.6), Cm(12.0)
-        _cell_text(kc, k, bold=True, size=10)
-        for pr in kc.paragraphs:
-            for rr in pr.runs:
-                rr.font.color.rgb = NAVY
+        kc.width, vc.width = Cm(5.0), Cm(12.4)
+        _pad(kc, 0.12, 0.12, 0.25, 0.15)
+        _pad(vc, 0.12, 0.12, 0.25, 0.15)
+        kp = kc.paragraphs[0]
+        kr = kp.add_run(k)
+        kr.bold = True
+        kr.font.size = Pt(8.5)
+        kr.font.color.rgb = NAVY
         tcPr = kc._tc.get_or_add_tcPr()
         shd = OxmlElement("w:shd")
         shd.set(qn("w:val"), "clear")
         shd.set(qn("w:fill"), SKY_FILL)
         tcPr.append(shd)
-        _cell_text(vc, v, size=10)
-    _p(doc, space_after=18)
+        vr = vc.paragraphs[0].add_run(v)
+        vr.font.size = Pt(10)
+        vr.font.color.rgb = DARK
 
-    _p(doc, "Prepared by", size=11, align="center", space_after=1,
-       color=RGBColor(0x6B, 0x6B, 0x6B))
-    _p(doc, "{{ provider }}", size=13, bold=True, align="center",
-       color=NAVY, space_after=14)
+    pb = body.add_paragraph()
+    pb.paragraph_format.space_before = Pt(16)
+    pb.paragraph_format.space_after = Pt(2)
+    r1 = pb.add_run("PREPARED BY")
+    r1.bold = True
+    r1.font.size = Pt(8.5)
+    r1.font.color.rgb = RGBColor(0x8A, 0x8A, 0x8A)
+    pb2 = body.add_paragraph()
+    r2 = pb2.add_run("{{ provider }}")
+    r2.bold = True
+    r2.font.size = Pt(13)
+    r2.font.color.rgb = NAVY
+    pb3 = body.add_paragraph()
+    r3 = pb3.add_run("Accredited by the National Center for Environmental "
+                     "Compliance (NCEC)  ·  Reported to KSA NCEC 2020 "
+                     "ambient air quality standards")
+    r3.italic = True
+    r3.font.size = Pt(8.5)
+    r3.font.color.rgb = RGBColor(0x6B, 0x6B, 0x6B)
 
-    # footer contact band
-    _t3, foot = _band(NAVY_FILL)
-    _band_line(foot, "{{ provider_legal_name }}", 10, bold=True,
-               space_before=8, first=True)
-    _band_line(foot, "Tel.: {{ provider_tel }}    Fax: {{ provider_fax }}    "
-                     "E-mail: {{ provider_email }}", 9,
-               color=RGBColor(0xBF, 0xD9, 0xEF))
-    _band_line(foot, "{{ provider_address }}", 9,
-               color=RGBColor(0xBF, 0xD9, 0xEF), space_after=8)
+    # 5 — navy contact footer, edge to edge
+    foot = _block(NAVY_FILL, pad=(0.55, 0.55, 1.8, 1.8))
+    _line(foot, "{{ provider_legal_name }}", 9.5, bold=True, after=1)
+    _line(foot, "Tel. {{ provider_tel }}   |   Fax {{ provider_fax }}   |   "
+                "{{ provider_email }}", 8.5,
+          color=RGBColor(0xBF, 0xD9, 0xEF), after=1)
+    _line(foot, "{{ provider_address }}", 8.5,
+          color=RGBColor(0xBF, 0xD9, 0xEF), after=0)
 
     # ---------------- CONTENT SECTION (with header/footer) ----------------
     sec2 = doc.add_section(WD_SECTION.NEW_PAGE)
+    sec2.page_width, sec2.page_height = Cm(21.0), Cm(29.7)
+    sec2.top_margin = sec2.bottom_margin = Cm(2.2)
+    sec2.left_margin = sec2.right_margin = Cm(2.2)
     sec2.top_margin = Cm(3.2)
     _header_footer(sec2)
 
