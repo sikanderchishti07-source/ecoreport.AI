@@ -49,6 +49,34 @@ FIG_MAP = {
 }
 
 
+
+def _ensure_templates_fresh():
+    """Rebuild master templates if assets or the builder changed since the
+    last build. Lets logo swaps take effect by simply replacing the PNGs."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    srcs = [os.path.join(here, "template_builder.py")]
+    adir = os.path.join(here, "assets")
+    if os.path.isdir(adir):
+        srcs += [os.path.join(adir, f) for f in os.listdir(adir)]
+    try:
+        newest = max(os.path.getmtime(p) for p in srcs if os.path.exists(p))
+    except ValueError:
+        return
+    for tpl, builder in ((TEMPLATE_PATH, "en"), (TEMPLATE_PATH_AR, "ar")):
+        if not os.path.exists(tpl) or os.path.getmtime(tpl) < newest:
+            try:
+                if builder == "en":
+                    from report.template_builder import build as _b
+                    _b(tpl)
+                else:
+                    from report.arabize import build_ar as _b
+                    _b(tpl)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "template auto-rebuild failed", exc_info=True)
+
+
 def generate_report(
     campaign: Campaign,
     readings: List[Reading],
@@ -72,6 +100,7 @@ def generate_report(
             campaign, readings, limits, out_path, site_map_path,
             site_photo_path, cover_photo_path, calibration_image_paths,
             license_image_paths, charts_dir)
+    _ensure_templates_fresh()
     summary = build_campaign_summary(campaign, readings, limits)
 
     # Window-filtered readings for the charts (same filter as the engine).
