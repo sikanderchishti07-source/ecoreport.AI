@@ -192,6 +192,15 @@ def _smart_parse_timestamps(series: pd.Series) -> tuple[pd.Series, bool]:
     going to day-first (the regional convention). Real datetime cells (from
     Excel) are unaffected — both parses agree.
     Returns (parsed_series, used_dayfirst)."""
+    # ISO-style values (2026-04-01, or real datetime cells from Excel) are
+    # unambiguous — never apply the day-first heuristic to them, or
+    # YYYY-MM-DD would be misread as YYYY-DD-MM.
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return pd.to_datetime(series, errors="coerce"), False
+    sample = series.dropna().astype(str).head(40)
+    if len(sample) and sample.str.match(r"^\s*\d{4}-\d{1,2}-\d{1,2}").mean() > 0.7:
+        return pd.to_datetime(series, errors="coerce", dayfirst=False), False
+
     a = pd.to_datetime(series, errors="coerce", dayfirst=False)
     b = pd.to_datetime(series, errors="coerce", dayfirst=True)
     na_a, na_b = int(a.isna().sum()), int(b.isna().sum())

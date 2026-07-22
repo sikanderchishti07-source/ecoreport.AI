@@ -81,8 +81,57 @@ async def create_report(campaign_id: str, lang: str = "en",
     fname = f"AAQ_Report_{campaign_id[:8]}_v{version:03d}_{lang}_{ts}.docx"
     out_path = os.path.join(REPORT_DIR, campaign_id, fname)
 
+    # Attachments: field photos (Figure 2), certificates (Appendix 3),
+    # licence (Appendix 4), operator site-map override (Figure 1).
+    atts = await db.attachments.find({"campaign_id": campaign_id}, {"_id": 0}) \
+        .sort([("order", 1), ("uploaded_at", 1)]).to_list(length=500)
+    by_kind: dict = {}
+    for a in atts:
+        by_kind.setdefault(a["kind"], []).append(a)
+
+    site_photos = [a["path"] for a in by_kind.get("site_photo", [])
+                   if os.path.exists(a.get("path", ""))]
+    licence = [a["path"] for a in by_kind.get("license", [])
+               if os.path.exists(a.get("path", ""))]
+    cover = next((a["path"] for a in by_kind.get("cover_photo", [])
+                  if os.path.exists(a.get("path", ""))), None)
+
+    def _as_dict(i):
+        return i if isinstance(i, dict) else i.model_dump()
+    sn_map = {_as_dict(i).get("sn"): _as_dict(i)
+              for i in (campaign.instruments or [])}
+    cal_items = []
+    for a in by_kind.get("calibration", []):
+        if not os.path.exists(a.get("path", "")):
+            continue
+        instr = sn_map.get(a.get("instrument_sn"))
+        if instr:
+            title = (f"Calibration certificate — {instr.get('technique','')} "
+                     f"({instr.get('parameter','')}), S/N {instr.get('sn','')}")
+        else:
+            title = a.get("caption") or "Calibration certificate"
+        cal_items.append({"title": title.strip(" —"), "path": a["path"]})
+
+    # Figure 1 — satellite site map (operator upload wins over the auto map)
+    site_map = next((a["path"] for a in by_kind.get("site_map", [])
+                     if os.path.exists(a.get("path", ""))), None)
+    if not site_map:
+        try:
+            from report.sitemap import fetch_site_map
+            site_map = fetch_site_map(
+                campaign.latitude, campaign.longitude,
+                os.path.join(REPORT_DIR, campaign_id, "site_map.png"))
+        except Exception:  # noqa: BLE001
+            log.warning("automatic site map unavailable", exc_info=True)
+            site_map = None
+
     try:
-        generate_report(campaign, readings, limits, out_path, lang=lang)
+        generate_report(campaign, readings, limits, out_path, lang=lang,
+                        site_map_path=site_map,
+                        site_photo_paths=site_photos,
+                        cover_photo_path=cover,
+                        calibration_items=cal_items,
+                        license_image_paths=licence)
         if format == "pdf":
             out_path = convert_to_pdf(out_path)
             fname = os.path.basename(out_path)
