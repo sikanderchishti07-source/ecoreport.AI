@@ -593,6 +593,63 @@ def _wind_rose_summary(
 # ---------------------------------------------------------------------------
 # Top-level orchestrator
 # ---------------------------------------------------------------------------
+
+def _to_hourly(readings: List[Reading]) -> List[Reading]:
+    """Collapse sub-hourly data to one reading per clock hour.
+
+    Vendor exports are sometimes 30-, 15- or 5-minute data. Every statistic in
+    this report is defined on HOURLY values (NCEC 1-hour limits, 8-hour rolling
+    means, daily means, data-capture %), so sub-hourly rows must be averaged
+    into their clock hour first — otherwise capture can exceed 100% and the
+    "hourly maximum" would really be a short-interval maximum.
+
+    Only valid values contribute to an hourly mean; an hour with no valid value
+    for a field yields None for that field. Data already at hourly resolution
+    passes through unchanged.
+    """
+    if len(readings) < 2:
+        return readings
+    stamps = sorted(_as_utc(r.timestamp) for r in readings)
+    gaps = [(b - a).total_seconds() for a, b in zip(stamps, stamps[1:])
+            if (b - a).total_seconds() > 0]
+    if not gaps:
+        return readings
+    gaps.sort()
+    median_gap = gaps[len(gaps) // 2]
+    if median_gap >= 3000:          # ~50 min or more -> already hourly
+        return readings
+
+    buckets: Dict[datetime, List[Reading]] = defaultdict(list)
+    for r in readings:
+        buckets[_as_utc(r.timestamp).replace(minute=0, second=0,
+                                             microsecond=0)].append(r)
+
+    fields = ALL_MEASUREMENT_FIELDS if "ALL_MEASUREMENT_FIELDS" in globals() \
+        else [f for f in Reading.model_fields
+              if f not in ("id", "campaign_id", "timestamp", "valid",
+                           "invalidation_reason", "auto_flagged_fields",
+                           "created_at")]
+
+    out: List[Reading] = []
+    for hour in sorted(buckets):
+        rows = buckets[hour]
+        data: Dict[str, Optional[float]] = {}
+        for f in fields:
+            vals = [v for v in (_effective(r, f) for r in rows) if v is not None]
+            if f == "WindDirection" and vals:
+                # circular mean, so 350° and 10° average to 0°, not 180°
+                rad = [math.radians(v) for v in vals]
+                ang = math.degrees(math.atan2(
+                    sum(math.sin(a) for a in rad) / len(rad),
+                    sum(math.cos(a) for a in rad) / len(rad)))
+                data[f] = round(ang % 360.0, 1)
+            else:
+                data[f] = round(sum(vals) / len(vals), 3) if vals else None
+        out.append(Reading(campaign_id=rows[0].campaign_id, timestamp=hour,
+                           valid=True, **data))
+    return out
+
+
 def build_campaign_summary(
     campaign: Campaign,
     readings: List[Reading],
@@ -610,6 +667,10 @@ def build_campaign_summary(
     w_start = _as_utc(campaign.monitoring_start)
     w_end = _as_utc(campaign.monitoring_end)
     readings = [r for r in readings if w_start <= _as_utc(r.timestamp) < w_end]
+
+    # Collapse sub-hourly exports (30/15/5-minute data) into hourly means so
+    # every statistic below is a true hourly value and capture % is bounded.
+    readings = _to_hourly(readings)
 
     # Group limits by pollutant for fast lookup
     limits_by_pol: Dict[str, List[PollutantLimit]] = defaultdict(list)
