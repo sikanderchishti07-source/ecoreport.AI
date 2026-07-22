@@ -60,9 +60,16 @@ ROSE_SCALE = ["#DCEBF7", "#A9CDE9", "#67A6D8", "#2A7CBE", "#0F3D6E", "#2F9E63"]
 # Spacing scale (figure fractions) — consistent rhythm across all charts
 # ---------------------------------------------------------------------------
 DPI = 220
-FIG_W, FIG_H = 7.6, 3.9
+# Figures are drawn at the exact width they are inserted at in Word
+# (155 mm body figures, 130 mm wind rose) so that type sizes on the page
+# match the document's own type — no shrink-to-fit distortion.
+INSERT_W_MM = 155.0
+ROSE_W_MM = 130.0
+MM_PER_IN = 25.4
+FIG_W, FIG_H = INSERT_W_MM / MM_PER_IN, 3.35
+ROSE_W = ROSE_W_MM / MM_PER_IN
 AX_LEFT, AX_RIGHT = 0.095, 0.975
-AX_BOTTOM, AX_TOP = 0.215, 0.735      # room for header above, legend below
+AX_BOTTOM, AX_TOP = 0.235, 0.735      # room for header above, legend below
 TITLE_Y, SUB_Y = 0.945, 0.868
 CHIP_Y, CHIP_H = 0.845, 0.072
 FOOT_Y = 0.035
@@ -111,7 +118,7 @@ def stat_chips(fig, stats: Sequence[tuple]) -> None:
     """Right-aligned metric chips, e.g. [("MAX","14.7"),("MEAN","3.1")]."""
     if not stats:
         return
-    w, gap = 0.096, 0.008
+    w, gap = 0.132, 0.010
     total = len(stats) * w + (len(stats) - 1) * gap
     x = AX_RIGHT - total
     for label, value in stats:
@@ -130,6 +137,17 @@ def footnote(fig, text: str = SOURCE_NOTE) -> None:
     fig.text(AX_LEFT, FOOT_Y, text, fontsize=6.8, color=FAINT, va="bottom")
 
 
+def nice_yaxis(ax, log: bool = False) -> None:
+    """Rounded tick steps (0, 5, 10...) and thousands separators."""
+    if log:
+        return
+    from matplotlib.ticker import FuncFormatter, MaxNLocator
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=5, steps=[1, 2, 2.5, 5, 10],
+                                           min_n_ticks=3))
+    ax.yaxis.set_major_formatter(FuncFormatter(
+        lambda v, _: f"{v:,.0f}" if abs(v) >= 1 or v == 0 else f"{v:,.1f}"))
+
+
 def style_axes(ax, ylabel: str = "", xlabel: str = "") -> None:
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
@@ -142,6 +160,7 @@ def style_axes(ax, ylabel: str = "", xlabel: str = "") -> None:
         ax.set_ylabel(ylabel, fontsize=8.6, color=MUTED, labelpad=9)
     if xlabel:
         ax.set_xlabel(xlabel, fontsize=8.6, color=MUTED, labelpad=8)
+    nice_yaxis(ax, log=(ax.get_yscale() == "log"))
 
 
 def gradient_under(ax, x, y, color: str = BLUE, alpha: float = 0.22) -> None:
@@ -244,5 +263,4 @@ def fmt_stats(values: Sequence[Optional[float]]) -> List[tuple]:
          and not (isinstance(x, float) and math.isnan(x))]
     if not v:
         return [("RECORDS", "0")]
-    return [("MAX", f"{max(v):,.1f}"), ("MEAN", f"{sum(v)/len(v):,.1f}"),
-            ("MIN", f"{min(v):,.1f}"), ("RECORDS", f"{len(v)}")]
+    return [("MAX", f"{max(v):,.1f}"), ("MEAN", f"{sum(v)/len(v):,.1f}")]

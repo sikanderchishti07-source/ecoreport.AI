@@ -171,7 +171,7 @@ def wind_rose_chart(
     theta = np.deg2rad(np.arange(0, 360, 22.5))
     width = np.deg2rad(20.5)
     T.apply_theme()
-    fig = plt.figure(figsize=(6.6, 6.9))
+    fig = plt.figure(figsize=(T.ROSE_W, T.ROSE_W * 1.08))
     ax = fig.add_axes([0.10, 0.14, 0.80, 0.72], projection="polar")
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
