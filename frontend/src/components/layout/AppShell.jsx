@@ -1,5 +1,5 @@
 import { NavLink, Outlet, Link, useNavigate } from "react-router-dom";
-import { Activity, Gauge, LogOut, Ruler, ShieldCheck, UserRound, Users } from "lucide-react";
+import { Activity, Gauge, LogOut, Ruler, ShieldCheck, Truck, UserRound, Users } from "lucide-react";
 import { NAV } from "@/constants/testIds";
 import { Toaster } from "sonner";
 import { clearSession, getUser } from "@/lib/api";
@@ -52,6 +52,14 @@ export default function AppShell() {
               }
             >
               <Ruler className="w-3.5 h-3.5" /> NCEC Limits
+            </NavLink>
+            <NavLink
+              to="/labs"
+              className={({ isActive }) =>
+                `${linkBase} ${isActive ? linkActive : linkIdle} inline-flex items-center gap-1.5`
+              }
+            >
+              <Truck className="w-3.5 h-3.5" /> Mobile Labs
             </NavLink>
             {user?.role === "admin" && (
               <NavLink
