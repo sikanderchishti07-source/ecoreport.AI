@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  FileText, FileDown, Loader2, History, RefreshCw, ScrollText,
+  Copy, FileText, FileDown, Loader2, History, Link2, RefreshCw, ScrollText,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -12,7 +14,8 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  campaignAudit, downloadReportVersion, generateReport, listReports,
+  campaignAudit, createShare, downloadReportVersion, generateReport,
+  listReports, listShares, revokeShare, shareUrl,
 } from "@/lib/api";
 
 const LANGS = [
@@ -86,19 +89,56 @@ export default function ReportsPanel({ campaignId, readingCount }) {
   const [lang, setLang] = useState("en");
   const [format, setFormat] = useState("docx");
   const [busy, setBusy] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [recipient, setRecipient] = useState("");
+  const [days, setDays] = useState(30);
+  const [newLink, setNewLink] = useState(null);
+
+  const makeShare = async () => {
+    setSharing(true);
+    try {
+      const s = await createShare({
+        campaign_id: campaignId, recipient: recipient || null,
+        days_valid: days,
+      });
+      setNewLink(shareUrl(s.token));
+      setRecipient("");
+      toast.success("Client link created");
+      refresh();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not create the link");
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const withdraw = async (id) => {
+    if (!window.confirm("Withdraw this link? The client will lose access immediately."))
+      return;
+    try {
+      await revokeShare(id);
+      toast.success("Link withdrawn");
+      refresh();
+    } catch {
+      toast.error("Could not withdraw the link");
+    }
+  };
   const [reports, setReports] = useState([]);
   const [audit, setAudit] = useState([]);
+  const [shares, setShares] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [r, a] = await Promise.all([
+      const [r, a, sh] = await Promise.all([
         listReports(campaignId),
         campaignAudit(campaignId),
+        listShares(campaignId).catch(() => []),
       ]);
       setReports(r);
       setAudit(a);
+      setShares(sh);
     } catch (e) {
       toast.error("Failed to load report history");
     } finally {
@@ -247,6 +287,94 @@ export default function ReportsPanel({ campaignId, readingCount }) {
               ))}
             </TableBody>
           </Table>
+        )}
+      </div>
+
+
+      {/* Client share links */}
+      <div className="border border-border rounded-sm p-4">
+        <h3 className="text-sm font-semibold flex items-center gap-2">
+          <Link2 className="w-4 h-4 text-primary" /> Client links
+          <Badge variant="outline" className="rounded-sm font-mono">
+            {shares.filter((s) => !s.revoked && !s.expired).length}
+          </Badge>
+        </h3>
+        <p className="text-xs text-muted-foreground mt-1">
+          A private, read-only page where the client can download this
+          project's reports without an account. Links expire and can be
+          withdrawn at any time.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Input
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            placeholder="Recipient (optional, for your records)"
+            className="rounded-sm h-9 max-w-xs text-xs"
+          />
+          <Select value={String(days)} onValueChange={(v) => setDays(Number(v))}>
+            <SelectTrigger className="w-[130px] rounded-sm h-9 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="7">7 days</SelectItem>
+              <SelectItem value="30">30 days</SelectItem>
+              <SelectItem value="90">90 days</SelectItem>
+              <SelectItem value="365">1 year</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button className="rounded-sm h-9" onClick={makeShare} disabled={sharing}>
+            {sharing ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                     : <Link2 className="w-4 h-4 mr-1.5" />}
+            Create link
+          </Button>
+        </div>
+
+        {newLink && (
+          <div className="mt-3 border border-primary/40 bg-primary/5 rounded-sm p-3">
+            <p className="text-xs text-muted-foreground mb-1.5">
+              Copy this now — it is shown only once.
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="text-xs break-all flex-1">{newLink}</code>
+              <Button variant="outline" size="sm" className="rounded-sm h-8"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(newLink);
+                        toast.success("Link copied");
+                      }}>
+                <Copy className="w-3.5 h-3.5 mr-1" /> Copy
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {shares.length > 0 && (
+          <ul className="mt-3 divide-y divide-border">
+            {shares.map((s) => (
+              <li key={s.id} className="py-2 flex flex-wrap items-center gap-2 text-xs">
+                <span className="min-w-0">
+                  {s.recipient || "Unnamed recipient"}
+                  <span className="text-muted-foreground">
+                    {" · "}{s.views || 0} views · {s.downloads || 0} downloads
+                  </span>
+                </span>
+                <span className="ml-auto">
+                  {s.revoked ? (
+                    <span className="text-muted-foreground">withdrawn</span>
+                  ) : s.expired ? (
+                    <span className="text-amber-500">expired</span>
+                  ) : (
+                    <span className="text-emerald-500">active</span>
+                  )}
+                </span>
+                {!s.revoked && (
+                  <Button variant="ghost" size="sm" className="rounded-sm h-7"
+                          onClick={() => withdraw(s.id)}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
