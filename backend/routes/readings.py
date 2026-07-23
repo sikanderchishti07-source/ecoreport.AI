@@ -9,6 +9,7 @@ from typing import List, Optional, Tuple
 
 import pandas as pd
 from audit import audit
+from units_mdl import GAS_FIELDS, check_units_plausible, to_ugm3
 from auth import current_username
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status, Header, Depends
 
@@ -281,6 +282,8 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
     auto_flagged_field_counts: dict[str, int] = {}
     to_insert = []
 
+    gas_units = (campaign.get("gas_units") if isinstance(campaign, dict)
+                 else getattr(campaign, "gas_units", None)) or "ugm3"
     used_dayfirst = False
     if "timestamp" in df.columns:
         parsed_ts, used_dayfirst = _smart_parse_timestamps(df["timestamp"])
@@ -288,6 +291,16 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
         if used_dayfirst:
             errors.append(
                 "Note: timestamps were read as day/month/year (DD/MM/YYYY).")
+
+    # Convert gas columns to µg/m³ when the file is in ppb/ppm, so everything
+    # downstream (limits, compliance, charts) works in one consistent unit.
+    if gas_units != "ugm3":
+        for gas in GAS_FIELDS:
+            if gas in df.columns:
+                df[gas] = pd.to_numeric(df[gas], errors="coerce").apply(
+                    lambda v: to_ugm3(v, gas, gas_units) if pd.notna(v) else v)
+        errors.append(f"Gas values converted from {gas_units} to µg/m³ "
+                      f"(25 °C, 101.3 kPa).")
 
     for idx, row in df.iterrows():
         try:
@@ -341,6 +354,17 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
             {"id": campaign_id, "status": "draft"},
             {"$set": {"status": "ingested"}},
         )
+
+    medians = {}
+    for gas in GAS_FIELDS:
+        if gas in df.columns:
+            col = pd.to_numeric(df[gas], errors="coerce").dropna()
+            col = col[col > 0]
+            if len(col):
+                medians[gas] = float(col.median())
+    warn = check_units_plausible(medians, gas_units)
+    if warn:
+        errors.insert(0, warn)
 
     upload_log = UploadLog(
         campaign_id=campaign_id,
