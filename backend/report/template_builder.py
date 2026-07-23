@@ -338,7 +338,7 @@ def build(out_path: str = OUT) -> str:
         tblPr.append(lay)
         grid = t._tbl.find(qn("w:tblGrid"))
         if grid is not None:
-            each = int(21.2 * 567 / cols)
+            each = int(21.0 * 567 / cols)
             for gc in grid.findall(qn("w:gridCol")):
                 gc.set(qn("w:w"), str(each))
         return t
@@ -364,14 +364,17 @@ def build(out_path: str = OUT) -> str:
     head = doc.add_table(rows=1, cols=2)
     _full_width(head, 2)
     hl, hr = head.rows[0].cells
-    hl.width, hr.width = Cm(12.0), Cm(9.2)
+    hl.width, hr.width = Cm(11.5), Cm(9.5)
     _pad(hl, 0.85, 0.6, 1.5, 0.2)
     _pad(hr, 0.85, 0.6, 0.2, 1.5)
     try:
         hl.paragraphs[0].add_run().add_picture(
             os.path.join(ASSETS, "logo_left.png"), height=Cm(2.05))
     except Exception:
-        pass
+        r = hl.paragraphs[0].add_run("BSA.lab")
+        r.bold = True
+        r.font.size = Pt(22)
+        r.font.color.rgb = NAVY
     rp = hr.paragraphs[0]
     rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     try:
@@ -389,9 +392,18 @@ def build(out_path: str = OUT) -> str:
     hp.paragraph_format.space_after = Pt(0)
     hp.add_run("{{ cover_hero }}")
 
-    # 3 — value propositions
-    vals = doc.add_table(rows=2, cols=4)
-    _full_width(vals, 4)
+    # 3 — value propositions, inset from the page edges
+    vals_wrap = doc.add_table(rows=1, cols=1)
+    _full_width(vals_wrap)
+    vw = vals_wrap.rows[0].cells[0]
+    _pad(vw, 0.30, 0.25, 1.3, 1.3)
+    vals = vw.add_table(rows=2, cols=4)
+    vwid = vals._tbl.tblPr.find(qn("w:tblW"))
+    if vwid is None:
+        vwid = OxmlElement("w:tblW")
+        vals._tbl.tblPr.append(vwid)
+    vwid.set(qn("w:w"), "5000")
+    vwid.set(qn("w:type"), "pct")
     props = [
         ("accurate", "ACCURATE", "Precision monitoring\nwith calibrated instruments"),
         ("reliable", "RELIABLE", "Data you can trust,\nanytime, anywhere"),
@@ -401,9 +413,9 @@ def build(out_path: str = OUT) -> str:
     for i, (icon, title, blurb) in enumerate(props):
         top = vals.cell(0, i)
         bot = vals.cell(1, i)
-        top.width = bot.width = Cm(5.3)
-        _pad(top, 0.45, 0.12, 0.3, 0.3)
-        _pad(bot, 0.0, 0.45, 0.3, 0.3)
+        top.width = bot.width = Cm(4.6)
+        _pad(top, 0.40, 0.10, 0.15, 0.15)
+        _pad(bot, 0.0, 0.40, 0.15, 0.15)
         ip = top.paragraphs[0]
         ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
         ip.paragraph_format.space_after = Pt(3)
@@ -437,7 +449,7 @@ def build(out_path: str = OUT) -> str:
              ("REVISION / DATE", "{{ revision }}   |   {{ reporting_date }}")]
     for i, (k, v) in enumerate(rows_):
         kc, vc = card.cell(i, 0), card.cell(i, 1)
-        kc.width, vc.width = Cm(5.4), Cm(12.8)
+        kc.width, vc.width = Cm(5.2), Cm(12.8)
         _pad(kc, 0.17, 0.17, 0.4, 0.2)
         _pad(vc, 0.17, 0.17, 0.45, 0.4)
         _fill(kc, NAVY_FILL)
