@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 
 from models import Campaign, CampaignSummary, PeriodEvaluation, PollutantEvaluation
 
+from units_mdl import format_with_mdl
 from report.i18n_dynamic import (ALLOWANCE, CAPTURE_ROW_NAMES, DYN, FIG_REFS,
                                  PERIOD_ADJ, PERIOD_NAMES,
                                  POLLUTANT_NARRATIVE_NAMES, days_text, fmt_date)
@@ -86,19 +87,31 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
     def pol_ctx(key: str, table_periods: List[str], narrative_name: str,
                 fig_refs: str, extra_8h: bool = False) -> Dict:
         p = P[key]
+        _mdl = getattr(p, "mdl_ugm3", None)
+
+        def fmtm(v):
+            """Display '<MDL' when a value sits below the detection limit."""
+            if v is None:
+                return fmt(v)
+            s = format_with_mdl(v, _mdl)
+            return s if s is not None else fmt(v)
+
         evs = [_period(p, per) for per in table_periods]
         e1 = _period(p, "1 Hour")
         e8 = _period(p, "8 Hour (rolling)")
         e24 = _period(p, "24 Hour")
         d: Dict = {
             "capture": fmt(p.hourly_capture_pct),
-            "h_max": fmt(p.hourly_max),
-            "h_min": fmt(p.hourly_min),
-            "daily_avg": fmt(_daily_avg(p)),
+            "h_max": fmtm(p.hourly_max),
+            "h_min": fmtm(p.hourly_min),
+            "daily_avg": fmtm(_daily_avg(p)),
             "footnote": _footnote(evs, lang) + (
+                ("\n" + D["mdl_footnote"].format(
+                    mdl=f"{_mdl:.1f}", n=getattr(p, "below_mdl_count", 0))
+                 if (_mdl and getattr(p, "below_mdl_count", 0)) else "") + (
                 "\n" + D["nr_footnote"] if any(
                     v == NR for v in (fmt(p.hourly_max), fmt(p.hourly_min))
-                ) else ""),
+                ) else "")),
         }
         if e1:
             d["limit_1h"] = fmt_limit(e1.limit_ugm3)

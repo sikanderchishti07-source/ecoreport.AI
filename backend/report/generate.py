@@ -167,7 +167,9 @@ def generate_report(
         if c.get("path") and os.path.exists(c["path"])]
     ctx["license_images"] = _img_list(license_image_paths)
 
-    tpl.render(ctx)
+    # autoescape: "<" is a reserved XML character. Without escaping, a value
+    # such as "<5.0" (below detection limit) is silently swallowed by Word.
+    tpl.render(ctx, autoescape=True)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     tpl.save(out_path)
     return out_path

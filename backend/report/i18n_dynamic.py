@@ -73,6 +73,11 @@ CAPTURE_ROW_NAMES = {
 
 DYN = {
     "en": {
+        "mdl_footnote": ("*Values shown as \"<{mdl}\" were below the method "
+                         "detection limit (MDL) of the analyser; {n} hourly "
+                         "value(s) were below the MDL and were substituted "
+                         "with half the MDL in the calculations, per USEPA "
+                         "practice."),
         "nr_footnote": ("*N/R: insufficient data — not reportable (data capture "
                         "below 75% for this averaging period)."),
         "fn_noncompliant": ("*Exceedance(s) of the NCEC standard were recorded "
@@ -150,6 +155,11 @@ DYN = {
         "dash": "—",
     },
     "ar": {
+        "mdl_footnote": ("*القيم المعروضة بصيغة \"<{mdl}\" كانت دون حد الكشف "
+                         "للطريقة (MDL) لجهاز التحليل؛ وقد بلغ عدد القيم "
+                         "الساعية دون حد الكشف {n} قيمة، واستُبدلت بنصف حد "
+                         "الكشف في الحسابات وفقاً لممارسات وكالة حماية البيئة "
+                         "الأمريكية."),
         "nr_footnote": ("*N/R: بيانات غير كافية — غير قابلة للإبلاغ (نسبة التقاط "
                         "البيانات أقل من 75% لفترة المتوسط هذه)."),
         "fn_noncompliant": ("*سُجلت تجاوزات لمعيار NCEC لفترة (فترات) المتوسط: "
