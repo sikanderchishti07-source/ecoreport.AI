@@ -83,6 +83,21 @@ def monitoring_hours(campaign: Campaign) -> int:
     return max(int(round(seconds / 3600.0)), 0)
 
 
+def hour_slots(window_start: datetime, window_end: datetime) -> int:
+    """Number of distinct clock hours the monitoring window touches.
+
+    A window of 25.0 hours starting at 04:30 spans 26 clock hours (04:00
+    through 05:00 the next day). Hourly statistics live in clock-hour slots,
+    so capture must be measured against slots, not against elapsed hours —
+    otherwise a window that starts mid-hour reports more than 100 % capture.
+    """
+    ws, we = _as_utc(window_start), _as_utc(window_end)
+    if we <= ws:
+        return 0
+    first = ws.replace(minute=0, second=0, microsecond=0)
+    return int(math.ceil((we - first).total_seconds() / 3600.0))
+
+
 def _maxminmean(values: List[float]) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     if not values:
         return None, None, None
@@ -259,11 +274,12 @@ def _evaluate_hourly(
     limit: PollutantLimit,
     readings: List[Reading],
     monitored_hours: int,
+    slots: Optional[int] = None,
 ) -> PeriodEvaluation:
     field = limit.pollutant
     vals = [v for v in (_effective(r, field) for r in readings) if v is not None]
-    expected = monitored_hours
-    capture_pct = (len(vals) / expected * 100.0) if expected else 0.0
+    expected = slots or monitored_hours
+    capture_pct = min((len(vals) / expected * 100.0) if expected else 0.0, 100.0)
     sufficient = capture_pct >= 75.0
     max_v, min_v, mean_v = _maxminmean(vals) if sufficient else (None, None, None)
     exceed = sum(1 for v in vals if v > limit.limit_ugm3)
@@ -416,7 +432,9 @@ def _evaluate_limit(
 ) -> PeriodEvaluation:
     hours = limit.averaging_period_hours
     if hours == 1:
-        return _evaluate_hourly(limit, readings, monitored_hours)
+        slots = (hour_slots(window_start, window_end)
+                 if (window_start and window_end) else None)
+        return _evaluate_hourly(limit, readings, monitored_hours, slots=slots)
     if hours == 8:
         return _evaluate_8h_rolling(limit, readings, monitored_hours, window_start=window_start)
     if hours == 24:
@@ -436,6 +454,7 @@ def _pollutant_evaluation(
     window_start: Optional[datetime] = None,
     window_end: Optional[datetime] = None,
     mdl: Optional[float] = None,
+    slots: Optional[int] = None,
 ) -> PollutantEvaluation:
     is_supporting = pollutant in SUPPORTING_POLLUTANTS
 
@@ -456,8 +475,8 @@ def _pollutant_evaluation(
 
     # Hourly stats always computed (also used for supporting pollutants).
     vals = [v for v in (_effective(r, pollutant) for r in readings) if v is not None]
-    expected = monitored_hours
-    capture_pct = (len(vals) / expected * 100.0) if expected else 0.0
+    expected = slots or monitored_hours
+    capture_pct = min((len(vals) / expected * 100.0) if expected else 0.0, 100.0)
     hourly_sufficient = capture_pct >= 75.0
     h_max, h_min, h_mean = _maxminmean(vals) if hourly_sufficient else (None, None, None)
 
@@ -515,10 +534,13 @@ def _period_sort_key(h: Optional[float]) -> int:
     return order.get(int(h) if h else -1, 3)  # None (annual) sorts last
 
 
-def _meteorology_summary(readings: List[Reading], monitored_hours: int) -> MeteorologySummary:
+def _meteorology_summary(readings: List[Reading], monitored_hours: int,
+                         slots: Optional[int] = None) -> MeteorologySummary:
+    denom = slots or monitored_hours
+
     def stats(field: str):
         vals = [v for v in (_effective(r, field) for r in readings) if v is not None]
-        cap = (len(vals) / monitored_hours * 100.0) if monitored_hours else 0.0
+        cap = min((len(vals) / denom * 100.0) if denom else 0.0, 100.0)
         mx, mn, mean = _maxminmean(vals)
         return cap, mx, mn, mean, vals
 
@@ -527,7 +549,7 @@ def _meteorology_summary(readings: List[Reading], monitored_hours: int) -> Meteo
     p_cap, p_max, p_min, p_mean, _ = stats("Pressure")
     ws_cap, ws_max, ws_min, ws_mean, _ = stats("WindSpeed")
     wd_vals = [v for v in (_effective(r, "WindDirection") for r in readings) if v is not None]
-    wd_cap = (len(wd_vals) / monitored_hours * 100.0) if monitored_hours else 0.0
+    wd_cap = min((len(wd_vals) / denom * 100.0) if denom else 0.0, 100.0)
     prevailing = None
     if wd_vals:
         counts = Counter(_compass_bin(d) for d in wd_vals)
@@ -665,8 +687,11 @@ def _to_hourly(readings: List[Reading]) -> List[Reading]:
                 data[f] = round(ang % 360.0, 1)
             else:
                 data[f] = round(sum(vals) / len(vals), 3) if vals else None
-        out.append(Reading(campaign_id=rows[0].campaign_id, timestamp=hour,
-                           valid=True, **data))
+        out.append(Reading(
+            campaign_id=rows[0].campaign_id, timestamp=hour, valid=True,
+            auto_flagged_fields=sorted({f for r in rows
+                                        for f in (r.auto_flagged_fields or [])}),
+            **data))
     return out
 
 
@@ -691,6 +716,7 @@ def build_campaign_summary(
     # Collapse sub-hourly exports (30/15/5-minute data) into hourly means so
     # every statistic below is a true hourly value and capture % is bounded.
     readings = _to_hourly(readings)
+    slots = hour_slots(w_start, w_end)
 
     # Group limits by pollutant for fast lookup
     limits_by_pol: Dict[str, List[PollutantLimit]] = defaultdict(list)
@@ -704,10 +730,11 @@ def build_campaign_summary(
         pollutants.append(_pollutant_evaluation(
             pol, readings, limits_by_pol.get(pol, []), m_hours,
             window_start=w_start, window_end=w_end, mdl=mdls.get(pol),
+            slots=slots,
         ))
 
-    met = _meteorology_summary(readings, m_hours)
-    wr = _wind_rose_summary(readings, campaign.wind_rose_bins, m_hours)
+    met = _meteorology_summary(readings, m_hours, slots=slots)
+    wr = _wind_rose_summary(readings, campaign.wind_rose_bins, slots)
 
     manually_flagged = sum(1 for r in readings if not r.valid)
     auto_flagged = sum(1 for r in readings if r.auto_flagged_fields)
