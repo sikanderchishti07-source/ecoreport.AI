@@ -119,6 +119,9 @@ export const generateReport = async (campaignId, lang = "en", format = "docx") =
   URL.revokeObjectURL(url);
   return filename;
 };
+export const previewReport = (campaignId) =>
+  api.get(`/campaigns/${campaignId}/report-preview`).then((r) => r.data);
+
 export const listReports = (campaignId) =>
   api.get(`/campaigns/${campaignId}/reports`).then((r) => r.data);
 export const downloadReportVersion = async (reportId, filename) => {
