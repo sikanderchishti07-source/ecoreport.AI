@@ -360,26 +360,23 @@ def build(out_path: str = OUT) -> str:
             r.font.color.rgb = colour
         return p
 
-    # 1 — white masthead: logo, tagline rule, national emblem
-    head = doc.add_table(rows=1, cols=3)
-    _full_width(head, 3)
-    hl, hm, hr = head.rows[0].cells
-    hl.width, hm.width, hr.width = Cm(7.0), Cm(8.6), Cm(5.4)
-    _pad(hl, 0.75, 0.45, 1.5, 0.2)
-    _pad(hm, 0.95, 0.45, 0.4, 0.2)
-    _pad(hr, 0.75, 0.45, 0.2, 1.5)
+    # 1 — white masthead: logo left, national emblem right
+    head = doc.add_table(rows=1, cols=2)
+    _full_width(head, 2)
+    hl, hr = head.rows[0].cells
+    hl.width, hr.width = Cm(12.0), Cm(9.2)
+    _pad(hl, 0.85, 0.6, 1.5, 0.2)
+    _pad(hr, 0.85, 0.6, 0.2, 1.5)
     try:
         hl.paragraphs[0].add_run().add_picture(
-            os.path.join(ASSETS, "logo_left.png"), height=Cm(1.35))
+            os.path.join(ASSETS, "logo_left.png"), height=Cm(2.05))
     except Exception:
         pass
-    _txt(hm, "Science for a", 11, italic=True, colour=NAVY, first=True)
-    _txt(hm, "Cleaner Tomorrow", 11, italic=True, colour=NAVY)
     rp = hr.paragraphs[0]
     rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     try:
         rp.add_run().add_picture(
-            os.path.join(ASSETS, "logo_right.png"), height=Cm(1.35))
+            os.path.join(ASSETS, "logo_right.png"), height=Cm(2.05))
     except Exception:
         pass
 
@@ -420,10 +417,19 @@ def build(out_path: str = OUT) -> str:
         for line in blurb.split("\n"):
             _txt(bot, line, 8, colour=DARK, align="center", after=0)
 
-    # 4 — project details card
-    card = doc.add_table(rows=5, cols=2)
-    _full_width(card, 2)
+    # 4 — project details card, inset from both page edges
+    card_wrap = doc.add_table(rows=1, cols=1)
+    _full_width(card_wrap)
+    wrap_cell = card_wrap.rows[0].cells[0]
+    _pad(wrap_cell, 0.35, 0.35, 1.5, 1.5)
+    card = wrap_cell.add_table(rows=5, cols=2)
     card.style = "Table Grid"
+    cw = card._tbl.tblPr.find(qn("w:tblW"))
+    if cw is None:
+        cw = OxmlElement("w:tblW")
+        card._tbl.tblPr.append(cw)
+    cw.set(qn("w:w"), "5000")
+    cw.set(qn("w:type"), "pct")
     rows_ = [("CLIENT", "{{ client }}"),
              ("SITE", "{{ site_name }}"),
              ("MONITORING PERIOD", "{{ monitoring_window_text }}"),
@@ -431,8 +437,8 @@ def build(out_path: str = OUT) -> str:
              ("REVISION / DATE", "{{ revision }}   |   {{ reporting_date }}")]
     for i, (k, v) in enumerate(rows_):
         kc, vc = card.cell(i, 0), card.cell(i, 1)
-        kc.width, vc.width = Cm(6.0), Cm(15.2)
-        _pad(kc, 0.17, 0.17, 1.5, 0.2)
+        kc.width, vc.width = Cm(5.4), Cm(12.8)
+        _pad(kc, 0.17, 0.17, 0.4, 0.2)
         _pad(vc, 0.17, 0.17, 0.45, 0.4)
         _fill(kc, NAVY_FILL)
         _txt(kc, k, 9.5, bold=True, colour=WHITE, first=True)
