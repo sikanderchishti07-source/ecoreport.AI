@@ -63,6 +63,9 @@ export const updateCampaign = (id, payload) =>
 export const deleteCampaign = (id) => api.delete(`/campaigns/${id}`);
 
 // Readings
+export const getSummary = (campaignId) =>
+  api.get(`/campaigns/${campaignId}/summary`).then((r) => r.data);
+
 export const listReadings = (campaignId, params = {}) =>
   api.get(`/campaigns/${campaignId}/readings`, { params }).then((r) => r.data);
 export const flagReading = (readingId, payload) =>
