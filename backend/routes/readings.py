@@ -355,6 +355,15 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
             {"$set": {"status": "ingested"}},
         )
 
+    if "timestamp" in df.columns:
+        ts_ok = df["timestamp"].dropna()
+        dupes = int(len(ts_ok) - ts_ok.nunique())
+        if dupes:
+            errors.insert(0, f"Note: {dupes} row(s) repeat a timestamp already "
+                             f"present in the file. Repeated and sub-hourly "
+                             f"rows are averaged into their clock hour before "
+                             f"any statistic is calculated.")
+
     medians = {}
     for gas in GAS_FIELDS:
         if gas in df.columns:
