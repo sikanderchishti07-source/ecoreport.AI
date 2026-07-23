@@ -5,7 +5,10 @@
 # PDFs fall back to plain conversion).
 FROM python:3.11-slim
 
-ENV PYTHONUNBUFFERED=1 \
+# python3-uno lands in the system dist-packages, outside this slim image's
+# default import path, so make it reachable from the app.
+ENV PYTHONPATH=/usr/lib/python3/dist-packages \
+    PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     MPLBACKEND=Agg \
     DEBIAN_FRONTEND=noninteractive
@@ -13,14 +16,17 @@ ENV PYTHONUNBUFFERED=1 \
 # --- essential: DOCX -> PDF conversion + PDF page rendering ---------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libreoffice-writer \
+        python3-uno \
         fontconfig \
         poppler-utils \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && PYTHONPATH=/usr/lib/python3/dist-packages python3 -c \
+       "import uno; print('UNO bridge available')" 
 
 # --- best effort: Arabic + chart fonts, LibreOffice automation bridge -----
 RUN apt-get update; \
     for pkg in fonts-hosny-amiri fonts-noto-core fonts-ibm-plex \
-               fonts-dejavu-core python3-uno; do \
+               fonts-dejavu-core; do \
         apt-get install -y --no-install-recommends "$pkg" \
             || echo "WARNING: optional package $pkg unavailable, continuing"; \
     done; \
