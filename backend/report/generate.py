@@ -151,6 +151,23 @@ def generate_report(
             rows.append(pair)
     ctx["site_photo_rows"] = rows
 
+    # Cover hero band — drawn for this report so the project name is set at
+    # the right size and the operator's own photo can be used as the backdrop.
+    try:
+        from report.cover import build_hero, build_icons
+        build_icons()
+        hero_dir = charts_dir or os.path.join(os.path.dirname(
+            os.path.abspath(out_path)), "charts")
+        os.makedirs(hero_dir, exist_ok=True)
+        hero_png = os.path.join(hero_dir, f"cover_hero_{lang}.png")
+        build_hero(campaign.project_name, hero_png,
+                   photo_path=cover_photo_path, lang=lang)
+        ctx["cover_hero"] = InlineImage(tpl, hero_png, width=Mm(212))
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("cover hero failed", exc_info=True)
+        ctx["cover_hero"] = ""
+
     ctx["fig_site_map"] = (InlineImage(tpl, site_map_path, width=Mm(150))
                            if site_map_path and os.path.exists(site_map_path)
                            else None)
