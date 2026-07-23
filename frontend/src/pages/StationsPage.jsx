@@ -8,7 +8,7 @@ import {
   createStation, deleteStation, listStations, updateStation,
 } from "@/lib/api";
 
-const BLANK_ROW = { parameter: "", technique: "", sn: "" };
+const BLANK_ROW = { parameter: "", technique: "", sn: "", mdl_ugm3: "" };
 
 function LabCard({ lab, onChanged }) {
   const [name, setName] = useState(lab.name);
@@ -24,7 +24,11 @@ function LabCard({ lab, onChanged }) {
     try {
       await updateStation(lab.id, {
         name, code,
-        instruments: rows.filter((r) => r.parameter?.trim()),
+        instruments: rows.filter((r) => r.parameter?.trim()).map((r) => ({
+          ...r,
+          mdl_ugm3: r.mdl_ugm3 === "" || r.mdl_ugm3 == null
+            ? null : Number(r.mdl_ugm3),
+        })),
       });
       toast.success(`${name} saved`);
       onChanged();
@@ -76,7 +80,8 @@ function LabCard({ lab, onChanged }) {
           <div className="grid grid-cols-12 gap-2 text-[11px] text-muted-foreground px-1">
             <div className="col-span-3">PARAMETER(S)</div>
             <div className="col-span-2">SERIAL NUMBER</div>
-            <div className="col-span-6">INSTRUMENT / TECHNIQUE</div>
+            <div className="col-span-5">INSTRUMENT / TECHNIQUE</div>
+            <div className="col-span-1">MDL µg/m³</div>
           </div>
           {rows.map((r, i) => (
             <div key={i} className="grid grid-cols-12 gap-2 items-center">
@@ -85,9 +90,12 @@ function LabCard({ lab, onChanged }) {
                      placeholder="SO2" />
               <Input className="col-span-2 rounded-sm h-9 text-xs font-mono"
                      value={r.sn || ""} onChange={set(i, "sn")} placeholder="1234" />
-              <Input className="col-span-6 rounded-sm h-9 text-xs"
+              <Input className="col-span-5 rounded-sm h-9 text-xs"
                      value={r.technique || ""} onChange={set(i, "technique")}
                      placeholder="T-100 (TELEDYNE) EQSA-0495-100" />
+              <Input className="col-span-1 rounded-sm h-9 text-xs font-mono"
+                     value={r.mdl_ugm3 ?? ""} onChange={set(i, "mdl_ugm3")}
+                     placeholder="2.0" />
               <Button variant="ghost" size="icon" className="col-span-1 h-9 w-9"
                       onClick={() => setRows((x) => x.filter((_, j) => j !== i))}>
                 <Trash2 className="w-4 h-4 text-muted-foreground" />

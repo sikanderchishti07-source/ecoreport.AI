@@ -8,6 +8,9 @@ import { CAMPAIGN_FORM } from "@/constants/testIds";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 
 const defaults = {
   project_name: "",
@@ -17,6 +20,7 @@ const defaults = {
   latitude: "",
   longitude: "",
   inlet_height_m: 5.0,
+    gas_units: "ugm3",
   monitoring_start: "",
   monitoring_end: "",
   prepared_by: "",
@@ -207,6 +211,22 @@ export default function CampaignForm({ mode }) {
               className="rounded-sm font-mono"
             />
           </Field>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Gas data units *</Label>
+          <Select value={form.gas_units || "ugm3"}
+                  onValueChange={(v) => setForm((f) => ({ ...f, gas_units: v }))}>
+            <SelectTrigger className="rounded-sm h-9"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ugm3">µg/m³ (already converted)</SelectItem>
+              <SelectItem value="ppb">ppb — convert on upload</SelectItem>
+              <SelectItem value="ppm">ppm — convert on upload</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-[11px] text-muted-foreground">
+            Units of the gas columns in your uploaded file. NCEC limits are
+            µg/m³ at 25 °C and 101.3 kPa; ppb/ppm files are converted on ingest.
+          </p>
         </div>
       </Section>
 
