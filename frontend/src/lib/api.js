@@ -167,3 +167,20 @@ export const updateAttachment = (id, p) =>
   api.patch(`/attachments/${id}`, p).then((r) => r.data);
 export const deleteAttachment = (id) => api.delete(`/attachments/${id}`);
 export const attachmentFileUrl = (id) => `${API_BASE}/attachments/${id}/file`;
+
+
+// Home dashboard and client portal — shipment 3
+export const homeDashboard = () => api.get("/dashboard").then((r) => r.data);
+
+export const createShare = (payload) =>
+  api.post("/shares", payload).then((r) => r.data);
+export const listShares = (campaignId) =>
+  api.get(`/campaigns/${campaignId}/shares`).then((r) => r.data);
+export const revokeShare = (id) => api.delete(`/shares/${id}`);
+
+// Portal calls carry their own signed token, so they bypass the session.
+export const portalView = (token) =>
+  api.get(`/portal/${token}`).then((r) => r.data);
+export const portalDownloadUrl = (token, reportId) =>
+  `${API_BASE}/portal/${token}/reports/${reportId}`;
+export const shareUrl = (token) => `${window.location.origin}/share/${token}`;
