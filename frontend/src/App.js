@@ -8,6 +8,8 @@ import CampaignDetail from "@/pages/CampaignDetail";
 import UploadPage from "@/pages/UploadPage";
 import LimitsPage from "@/pages/LimitsPage";
 import LoginPage from "@/pages/LoginPage";
+import HomeDashboard from "@/pages/HomeDashboard";
+import PortalPage from "@/pages/PortalPage";
 import UsersPage from "@/pages/UsersPage";
 import StationsPage from "@/pages/StationsPage";
 import { getToken } from "@/lib/api";
@@ -23,6 +25,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/share/:token" element={<PortalPage />} />
           <Route
             element={
               <RequireAuth>
@@ -30,7 +33,7 @@ export default function App() {
               </RequireAuth>
             }
           >
-            <Route index element={<Navigate to="/campaigns" replace />} />
+            <Route index element={<HomeDashboard />} />
             <Route path="/campaigns" element={<CampaignsList />} />
             <Route path="/campaigns/new" element={<CampaignForm mode="create" />} />
             <Route path="/campaigns/:id" element={<CampaignDetail />} />
