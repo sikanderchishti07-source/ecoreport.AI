@@ -127,7 +127,7 @@ function Section({ campaignId, section, items, instruments, onChange }) {
         <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
           {items.map((a) => (
             <div key={a.id} className="border border-border rounded-sm p-2 space-y-1.5">
-              <div className="aspect-[4/3] bg-zinc-900/50 rounded-sm overflow-hidden flex items-center justify-center">
+              <div className="aspect-[4/3] bg-secondary/50 rounded-sm overflow-hidden flex items-center justify-center">
                 <img
                   src={attachmentFileUrl(a.id)}
                   alt={a.filename}
