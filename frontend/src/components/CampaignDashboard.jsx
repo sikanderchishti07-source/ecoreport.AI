@@ -127,8 +127,17 @@ export default function CampaignDashboard({ campaign, onGoTo }) {
     acc[c.state] = (acc[c.state] || 0) + 1;
     return acc;
   }, {});
-  const expected = summary.monitoring_hours || coverage.length || 1;
-  const missing = Math.max(expected - coverage.length, 0);
+  // Hour-level figures come from the summary, which works in clock-hour
+  // slots. The raw reading rows may be sub-hourly, so counting them would
+  // overstate both "valid hours" and "invalidated".
+  const withHours = (summary.pollutants || []).filter(
+    (p) => p.hourly_expected_count);
+  const expected = withHours.length ? withHours[0].hourly_expected_count
+                                    : summary.monitoring_hours || 1;
+  const validHours = withHours.length
+    ? Math.max(...withHours.map((p) => p.hourly_valid_count || 0)) : 0;
+  const missing = Math.max(expected - validHours, 0);
+  const invalidated = summary.manually_flagged_readings || 0;
 
   return (
     <div className="space-y-5">
@@ -162,13 +171,15 @@ export default function CampaignDashboard({ campaign, onGoTo }) {
         <Metric label="Data capture" value={`${num(capture)}%`}
                 tone={capture >= 75 ? "good" : "warn"}
                 hint={capture < 75 ? "below the 75% requirement" : undefined} />
-        <Metric label="Valid hours"
-                value={`${totals.valid || 0} / ${expected}`} />
+        <Metric label="Valid hours" value={`${validHours} / ${expected}`}
+                hint={missing ? `${missing} hour(s) not reported` : undefined} />
         <Metric label="Exceedances" value={exceedances}
                 tone={exceedances ? "bad" : "good"} />
-        <Metric label="Invalidated"
-                value={(totals.invalid || 0) + (totals.partial || 0)}
-                tone={(totals.invalid || 0) ? "warn" : "default"} />
+        <Metric label="Invalidated" value={invalidated}
+                tone={invalidated ? "warn" : "default"}
+                hint={summary.auto_flagged_readings
+                  ? `${summary.auto_flagged_readings} auto-flagged field(s)`
+                  : undefined} />
       </div>
 
       {/* compliance by pollutant */}
