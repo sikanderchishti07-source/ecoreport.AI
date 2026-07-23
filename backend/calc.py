@@ -651,14 +651,15 @@ def _to_hourly(readings: List[Reading]) -> List[Reading]:
     """
     if len(readings) < 2:
         return readings
-    stamps = sorted(_as_utc(r.timestamp) for r in readings)
-    gaps = [(b - a).total_seconds() for a, b in zip(stamps, stamps[1:])
-            if (b - a).total_seconds() > 0]
-    if not gaps:
-        return readings
-    gaps.sort()
-    median_gap = gaps[len(gaps) // 2]
-    if median_gap >= 3000:          # ~50 min or more -> already hourly
+
+    # Collapse whenever the file carries more rows than clock hours — this
+    # covers sub-hourly exports (30/15/5-minute data) AND duplicate rows for
+    # the same timestamp, which a median-gap test would miss because the
+    # zero-length gaps between duplicates drop out of the calculation.
+    hours_present = {_as_utc(r.timestamp).replace(minute=0, second=0,
+                                                  microsecond=0)
+                     for r in readings}
+    if len(hours_present) >= len(readings):
         return readings
 
     buckets: Dict[datetime, List[Reading]] = defaultdict(list)
