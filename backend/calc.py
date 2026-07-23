@@ -31,6 +31,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
+from units_mdl import apply_mdl, mdl_map
 from models import (
     ALL_MEASUREMENT_FIELDS,
     COMPLIANCE_POLLUTANTS,
@@ -434,8 +435,24 @@ def _pollutant_evaluation(
     monitored_hours: int,
     window_start: Optional[datetime] = None,
     window_end: Optional[datetime] = None,
+    mdl: Optional[float] = None,
 ) -> PollutantEvaluation:
     is_supporting = pollutant in SUPPORTING_POLLUTANTS
+
+    # Below the instrument's detection limit a reading is noise, not a
+    # measurement. USEPA practice is to substitute MDL/2 in calculations and
+    # to report such values as "<MDL" rather than as raw digits.
+    below_mdl_count = 0
+    if mdl and mdl > 0:
+        subbed: List[Reading] = []
+        for r in readings:
+            v = _effective(r, pollutant)
+            nv, was_below = apply_mdl(v, mdl)
+            if was_below:
+                below_mdl_count += 1
+                r = r.model_copy(update={pollutant: nv})
+            subbed.append(r)
+        readings = subbed
 
     # Hourly stats always computed (also used for supporting pollutants).
     vals = [v for v in (_effective(r, pollutant) for r in readings) if v is not None]
@@ -472,6 +489,8 @@ def _pollutant_evaluation(
                 window_start=window_start, window_end=window_end,
             ))
 
+    _extra = {"below_mdl_count": below_mdl_count, "mdl_ugm3": mdl} \
+        if (mdl and mdl > 0) else {}
     return PollutantEvaluation(
         pollutant=pollutant,
         is_supporting=is_supporting,
@@ -487,6 +506,7 @@ def _pollutant_evaluation(
         rolling_8h_valid_count=r8_valid_count,
         rolling_8h_expected_count=r8_expected,
         period_evaluations=period_evals,
+        **_extra,
     )
 
 
@@ -677,11 +697,13 @@ def build_campaign_summary(
     for lim in limits:
         limits_by_pol[lim.pollutant].append(lim)
 
+    mdls = mdl_map(getattr(campaign, "instruments", None))
+
     pollutants: List[PollutantEvaluation] = []
     for pol in ALL_POLLUTANTS:
         pollutants.append(_pollutant_evaluation(
             pol, readings, limits_by_pol.get(pol, []), m_hours,
-            window_start=w_start, window_end=w_end,
+            window_start=w_start, window_end=w_end, mdl=mdls.get(pol),
         ))
 
     met = _meteorology_summary(readings, m_hours)

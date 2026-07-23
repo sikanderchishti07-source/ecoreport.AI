@@ -60,6 +60,8 @@ class CampaignBase(BaseModel):
     latitude: float
     longitude: float
     inlet_height_m: float = 5.0
+    gas_units: str = "ugm3"          # units of the UPLOADED gas data:
+                                     # "ugm3" | "ppb" | "ppm" (converted on ingest)
     monitoring_start: datetime
     monitoring_end: datetime
     prepared_by: Optional[str] = None
@@ -77,6 +79,7 @@ class CampaignCreate(CampaignBase):
 
 
 class CampaignUpdate(BaseModel):
+    gas_units: Optional[str] = None
     station_id: Optional[str] = None
     instruments: Optional[List["Instrument"]] = None
     model_config = ConfigDict(extra="ignore")
@@ -252,6 +255,8 @@ class PollutantEvaluation(BaseModel):
     hourly_expected_count: int
     hourly_max: Optional[float] = None
     hourly_min: Optional[float] = None
+    mdl_ugm3: Optional[float] = None      # detection limit applied, µg/m³
+    below_mdl_count: int = 0              # hours below that limit
     hourly_mean: Optional[float] = None
     # Optional 8-hr rolling stats (populated only for CO and O3)
     rolling_8h_max: Optional[float] = None
@@ -328,6 +333,7 @@ class Instrument(BaseModel):
     technique: str = ""                 # make / model / EQ reference
     sn: str = ""                        # serial number
     calibration_date: Optional[str] = None
+    mdl_ugm3: Optional[float] = None    # method detection limit, µg/m³
 
 
 class StationBase(BaseModel):
