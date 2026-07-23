@@ -14,7 +14,6 @@ import {
 import {
   campaignAudit, downloadReportVersion, generateReport, listReports,
 } from "@/lib/api";
-import ReportPreview from "@/components/ReportPreview";
 
 const LANGS = [
   { value: "en", label: "English" },
@@ -90,7 +89,6 @@ export default function ReportsPanel({ campaignId, readingCount }) {
   const [reports, setReports] = useState([]);
   const [audit, setAudit] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [preview, setPreview] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -166,13 +164,6 @@ export default function ReportsPanel({ campaignId, readingCount }) {
             </SelectContent>
           </Select>
           <Button
-            variant="outline"
-            className="rounded-sm h-9"
-            onClick={() => setPreview((v) => !v)}
-          >
-            {preview ? "Hide preview" : "Preview"}
-          </Button>
-          <Button
             onClick={onGenerate}
             disabled={busy}
             className="rounded-sm h-9"
@@ -194,15 +185,6 @@ export default function ReportsPanel({ campaignId, readingCount }) {
             <RefreshCw className="w-4 h-4" />
           </Button>
         </div>
-        {preview && (
-          <div className="mt-4 pt-4 border-t border-border">
-            <ReportPreview
-              campaignId={campaignId}
-              onGenerate={() => { setPreview(false); onGenerate(); }}
-              onClose={() => setPreview(false)}
-            />
-          </div>
-        )}
       </div>
 
       {/* Version history */}
