@@ -10,8 +10,8 @@ body {
     "Helvetica Neue", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: #09090b;
-  color: #f4f4f5;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 code, .font-mono, .tabular {
@@ -20,7 +20,8 @@ code, .font-mono, .tabular {
   font-variant-numeric: tabular-nums;
 }
 
-/* Force dark, technical theme app-wide. No light-mode toggle in Phase 1. */
+/* Dark is the default; .light on <html> switches to the light palette.
+   The theme selector writes dark / light / system to localStorage. */
 @layer base {
   :root {
     --background: 240 6% 4%;       /* #09090B */
@@ -49,6 +50,34 @@ code, .font-mono, .tabular {
     --chart-4: 340 75% 55%;
     --chart-5: 60 90% 55%;
     --radius: 0.25rem;  /* sharp technical corners */
+  }
+
+  .light {
+    --background: 210 20% 98%;      /* #F7F9FB page */
+    --surface: 0 0% 100%;
+    --foreground: 213 30% 12%;      /* near-navy ink */
+    --card: 0 0% 100%;
+    --card-foreground: 213 30% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 213 30% 12%;
+    --primary: 210 76% 25%;         /* #0F3D6E brand navy */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 25% 95%;
+    --secondary-foreground: 213 30% 18%;
+    --muted: 210 25% 95%;
+    --muted-foreground: 213 12% 42%;
+    --accent: 210 30% 94%;
+    --accent-foreground: 213 30% 18%;
+    --destructive: 0 68% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 213 20% 88%;
+    --input: 213 20% 88%;
+    --ring: 210 76% 35%;
+    --chart-1: 210 71% 41%;
+    --chart-2: 148 54% 40%;
+    --chart-3: 30 80% 45%;
+    --chart-4: 340 65% 45%;
+    --chart-5: 45 85% 45%;
   }
 }
 

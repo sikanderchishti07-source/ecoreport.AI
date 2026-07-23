@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@/index.css";
 import App from "@/App";
+import { applyTheme } from "@/lib/theme";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -12,6 +13,8 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+applyTheme();
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
