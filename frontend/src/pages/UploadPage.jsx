@@ -86,7 +86,7 @@ export default function UploadPage() {
       </div>
 
       <section className="border border-border rounded-sm">
-        <header className="px-4 py-2 border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground bg-zinc-900/40">
+        <header className="px-4 py-2 border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground bg-secondary/40">
           Expected columns (order-agnostic)
         </header>
         <div className="p-4 grid grid-cols-3 md:grid-cols-5 gap-2 text-xs font-mono">
@@ -114,7 +114,7 @@ export default function UploadPage() {
         onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
         onDragLeave={() => setDragActive(false)}
         onDrop={onDrop}
-        className="dropzone block rounded-sm p-10 text-center cursor-pointer bg-zinc-900/20"
+        className="dropzone block rounded-sm p-10 text-center cursor-pointer bg-secondary/20"
       >
         <UploadCloud className="w-8 h-8 mx-auto text-muted-foreground" />
         <p className="mt-3 text-sm">
@@ -162,7 +162,7 @@ export default function UploadPage() {
           data-testid={result.upload_log.rows_ingested > 0 ? UPLOAD.resultOk : UPLOAD.resultErrors}
           className="border border-border rounded-sm"
         >
-          <header className="px-4 py-2 border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground bg-zinc-900/40 flex items-center justify-between">
+          <header className="px-4 py-2 border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground bg-secondary/40 flex items-center justify-between">
             <span>Ingest result</span>
             <span className="font-mono">
               {result.upload_log.rows_ingested} ingested · {result.upload_log.rows_skipped} skipped

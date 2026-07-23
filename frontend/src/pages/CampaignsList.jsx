@@ -20,10 +20,10 @@ import {
 } from "@/components/ui/alert-dialog";
 
 const statusVariant = {
-  draft: "bg-zinc-800 text-muted-foreground border-border",
+  draft: "bg-accent text-muted-foreground border-border",
   ingested: "bg-sky-950/50 text-sky-300 border-sky-900",
   ready: "bg-emerald-950/40 text-emerald-300 border-emerald-900",
-  archived: "bg-zinc-900 text-muted-foreground border-border",
+  archived: "bg-secondary text-muted-foreground border-border",
 };
 
 function StatusPill({ value }) {
@@ -129,7 +129,7 @@ export default function CampaignsList() {
       </header>
 
       <div className="flex items-center gap-2">
-        <div className="flex items-center gap-2 border border-border rounded-sm px-3 h-10 bg-zinc-900/40 w-full max-w-md">
+        <div className="flex items-center gap-2 border border-border rounded-sm px-3 h-10 bg-secondary/40 w-full max-w-md">
           <Search className="w-4 h-4 text-muted-foreground shrink-0" />
           <input
             value={query}
@@ -152,7 +152,7 @@ export default function CampaignsList() {
       </div>
 
       <section className="border border-border rounded-sm overflow-hidden">
-        <div className="grid grid-cols-12 bg-zinc-900/50 text-[11px] uppercase tracking-wider text-muted-foreground px-4 py-2 border-b border-border">
+        <div className="grid grid-cols-12 bg-secondary/50 text-[11px] uppercase tracking-wider text-muted-foreground px-4 py-2 border-b border-border">
           <div className="col-span-4">Project</div>
           <div className="col-span-3">Client</div>
           <div className="col-span-3">Monitoring window</div>
@@ -177,7 +177,7 @@ export default function CampaignsList() {
           <div
             key={c.id}
             data-testid={CAMPAIGNS_LIST.row(c.id)}
-            className="grid grid-cols-12 px-4 py-3 border-b border-border last:border-b-0 items-center hover:bg-zinc-900/40 transition-colors"
+            className="grid grid-cols-12 px-4 py-3 border-b border-border last:border-b-0 items-center hover:bg-secondary/40 transition-colors"
           >
             <div className="col-span-4">
               <div className="flex items-center gap-2 font-medium">

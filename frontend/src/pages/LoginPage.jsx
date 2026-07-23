@@ -40,9 +40,9 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground flex items-center justify-center px-4">
-      <div className="w-full max-w-sm border border-border rounded-sm p-6 bg-zinc-950">
+      <div className="w-full max-w-sm border border-border rounded-sm p-6 bg-card">
         <div className="flex items-center gap-2 mb-1">
-          <span className="inline-flex items-center justify-center w-7 h-7 border border-border rounded-sm bg-zinc-900">
+          <span className="inline-flex items-center justify-center w-7 h-7 border border-border rounded-sm bg-secondary">
             <Activity className="w-4 h-4 text-primary" />
           </span>
           <span className="text-sm font-semibold tracking-tight">EcoReport AI</span>

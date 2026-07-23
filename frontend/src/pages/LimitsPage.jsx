@@ -46,7 +46,7 @@ export default function LimitsPage() {
           data-testid={LIMITS.table}
           className="border border-border rounded-sm overflow-hidden"
         >
-          <div className="grid grid-cols-12 gap-3 bg-zinc-900/60 text-[10px] uppercase tracking-wider text-muted-foreground px-4 py-2 border-b border-border">
+          <div className="grid grid-cols-12 gap-3 bg-secondary/60 text-[10px] uppercase tracking-wider text-muted-foreground px-4 py-2 border-b border-border">
             <div className="col-span-2">Pollutant</div>
             <div className="col-span-3">Averaging period</div>
             <div className="col-span-2 text-right font-mono">Limit (µg/m³)</div>
@@ -59,7 +59,7 @@ export default function LimitsPage() {
                 <div
                   key={l.id}
                   data-testid={LIMITS.row(pol, l.averaging_period)}
-                  className="grid grid-cols-12 gap-3 px-4 py-2.5 border-b border-border last:border-b-0 items-center hover:bg-zinc-900/30"
+                  className="grid grid-cols-12 gap-3 px-4 py-2.5 border-b border-border last:border-b-0 items-center hover:bg-secondary/30"
                 >
                   <div className="col-span-2 font-mono font-medium">
                     {idx === 0 ? pol : <span className="text-muted-foreground">↳</span>}

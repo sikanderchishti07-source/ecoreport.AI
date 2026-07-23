@@ -29,6 +29,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import ReportsPanel from "@/components/ReportsPanel";
+import CampaignDashboard from "@/components/CampaignDashboard";
 import InstrumentsPanel from "@/components/InstrumentsPanel";
 import AttachmentsPanel from "@/components/AttachmentsPanel";
 import { Switch } from "@/components/ui/switch";
@@ -63,6 +64,7 @@ function fmt(v) {
 
 export default function CampaignDetail() {
   const { id } = useParams();
+  const [tab, setTab] = useState("overview");
   const nav = useNavigate();
   const [campaign, setCampaign] = useState(null);
   const [readings, setReadings] = useState([]);
@@ -197,8 +199,8 @@ export default function CampaignDetail() {
         </div>
       </div>
 
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="rounded-sm bg-zinc-900/60 border border-border p-1 h-auto">
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
+        <TabsList className="rounded-sm bg-secondary/60 border border-border p-1 h-auto">
           <TabsTrigger value="overview" data-testid={CAMPAIGN_DETAIL.tabOverview} className="rounded-sm">
             Overview
           </TabsTrigger>
@@ -221,57 +223,8 @@ export default function CampaignDetail() {
 
         {/* OVERVIEW */}
         <TabsContent value="overview" className="mt-4 space-y-4">
-          <div className="grid grid-cols-5 gap-3">
-            <StatCard label="Readings ingested" value={readings.length} mono />
-            <StatCard label="Valid readings" value={validCount} mono accent="text-emerald-400" />
-            <StatCard label="Invalid readings" value={readings.length - validCount} mono accent="text-red-400" />
-            <StatCard label="Auto-flagged" value={autoFlaggedCount} mono accent="text-amber-400" />
-            <StatCard label="Uploads" value={uploads.length} mono />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <InfoCard title="Project">
-              <KV k="Client" v={campaign.client} />
-              <KV k="Provider" v={campaign.provider} />
-              <KV k="Report number" v={campaign.report_number || "—"} mono />
-              <KV k="Revision" v={campaign.revision || "—"} mono />
-              <KV k="Prepared by" v={campaign.prepared_by || "—"} />
-              <KV k="Project supervision" v={campaign.project_supervision || "—"} />
-              <KV k="Reporting date" v={campaign.reporting_date ? new Date(campaign.reporting_date).toLocaleDateString() : "—"} />
-            </InfoCard>
-            <InfoCard title="Site & window">
-              <KV k="Site name" v={campaign.site_name} />
-              <KV k="Coordinates" v={`${campaign.latitude.toFixed(6)}, ${campaign.longitude.toFixed(6)}`} mono />
-              <KV k="Inlet height" v={`${campaign.inlet_height_m} m`} mono />
-              <KV k="Monitoring start" v={new Date(campaign.monitoring_start).toLocaleString()} mono />
-              <KV k="Monitoring end" v={new Date(campaign.monitoring_end).toLocaleString()} mono />
-              <KV k="Status" v={campaign.status} />
-            </InfoCard>
-          </div>
-
-          {uploads.length > 0 && (
-            <InfoCard title="Recent uploads">
-              <div className="text-xs">
-                <div className="grid grid-cols-12 text-[11px] uppercase tracking-wider text-muted-foreground pb-1.5 border-b border-border">
-                  <div className="col-span-4">File</div>
-                  <div className="col-span-2">Type</div>
-                  <div className="col-span-2 text-right font-mono">Ingested</div>
-                  <div className="col-span-2 text-right font-mono">Skipped</div>
-                  <div className="col-span-2 text-right">When</div>
-                </div>
-                {uploads.map((u) => (
-                  <div key={u.id} className="grid grid-cols-12 py-1.5 border-b border-border last:border-b-0">
-                    <div className="col-span-4 truncate">{u.filename}</div>
-                    <div className="col-span-2 font-mono uppercase text-muted-foreground">{u.file_type}</div>
-                    <div className="col-span-2 text-right font-mono tabular text-emerald-400">{u.rows_ingested}</div>
-                    <div className="col-span-2 text-right font-mono tabular text-amber-400">{u.rows_skipped}</div>
-                    <div className="col-span-2 text-right text-muted-foreground">
-                      {new Date(u.uploaded_at).toLocaleString()}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </InfoCard>
+          {campaign && (
+            <CampaignDashboard campaign={campaign} onGoTo={setTab} />
           )}
         </TabsContent>
 
@@ -337,9 +290,9 @@ export default function CampaignDetail() {
                 className="border border-border rounded-sm overflow-x-auto"
               >
                 <table className="w-full text-xs font-mono tabular">
-                  <thead className="bg-zinc-900/60 text-muted-foreground text-[10px] uppercase tracking-wider">
+                  <thead className="bg-secondary/60 text-muted-foreground text-[10px] uppercase tracking-wider">
                     <tr>
-                      <th className="text-left px-2 py-2 sticky left-0 bg-zinc-900/90 z-10">Timestamp</th>
+                      <th className="text-left px-2 py-2 sticky left-0 bg-secondary/90 z-10">Timestamp</th>
                       {NUMERIC_COLS.map((c) => (
                         <th key={c} className="text-right px-2 py-2">{c}</th>
                       ))}
@@ -540,7 +493,7 @@ function StatCard({ label, value, mono, accent }) {
 function InfoCard({ title, children }) {
   return (
     <section className="border border-border rounded-sm">
-      <header className="px-4 py-2 border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground bg-zinc-900/40">
+      <header className="px-4 py-2 border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground bg-secondary/40">
         {title}
       </header>
       <div className="p-4 space-y-2">{children}</div>
