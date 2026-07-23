@@ -11,7 +11,7 @@ import {
   listStations, loadStationIntoCampaign, updateCampaign,
 } from "@/lib/api";
 
-const BLANK = { parameter: "", technique: "", sn: "", calibration_date: "" };
+const BLANK = { parameter: "", technique: "", sn: "", mdl_ugm3: "", calibration_date: "" };
 
 export default function InstrumentsPanel({ campaign, onSaved }) {
   const [rows, setRows] = useState([]);
@@ -51,7 +51,11 @@ export default function InstrumentsPanel({ campaign, onSaved }) {
     setBusy(true);
     try {
       await updateCampaign(campaign.id, {
-        instruments: rows.filter((r) => r.parameter?.trim()),
+        instruments: rows.filter((r) => r.parameter?.trim()).map((r) => ({
+          ...r,
+          mdl_ugm3: r.mdl_ugm3 === "" || r.mdl_ugm3 == null
+            ? null : Number(r.mdl_ugm3),
+        })),
       });
       toast.success("Instruments saved — Table 4 will use these");
       onSaved?.();
@@ -109,7 +113,8 @@ export default function InstrumentsPanel({ campaign, onSaved }) {
           <div className="grid grid-cols-12 gap-2 text-[11px] text-muted-foreground px-1">
             <div className="col-span-3">PARAMETER(S)</div>
             <div className="col-span-2">SERIAL NUMBER</div>
-            <div className="col-span-6">INSTRUMENT / TECHNIQUE</div>
+            <div className="col-span-5">INSTRUMENT / TECHNIQUE</div>
+            <div className="col-span-1">MDL µg/m³</div>
             <div className="col-span-1" />
           </div>
           {rows.map((r, i) => (
@@ -120,9 +125,12 @@ export default function InstrumentsPanel({ campaign, onSaved }) {
               <Input className="col-span-2 rounded-sm h-9 text-xs font-mono"
                      value={r.sn || ""} onChange={set(i, "sn")}
                      placeholder="1234" />
-              <Input className="col-span-6 rounded-sm h-9 text-xs"
+              <Input className="col-span-5 rounded-sm h-9 text-xs"
                      value={r.technique || ""} onChange={set(i, "technique")}
                      placeholder="T-100 (TELEDYNE) EQSA-0495-100" />
+              <Input className="col-span-1 rounded-sm h-9 text-xs font-mono"
+                     value={r.mdl_ugm3 ?? ""} onChange={set(i, "mdl_ugm3")}
+                     placeholder="2.0" title="Method detection limit from the analyser manual" />
               <Button variant="ghost" size="icon"
                       className="col-span-1 h-9 w-9 rounded-sm"
                       onClick={() => removeRow(i)}>
