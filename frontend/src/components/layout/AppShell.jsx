@@ -2,11 +2,12 @@ import { NavLink, Outlet, Link, useNavigate } from "react-router-dom";
 import { Activity, Gauge, LogOut, Ruler, ShieldCheck, Truck, UserRound, Users } from "lucide-react";
 import { NAV } from "@/constants/testIds";
 import { Toaster } from "sonner";
+import ThemeToggle from "@/components/ThemeToggle";
 import { clearSession, getUser } from "@/lib/api";
 
 const linkBase =
-  "px-3 py-2 text-sm rounded-sm border border-transparent hover:bg-zinc-900 hover:border-border transition-colors";
-const linkActive = "bg-zinc-900 border-border text-foreground";
+  "px-3 py-2 text-sm rounded-sm border border-transparent hover:bg-secondary hover:border-border transition-colors";
+const linkActive = "bg-secondary border-border text-foreground";
 const linkIdle = "text-muted-foreground";
 
 export default function AppShell() {
@@ -25,7 +26,7 @@ export default function AppShell() {
             data-testid={NAV.brand}
             className="flex items-center gap-2 text-sm font-semibold tracking-tight"
           >
-            <span className="inline-flex items-center justify-center w-6 h-6 border border-border rounded-sm bg-zinc-900">
+            <span className="inline-flex items-center justify-center w-6 h-6 border border-border rounded-sm bg-secondary">
               <Activity className="w-3.5 h-3.5 text-primary" />
             </span>
             <span>EcoReport AI</span>
@@ -71,8 +72,9 @@ export default function AppShell() {
                 <Users className="w-3.5 h-3.5" /> Users
               </NavLink>
             )}
+            <ThemeToggle />
             <div
-              className="hidden sm:flex items-center gap-1.5 ml-2 border border-border rounded-sm px-2.5 h-9 bg-zinc-900/40 text-xs"
+              className="hidden sm:flex items-center gap-1.5 ml-2 border border-border rounded-sm px-2.5 h-9 bg-secondary/40 text-xs"
               title={`Signed in as ${user?.name || ""} — all actions are recorded under this name`}
             >
               {user?.role === "admin"
