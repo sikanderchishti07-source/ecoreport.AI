@@ -7,6 +7,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import ReportPreview from "@/components/ReportPreview";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -93,6 +94,7 @@ export default function ReportsPanel({ campaignId, readingCount }) {
   const [recipient, setRecipient] = useState("");
   const [days, setDays] = useState(30);
   const [newLink, setNewLink] = useState(null);
+  const [preview, setPreview] = useState(false);
 
   const makeShare = async () => {
     setSharing(true);
@@ -204,6 +206,14 @@ export default function ReportsPanel({ campaignId, readingCount }) {
             </SelectContent>
           </Select>
           <Button
+            variant="outline"
+            className="rounded-sm h-9"
+            onClick={() => setPreview((v) => !v)}
+            data-testid="preview-toggle"
+          >
+            {preview ? "Hide preview" : "Preview"}
+          </Button>
+          <Button
             onClick={onGenerate}
             disabled={busy}
             className="rounded-sm h-9"
@@ -225,6 +235,15 @@ export default function ReportsPanel({ campaignId, readingCount }) {
             <RefreshCw className="w-4 h-4" />
           </Button>
         </div>
+        {preview && (
+          <div className="mt-4 pt-4 border-t border-border">
+            <ReportPreview
+              campaignId={campaignId}
+              onGenerate={() => { setPreview(false); onGenerate(); }}
+              onClose={() => setPreview(false)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Version history */}

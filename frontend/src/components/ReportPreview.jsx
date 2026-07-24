@@ -31,7 +31,7 @@ export default function ReportPreview({ campaignId, onGenerate, onClose }) {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground p-6">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
         <Loader2 className="w-4 h-4 animate-spin" /> Checking what the report
         will contain…
       </div>
@@ -198,7 +198,7 @@ export default function ReportPreview({ campaignId, onGenerate, onClose }) {
           <FileText className="w-4 h-4 mr-1.5" /> Generate this report
         </Button>
         <Button variant="outline" className="rounded-sm h-9" onClick={onClose}>
-          Back
+          Close preview
         </Button>
       </div>
     </div>
