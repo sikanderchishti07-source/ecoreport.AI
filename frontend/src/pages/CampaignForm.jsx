@@ -21,6 +21,8 @@ const defaults = {
   longitude: "",
   inlet_height_m: 5.0,
     gas_units: "ugm3",
+    facility_latitude: "",
+    facility_longitude: "",
   monitoring_start: "",
   monitoring_end: "",
   prepared_by: "",
@@ -62,6 +64,8 @@ export default function CampaignForm({ mode }) {
           provider: c.provider || "",
           site_name: c.site_name || "",
           latitude: c.latitude ?? "",
+          facility_latitude: c.facility_latitude ?? "",
+          facility_longitude: c.facility_longitude ?? "",
           longitude: c.longitude ?? "",
           inlet_height_m: c.inlet_height_m ?? 5.0,
           monitoring_start: toLocalInput(c.monitoring_start),
@@ -89,6 +93,10 @@ export default function CampaignForm({ mode }) {
       const payload = {
         ...form,
         latitude: parseFloat(form.latitude),
+        facility_latitude: form.facility_latitude === "" || form.facility_latitude == null
+          ? null : parseFloat(form.facility_latitude),
+        facility_longitude: form.facility_longitude === "" || form.facility_longitude == null
+          ? null : parseFloat(form.facility_longitude),
         longitude: parseFloat(form.longitude),
         inlet_height_m: parseFloat(form.inlet_height_m),
         monitoring_start: new Date(form.monitoring_start).toISOString(),
@@ -226,6 +234,23 @@ export default function CampaignForm({ mode }) {
           <p className="text-[11px] text-muted-foreground">
             Units of the gas columns in your uploaded file. NCEC limits are
             µg/m³ at 25 °C and 101.3 kPa; ppb/ppm files are converted on ingest.
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Facility latitude (optional)</Label>
+          <Input className="rounded-sm h-9" value={form.facility_latitude || ""}
+                 onChange={(e) => setForm((f) => ({ ...f, facility_latitude: e.target.value }))}
+                 placeholder="22.7185" />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Facility longitude (optional)</Label>
+          <Input className="rounded-sm h-9" value={form.facility_longitude || ""}
+                 onChange={(e) => setForm((f) => ({ ...f, facility_longitude: e.target.value }))}
+                 placeholder="42.6835" />
+          <p className="text-[11px] text-muted-foreground">
+            Coordinates of the plant or source. If given, the report states the
+            station's distance and bearing from it, alongside the prevailing
+            wind — as measurements only, with no upwind/downwind conclusion.
           </p>
         </div>
       </Section>
