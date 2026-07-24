@@ -60,6 +60,8 @@ class CampaignBase(BaseModel):
     latitude: float
     longitude: float
     inlet_height_m: float = 5.0
+    facility_latitude: Optional[float] = None   # optional: the plant/source,
+    facility_longitude: Optional[float] = None  # used only to state geometry
     gas_units: str = "ugm3"          # units of the UPLOADED gas data:
                                      # "ugm3" | "ppb" | "ppm" (converted on ingest)
     monitoring_start: datetime
@@ -80,6 +82,8 @@ class CampaignCreate(CampaignBase):
 
 class CampaignUpdate(BaseModel):
     gas_units: Optional[str] = None
+    facility_latitude: Optional[float] = None
+    facility_longitude: Optional[float] = None
     station_id: Optional[str] = None
     instruments: Optional[List["Instrument"]] = None
     model_config = ConfigDict(extra="ignore")
