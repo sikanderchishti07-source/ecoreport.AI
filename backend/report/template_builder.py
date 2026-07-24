@@ -595,6 +595,12 @@ def build(out_path: str = OUT) -> str:
             "handling guidelines were followed in collecting, verifying, and "
             "validating continuous ambient air quality and meteorological monitoring "
             "data in this report.", align="justify")
+    _p(doc, space_after=4)
+    _p(doc, "Key finding", size=11, bold=True, color=NAVY, space_after=2)
+    _p(doc, "{{ headline_finding }}", align="justify", space_after=8)
+    _p(doc, "{%p if site_geometry_text %}", size=1, space_after=0)
+    _p(doc, "{{ site_geometry_text }}", align="justify", space_after=8)
+    _p(doc, "{%p endif %}", size=1, space_after=0)
     _caption(doc, "Table", "Percent of Data Captured for all Parameters.")
     cap = doc.add_table(rows=4, cols=5)
     cap.style = "Table Grid"
@@ -865,6 +871,30 @@ def build(out_path: str = OUT) -> str:
     # --- 5. Results and discussion
     _heading(doc, "5. Results and discussion", 1)
     _heading(doc, "5.1 Air Quality Summary", 2)
+    _p(doc, "Table 6 summarises the compliance status of every monitored "
+            "pollutant against the applicable NCEC 2020 limits. Detailed "
+            "results for each pollutant follow in the sections below.",
+       align="justify")
+    _caption(doc, "Table", "Compliance Summary against NCEC 2020 Standards")
+    cs = doc.add_table(rows=4, cols=6)
+    cs.style = "Table Grid"
+    for j, h in enumerate(["POLLUTANT", "AVERAGING PERIOD", "MEASURED µg/m³",
+                           "NCEC LIMIT µg/m³", "% OF LIMIT", "STATUS"]):
+        _cell_text(cs.cell(0, j), h, bold=True, size=8.5, align="center")
+        _shade(cs.cell(0, j))
+    _tr_tag_row(cs, 1, "{%tr for r in compliance_rows %}")
+    row = cs.rows[2]
+    _cell_text(row.cells[0], "{{ r.pollutant }}", size=9)
+    _cell_text(row.cells[1], "{{ r.period }}", size=9, align="center")
+    _cell_text(row.cells[2], "{{ r.measured }}", size=9, align="center")
+    _cell_text(row.cells[3], "{{ r.limit }}", size=9, align="center")
+    _cell_text(row.cells[4], "{{ r.pct_of_limit }}", size=9, align="center")
+    _cell_text(row.cells[5], "{{ r.verdict }}", size=9, align="center")
+    _tr_tag_row(cs, 3, "{%tr endfor %}")
+    _p(doc, "Measured values are the maximum recorded for each averaging "
+            "period. N/R* denotes a parameter for which data capture did not "
+            "meet the 75% requirement.", size=9, italic=True)
+    _p(doc, space_after=6)
     _p(doc, "Tables 6 to 13 compare monitoring results for AAQMS for the period of "
             "{{ monitoring_window_text }} on the site. The results are explained as "
             "follows:", align="justify")
@@ -1229,6 +1259,28 @@ def build(out_path: str = OUT) -> str:
     doc.add_paragraph("{{ met_conclusion_3 }}", style="List Bullet")
     doc.add_paragraph("{{ met_conclusion_4 }}", style="List Bullet")
     _p(doc, "The prevailing wind direction at the site was {{ met.prevailing }}.")
+
+    # --- 7. Recommendations
+    _heading(doc, "7. Recommendations", 1)
+    _p(doc, "The following recommendations arise from the results of this "
+            "survey.", align="justify")
+    p = doc.add_paragraph(style="Normal")
+    p.add_run("{%p for r in recommendations %}")
+    doc.add_paragraph("{{ r }}", style="List Bullet")
+    p = doc.add_paragraph(style="Normal")
+    p.add_run("{%p endfor %}")
+
+    # --- 8. Measurement uncertainty
+    _heading(doc, "8. Measurement Uncertainty", 1)
+    _p(doc, "{{ uncertainty_text }}", align="justify")
+
+    # --- 9. Limitations and reliance
+    _heading(doc, "9. Limitations", 1)
+    p = doc.add_paragraph(style="Normal")
+    p.add_run("{%p for l in limitations %}")
+    doc.add_paragraph("{{ l }}", style="List Bullet")
+    p = doc.add_paragraph(style="Normal")
+    p.add_run("{%p endfor %}")
 
     # --- Appendices
     doc.add_page_break()

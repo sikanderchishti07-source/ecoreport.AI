@@ -10,6 +10,9 @@ from typing import Dict, List, Optional
 
 from models import Campaign, CampaignSummary, PeriodEvaluation, PollutantEvaluation
 
+from report.executive import (compliance_rows, headline_finding,
+                              limitations, recommendations,
+                              site_geometry_text, uncertainty_text)
 from units_mdl import format_with_mdl
 from report.i18n_dynamic import (ALLOWANCE, CAPTURE_ROW_NAMES, DYN, FIG_REFS,
                                  PERIOD_ADJ, PERIOD_NAMES,
@@ -381,5 +384,12 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
         "wind_count_totals_missing": str(max(hours - wr.total_valid, 0)),
         # conclusions & appendix
         "conclusion_blocks": conclusion_blocks,
+        # Executive-level content (see report/executive.py)
+        "headline_finding": headline_finding(summary, lang),
+        "compliance_rows": compliance_rows(summary, lang),
+        "recommendations": recommendations(campaign, summary, lang),
+        "limitations": limitations(campaign, summary, lang),
+        "uncertainty_text": uncertainty_text(lang),
+        "site_geometry_text": site_geometry_text(campaign, summary, lang) or "",
         "appendix1_text": appendix1,
     }
