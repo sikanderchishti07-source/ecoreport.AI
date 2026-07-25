@@ -263,8 +263,11 @@ async def delete_attachment(attachment_id: str,
             os.remove(doc["path"])
     except OSError:
         pass
-    await audit("attachment.delete", "campaign", doc["campaign_id"], user,
-                {"kind": doc.get("kind"), "filename": doc.get("filename")})
+    entity = "station" if doc.get("station_id") else "campaign"
+    await audit("attachment.delete", entity,
+                doc.get("station_id") or doc.get("campaign_id", ""), user,
+                {"kind": doc.get("kind"), "filename": doc.get("filename"),
+                 "cert_number": doc.get("cert_number")})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
