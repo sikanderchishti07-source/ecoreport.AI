@@ -61,7 +61,9 @@ export default function CertificatesPanel({ lab }) {
   const [form, setForm] = useState(BLANK);
   const [file, setFile] = useState(null);
   const fileRef = useRef(null);
-  const instruments = lab.instruments || [];
+  // Memoised so it is a stable dependency for the coverage useMemo below;
+  // a bare `lab.instruments || []` creates a new array on every render.
+  const instruments = useMemo(() => lab.instruments || [], [lab.instruments]);
 
   const refresh = useCallback(() => {
     setLoading(true);
