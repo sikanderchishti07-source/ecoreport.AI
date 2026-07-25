@@ -70,6 +70,7 @@ class CampaignBase(BaseModel):
     project_supervision: Optional[str] = None
     report_number: Optional[str] = None
     revision: str = "00"
+    document_status: str = "Issued for Client Use"
     reporting_date: Optional[datetime] = None
     wind_rose_bins: List[WindClassBin] = Field(
         default_factory=lambda: [b.model_copy() for b in DEFAULT_WIND_BINS]
@@ -82,6 +83,7 @@ class CampaignCreate(CampaignBase):
 
 class CampaignUpdate(BaseModel):
     gas_units: Optional[str] = None
+    document_status: Optional[str] = None
     facility_latitude: Optional[float] = None
     facility_longitude: Optional[float] = None
     station_id: Optional[str] = None
@@ -381,6 +383,14 @@ class Attachment(BaseModel):
     path: str
     caption: Optional[str] = None
     instrument_sn: Optional[str] = None  # links a certificate to Table 4
+    # Optional calibration-certificate metadata. When supplied, Appendix 3
+    # opens with a summary table; left blank, only the scans are printed.
+    cert_number: Optional[str] = None
+    cert_parameter: Optional[str] = None
+    cert_model_sn: Optional[str] = None
+    cert_date: Optional[str] = None
+    cert_due_date: Optional[str] = None
+    cert_result: Optional[str] = None
     order: int = 0
     size_bytes: int = 0
     storage: str = "local"
@@ -393,6 +403,12 @@ class AttachmentUpdate(BaseModel):
     caption: Optional[str] = None
     instrument_sn: Optional[str] = None
     order: Optional[int] = None
+    cert_number: Optional[str] = None
+    cert_parameter: Optional[str] = None
+    cert_model_sn: Optional[str] = None
+    cert_date: Optional[str] = None
+    cert_due_date: Optional[str] = None
+    cert_result: Optional[str] = None
 
 
 Campaign.model_rebuild()
