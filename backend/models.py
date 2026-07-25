@@ -377,7 +377,11 @@ ATTACHMENT_KINDS = ("site_photo", "calibration", "license", "site_map",
 
 class Attachment(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    campaign_id: str
+    # A certificate normally belongs to the ANALYSER, so it is stored against
+    # the mobile lab and reused by every campaign that lab runs. Photos and
+    # one-off certificates stay on the campaign.
+    campaign_id: str = ""
+    station_id: Optional[str] = None
     kind: str                           # one of ATTACHMENT_KINDS
     filename: str
     path: str
