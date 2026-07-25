@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Plus, Save, Trash2, Truck } from "lucide-react";
+import CertificatesPanel from "@/components/CertificatesPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -104,6 +105,8 @@ function LabCard({ lab, onChanged }) {
           ))}
         </div>
       )}
+
+      <CertificatesPanel lab={{ ...lab, name, instruments: rows }} />
     </div>
   );
 }
