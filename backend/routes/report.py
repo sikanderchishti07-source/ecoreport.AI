@@ -112,6 +112,23 @@ async def create_report(campaign_id: str, lang: str = "en",
             title = a.get("caption") or "Calibration certificate"
         cal_items.append({"title": title.strip(" —"), "path": a["path"]})
 
+    cert_rows = []
+    for a in by_kind.get("calibration", []):
+        if not a.get("cert_number"):
+            continue
+        instr = sn_map.get(a.get("instrument_sn")) or {}
+        cert_rows.append({
+            "number": a.get("cert_number", ""),
+            "parameter": (a.get("cert_parameter")
+                          or instr.get("parameter", "")),
+            "model_sn": (a.get("cert_model_sn")
+                         or (f"{instr.get('technique','').split('(')[0].strip()} / "
+                             f"{instr.get('sn','')}" if instr else "")),
+            "date": a.get("cert_date", ""),
+            "due_date": a.get("cert_due_date", ""),
+            "result": a.get("cert_result") or "PASSED",
+        })
+
     # Figure 1 — satellite site map (operator upload wins over the auto map)
     site_map = next((a["path"] for a in by_kind.get("site_map", [])
                      if os.path.exists(a.get("path", ""))), None)
@@ -131,6 +148,7 @@ async def create_report(campaign_id: str, lang: str = "en",
                         site_photo_paths=site_photos,
                         cover_photo_path=cover,
                         calibration_items=cal_items,
+                        cert_rows=cert_rows,
                         license_image_paths=licence)
         if format == "pdf":
             out_path = convert_to_pdf(out_path)

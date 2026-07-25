@@ -161,6 +161,12 @@ async def upload_attachment(
     kind: str = Form(...),
     caption: Optional[str] = Form(None),
     instrument_sn: Optional[str] = Form(None),
+    cert_number: Optional[str] = Form(None),
+    cert_parameter: Optional[str] = Form(None),
+    cert_model_sn: Optional[str] = Form(None),
+    cert_date: Optional[str] = Form(None),
+    cert_due_date: Optional[str] = Form(None),
+    cert_result: Optional[str] = Form(None),
     files: List[UploadFile] = File(...),
     user: str = Depends(current_username),
 ):
@@ -216,6 +222,9 @@ async def upload_attachment(
             att = Attachment(
                 campaign_id=campaign_id, kind=kind, filename=fname or "file",
                 path=path, caption=cap, instrument_sn=instrument_sn,
+                cert_number=cert_number, cert_parameter=cert_parameter,
+                cert_model_sn=cert_model_sn, cert_date=cert_date,
+                cert_due_date=cert_due_date, cert_result=cert_result,
                 order=start_order + n + k,
                 size_bytes=os.path.getsize(path),
                 storage=meta["storage"], s3_key=meta["s3_key"],
