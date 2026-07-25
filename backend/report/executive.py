@@ -43,48 +43,98 @@ def _fmt(v: Optional[float], d: int = 1) -> str:
 # Compliance summary table
 # ---------------------------------------------------------------------------
 def compliance_rows(summary, lang: str = "en") -> List[Dict]:
-    """One row per pollutant × averaging period: measured, limit, verdict."""
+    """One row per pollutant: hourly max, 8-hour max, daily average, the
+    governing limit, the percentage of that limit reached, and a status.
+
+    A single row per pollutant (rather than per averaging period) keeps the
+    matrix to one page and lets a reviewer scan the whole survey at a glance;
+    the per-period detail remains in the individual pollutant tables.
+    """
     ar = lang == "ar"
     rows: List[Dict] = []
     for p in summary.pollutants:
         if p.is_supporting:
             continue
-        for e in p.period_evaluations:
-            if e.averaging_period == "1 Year":
-                continue          # informational on short campaigns
-            if e.max_value is not None:
-                measured = _fmt(e.max_value)
-            elif e.mean_value is not None:
-                measured = _fmt(e.mean_value)
-            else:
-                measured = "N/R*"
-            # Verdict wording follows the same rules as the per-pollutant
-            # footnotes: a non-compliant verdict is an exceedance of the
-            # allowance; observed values above the limit whose allowance is
-            # defined over a longer reference period than this campaign are
-            # reported for information only; everything else is compliant.
-            if not e.sufficient:
-                verdict = "غير قابل للإبلاغ" if ar else "Not reportable"
-            elif e.verdict == "non-compliant":
-                verdict = "غير مطابق" if ar else "Exceedance"
-            elif e.exceedance_count == 0:
-                verdict = "مطابق" if ar else "Compliant"
-            else:
-                verdict = (f"{e.exceedance_count} فوق الحد (للعلم)" if ar
-                           else f"{e.exceedance_count} above limit (info)")
-            pct = None
-            if e.limit_ugm3 and e.max_value is not None:
-                pct = e.max_value / e.limit_ugm3 * 100.0
-            rows.append({
-                "pollutant": DISPLAY.get(p.pollutant, p.pollutant),
-                "period": e.averaging_period,
-                "measured": measured,
-                "limit": _fmt(e.limit_ugm3, 0),
-                "pct_of_limit": "—" if pct is None else f"{pct:,.0f}%",
-                "exceedances": e.exceedance_count,
-                "verdict": verdict,
-            })
+        periods = [e for e in p.period_evaluations
+                   if e.averaging_period != "1 Year"]
+        if not periods:
+            continue
+
+        # The governing limit is the one the data comes closest to.
+        governing, ratio = None, -1.0
+        for e in periods:
+            v = e.max_value if e.max_value is not None else e.mean_value
+            if e.limit_ugm3 and v is not None:
+                r = v / e.limit_ugm3
+                if r > ratio:
+                    governing, ratio = e, r
+        if governing is None:
+            governing = periods[0]
+
+        exceeded = any(e.verdict == "non-compliant" for e in periods)
+        above = sum(e.exceedance_count for e in periods)
+        insufficient = (p.hourly_capture_pct or 0) < 75
+
+        if insufficient:
+            status, verdict = "nr", ("غير قابل للإبلاغ" if ar else "NOT REPORTABLE")
+        elif exceeded:
+            status, verdict = "bad", ("تجاوز" if ar else "EXCEEDANCE")
+        elif above:
+            status, verdict = "warn", ("للعلم فقط" if ar else "SEE NOTE")
+        else:
+            status, verdict = "ok", ("مطابق" if ar else "COMPLIANT")
+
+        r8 = _fmt(p.rolling_8h_max) if p.pollutant in ("CO", "O3") else "—"
+        daily = next((e.mean_value for e in periods
+                      if e.averaging_period == "24 Hour"), None)
+        rows.append({
+            "status": status,
+            "pollutant": DISPLAY.get(p.pollutant, p.pollutant),
+            "hourly_max": _fmt(p.hourly_max),
+            "rolling_8h": r8,
+            "daily_avg": _fmt(daily if daily is not None else p.hourly_mean),
+            "limit": (f"{_fmt(governing.limit_ugm3, 0)} "
+                      f"({governing.averaging_period.replace(' (rolling)', '')})"
+                      if governing.limit_ugm3 else "—"),
+            "pct_of_limit": ("—" if ratio < 0 else f"{ratio * 100:,.0f}%"),
+            "verdict": verdict,
+        })
     return rows
+
+
+def pollutant_verdict_line(p, lang: str = "en") -> str:
+    """One-line finding printed in a callout beneath each pollutant section."""
+    ar = lang == "ar"
+    periods = [e for e in p.period_evaluations
+               if e.averaging_period != "1 Year"]
+    gov, ratio = None, -1.0
+    for e in periods:
+        v = e.max_value if e.max_value is not None else e.mean_value
+        if e.limit_ugm3 and v is not None and v / e.limit_ugm3 > ratio:
+            gov, ratio = e, v / e.limit_ugm3
+    name = DISPLAY.get(p.pollutant, p.pollutant)
+    if (p.hourly_capture_pct or 0) < 75:
+        return (f"لم تبلغ نسبة التقاط بيانات {name} حد 75%؛ والنتائج غير قابلة للإبلاغ."
+                if ar else
+                f"Data capture for {name} did not meet the 75% requirement; "
+                f"results are not reportable.")
+    if any(e.verdict == "non-compliant" for e in periods):
+        return (f"سُجلت تجاوزات لمعيار NCEC الخاص بـ {name}."
+                if ar else
+                f"Exceedance(s) of the NCEC standard for {name} were recorded.")
+    if gov is None:
+        return (f"لا يوجد حد معمول به لـ {name}؛ تُعرض النتائج كبيانات مساندة."
+                if ar else
+                f"No applicable NCEC limit for {name}; reported as supporting data.")
+    v = gov.max_value if gov.max_value is not None else gov.mean_value
+    per = gov.averaging_period.replace(" (rolling)", "")
+    if ar:
+        return (f"بلغت أعلى قيمة لـ {name} خلال فترة {per} مقدار {_fmt(v)} "
+                f"ميكروغرام/م³ مقابل حد {_fmt(gov.limit_ugm3, 0)}، أي "
+                f"{ratio * 100:,.0f}% من الحد المسموح به.")
+    return (f"{per} maximum of {_fmt(v)} µg/m³ against a limit of "
+            f"{_fmt(gov.limit_ugm3, 0)} µg/m³ — {ratio * 100:,.0f}% of the "
+            f"permissible level.")
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from models import Campaign, CampaignSummary, PeriodEvaluation, PollutantEvaluation
 
 from report.executive import (compliance_rows, headline_finding,
+                              pollutant_verdict_line,
                               limitations, recommendations,
                               site_geometry_text, uncertainty_text)
 from units_mdl import format_with_mdl
@@ -108,6 +109,7 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
             "h_max": fmtm(p.hourly_max),
             "h_min": fmtm(p.hourly_min),
             "daily_avg": fmtm(_daily_avg(p)),
+            "verdict_line": pollutant_verdict_line(p, lang),
             "footnote": _footnote(evs, lang) + (
                 ("\n" + D["mdl_footnote"].format(
                     mdl=f"{_mdl:.1f}", n=getattr(p, "below_mdl_count", 0))
@@ -165,6 +167,7 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
                                    PERIOD_ADJ[lang]["1 Hour"], lang)
             + D["nox_supporting"]),
         "footnote": _footnote([_period(P["NO2"], "1 Hour")], lang),
+        "verdict_line": pollutant_verdict_line(P["NO2"], lang),
     }
     pm_group = {
         "narrative": (
@@ -173,6 +176,7 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
             + _compliance_sentence(
                 [_period(P["PM10"], "24 Hour"), _period(P["PM25"], "24 Hour")],
                 PERIOD_ADJ[lang]["24 Hour"], lang)),
+        "verdict_line": pollutant_verdict_line(P["PM10"], lang),
     }
 
     # Table 1 — data capture rows
@@ -328,6 +332,8 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
         "inlet_height_m": f"{campaign.inlet_height_m:g}",
         "report_number": campaign.report_number or "—",
         "revision": campaign.revision,
+        "document_status": getattr(campaign, "document_status", "")
+                           or "Issued for Client Use",
         "reporting_date": (fmt_date(campaign.reporting_date, lang)
                            if campaign.reporting_date else "—"),
         "prepared_by": campaign.prepared_by or "—",

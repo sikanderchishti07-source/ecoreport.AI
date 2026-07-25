@@ -11,7 +11,7 @@ import sys
 import tempfile
 from typing import Dict, List, Optional, Tuple
 
-from docxtpl import DocxTemplate, InlineImage
+from docxtpl import DocxTemplate, InlineImage, RichText
 from docx.shared import Mm
 
 from calc import build_campaign_summary, _as_utc
@@ -88,6 +88,7 @@ def generate_report(
     cover_photo_path: Optional[str] = None,
     calibration_image_paths: Optional[List[str]] = None,
     calibration_items: Optional[List[dict]] = None,
+    cert_rows: Optional[List[dict]] = None,
     license_image_paths: Optional[List[str]] = None,
     charts_dir: Optional[str] = None,
     lang: str = "en",
@@ -177,6 +178,17 @@ def generate_report(
     ctx["cover_photo"] = (InlineImage(tpl, cover_photo_path, width=Mm(150))
                           if cover_photo_path and os.path.exists(cover_photo_path)
                           else None)
+    # Verdict colours are attached to the value itself via RichText, so the
+    # wording and its colour can never disagree.
+    STATUS_COLOUR = {"ok": "1E7D4F", "bad": "B31F1F",
+                     "warn": "B06A00", "nr": "6B6B6B"}
+    for r in ctx.get("compliance_rows", []) or []:
+        r["verdict_rt"] = RichText(
+            r.get("verdict", ""), color=STATUS_COLOUR.get(r.get("status"), "1F1F1F"),
+            bold=True)
+    ctx["cert_rows"] = [
+        dict(c, result_rt=RichText(c.get("result", ""), color="1E7D4F", bold=True))
+        for c in (cert_rows or [])]
     ctx["calibration_images"] = [
         {"title": (c.get("title") or "Calibration certificate"),
          "image": InlineImage(tpl, c["path"], width=Mm(150))}

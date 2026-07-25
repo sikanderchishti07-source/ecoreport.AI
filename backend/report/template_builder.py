@@ -31,6 +31,13 @@ NAVY_FILL = "0F3D6E"
 BLUE_FILL = "1F6FB2"
 SKY_FILL = "E8F1F9"
 GREEN_ACCENT = RGBColor(0x2F, 0x7D, 0x32)
+ZEBRA_FILL = "F4F7FA"        # very light blue-grey for alternating table rows
+OK_GREEN = RGBColor(0x1E, 0x7D, 0x4F)     # compliant
+WARN_AMBER = RGBColor(0xB0, 0x6A, 0x00)   # information only
+BAD_RED = RGBColor(0xB3, 0x1F, 0x1F)      # exceedance
+CALLOUT_FILL = "EEF4FA"      # key-finding panel
+CALLOUT_EDGE = "1F6FB2"
+RULE_GREY = "D9E1E8"
 MUTED_GREY = RGBColor(0x6B, 0x6B, 0x6B)
 GRAY_FILL = NAVY_FILL   # legacy alias: all header cells now use the navy fill
 _DARK_FILLS = {NAVY_FILL, BLUE_FILL}
@@ -64,11 +71,111 @@ def _update_fields_on_open(doc):
     settings.append(upd)
 
 
+def _table_borders(table, colour=RULE_GREY, size="4"):
+    """Replace the heavy default grid with hairline rules."""
+    tblPr = table._tbl.tblPr
+    for old in tblPr.findall(qn("w:tblBorders")):
+        tblPr.remove(old)
+    b = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        e = OxmlElement(f"w:{edge}")
+        e.set(qn("w:val"), "single")
+        e.set(qn("w:sz"), size)
+        e.set(qn("w:color"), colour)
+        b.append(e)
+    tblPr.append(b)
+
+
+def _zebra(table, start_row=1, fill=ZEBRA_FILL):
+    """Tint alternate body rows so wide tables stay readable."""
+    for i, row in enumerate(table.rows[start_row:], start=start_row):
+        if (i - start_row) % 2 == 1:
+            for c in row.cells:
+                tcPr = c._tc.get_or_add_tcPr()
+                shd = OxmlElement("w:shd")
+                shd.set(qn("w:val"), "clear")
+                shd.set(qn("w:fill"), fill)
+                tcPr.append(shd)
+
+
+def _cell_pad(table, top=0.10, bottom=0.10, left=0.16, right=0.16):
+    """Breathing room inside every cell — the biggest single readability win."""
+    tblPr = table._tbl.tblPr
+    mar = OxmlElement("w:tblCellMar")
+    for tag, val in (("top", top), ("bottom", bottom),
+                     ("left", left), ("right", right)):
+        e = OxmlElement(f"w:{tag}")
+        e.set(qn("w:w"), str(int(val * 567)))
+        e.set(qn("w:type"), "dxa")
+        mar.append(e)
+    tblPr.append(mar)
+
+
+def _polish(table, header_rows=1, zebra=True):
+    """Apply the house table style: hairlines, padding, zebra striping."""
+    _table_borders(table)
+    _cell_pad(table)
+    if zebra:
+        _zebra(table, start_row=header_rows)
+    return table
+
+
+def _callout(doc, title, body_key, fill=CALLOUT_FILL, edge=CALLOUT_EDGE):
+    """Tinted panel with a coloured left edge, for a key statement."""
+    t = doc.add_table(rows=1, cols=1)
+    t.alignment = WD_TABLE_ALIGNMENT.CENTER
+    c = t.rows[0].cells[0]
+    tcPr = c._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:fill"), fill)
+    tcPr.append(shd)
+    bdrs = OxmlElement("w:tcBorders")
+    left = OxmlElement("w:left")
+    left.set(qn("w:val"), "single")
+    left.set(qn("w:sz"), "24")
+    left.set(qn("w:color"), edge)
+    bdrs.append(left)
+    for edge_name in ("top", "bottom", "right"):
+        e = OxmlElement(f"w:{edge_name}")
+        e.set(qn("w:val"), "nil")
+        bdrs.append(e)
+    tcPr.append(bdrs)
+    mar = OxmlElement("w:tcMar")
+    for tag, val in (("top", 0.22), ("bottom", 0.22), ("left", 0.35),
+                     ("right", 0.3)):
+        e = OxmlElement(f"w:{tag}")
+        e.set(qn("w:w"), str(int(val * 567)))
+        e.set(qn("w:type"), "dxa")
+        mar.append(e)
+    tcPr.append(mar)
+    p0 = c.paragraphs[0]
+    p0.paragraph_format.space_after = Pt(3)
+    r = p0.add_run(title)
+    r.bold = True
+    r.font.size = Pt(9)
+    r.font.color.rgb = NAVY
+    p1 = c.add_paragraph()
+    p1.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    p1.paragraph_format.space_after = Pt(0)
+    r1 = p1.add_run(body_key)
+    r1.font.size = Pt(10)
+    return t
+
+
 def _shade(cell, fill=GRAY_FILL):
     if fill in _DARK_FILLS:
         for p in cell.paragraphs:
+            p.paragraph_format.space_before = Pt(2)
+            p.paragraph_format.space_after = Pt(2)
             for r in p.runs:
                 r.font.color.rgb = WHITE
+                r.bold = True
+                # slight letter-spacing gives the masthead row a designed feel
+                rPr = r._r.get_or_add_rPr()
+                sp = OxmlElement("w:spacing")
+                sp.set(qn("w:val"), "8")
+                rPr.append(sp)
     tcPr = cell._tc.get_or_add_tcPr()
     shd = OxmlElement("w:shd")
     shd.set(qn("w:val"), "clear")
@@ -77,6 +184,8 @@ def _shade(cell, fill=GRAY_FILL):
 
 
 def _cell_text(cell, text, bold=False, size=10, align="left", italic=False):
+    """Write a cell's text. Header cells (bold + shaded) are set slightly
+    smaller and letter-spaced by the caller for a cleaner masthead row."""
     cell.paragraphs[0].text = ""
     p = cell.paragraphs[0]
     p.alignment = {"left": WD_ALIGN_PARAGRAPH.LEFT,
@@ -115,25 +224,58 @@ def _p(doc, text="", size=11, bold=False, italic=False, align="left",
 
 
 def _heading(doc, text, level=1):
-    h = doc.add_heading(text, level=level)
-    for r in h.runs:
-        r.font.color.rgb = DARK
-    return h
+    """Section heading. Level 1 gets a navy number badge and a full-width rule
+    so sections are visually separated; deeper levels are quieter."""
+    p = doc.add_paragraph(style=f"Heading {level}")
+    p.paragraph_format.space_before = Pt(16 if level == 1 else 11)
+    p.paragraph_format.space_after = Pt(6 if level == 1 else 4)
+    p.paragraph_format.keep_with_next = True
+    if level == 1:
+        num, _, rest = text.partition(" ")
+        if num.rstrip(".").replace(".", "").isdigit():
+            r0 = p.add_run(num.rstrip(".") + "  ")
+            r0.font.color.rgb = BLUE
+            r0.bold = True
+            r1 = p.add_run(rest)
+            r1.bold = True
+        else:
+            p.add_run(text).bold = True
+        pPr = p._p.get_or_add_pPr()
+        bdr = OxmlElement("w:pBdr")
+        bot = OxmlElement("w:bottom")
+        bot.set(qn("w:val"), "single")
+        bot.set(qn("w:sz"), "10")
+        bot.set(qn("w:space"), "4")
+        bot.set(qn("w:color"), BLUE_FILL)
+        bdr.append(bot)
+        pPr.append(bdr)
+    else:
+        p.add_run(text).bold = True
+    return p
 
 
 def _caption(doc, kind: str, text: str):
-    """'Table 6: Summary...' with SEQ auto-numbering so LoF/LoT fields work."""
+    """'Table 5.2 — Summary of SO2 Results'.
+
+    The number is built from two Word fields: STYLEREF picks up the current
+    level-1 section number, and SEQ ... \\s 1 restarts the counter within that
+    section. Word therefore renumbers everything automatically, and the List of
+    Tables / List of Figures stay correct however the document changes.
+    """
     p = doc.add_paragraph(style="Caption")
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p.paragraph_format.keep_with_next = True
     r = p.add_run(f"{kind} ")
     r.bold = True
-    _field(p, f" SEQ {kind} \\* ARABIC ")
+    _field(p, " STYLEREF 1 \\s ")
+    p.add_run(".")
+    _field(p, f" SEQ {kind} \\* ARABIC \\s 1 ")
     for run in p.runs:
         run.font.color.rgb = NAVY
         run.font.size = Pt(10)
         run.bold = True
         run.italic = False
-    r2 = p.add_run(f": {text}")
+    r2 = p.add_run(f" \u2014 {text}")
     r2.bold = True
     r2.font.size = Pt(10)
     r2.font.color.rgb = DARK
@@ -147,6 +289,7 @@ def _summary_table(doc, rows, ncec_cols):
     n_ncec = max(len(ncec_cols), 1)
     tbl = doc.add_table(rows=2 + len(rows), cols=2 + n_ncec)
     tbl.style = "Table Grid"
+    _polish(tbl)
     tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
     # Header row 0: descriptor merged | "NCEC Exceedance Level µg/m³" merged
     _merge_row(tbl, 0, 0, 1)
@@ -265,9 +408,46 @@ def _modernise_settings(doc):
         settings.append(uf)
 
 
+
+def _verdict_box(doc, body_key):
+    """Single-line finding under a pollutant table, in a tinted panel with a
+    green left edge and a tick — the reader's takeaway for that section."""
+    t = doc.add_table(rows=1, cols=1)
+    t.alignment = WD_TABLE_ALIGNMENT.CENTER
+    c = t.rows[0].cells[0]
+    tcPr = c._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:fill"), "F1F7F2")
+    tcPr.append(shd)
+    bdrs = OxmlElement("w:tcBorders")
+    for side, colour, sz in (("left", "2F7D32", "18"), ("top", "DDE7DE", "4"),
+                             ("bottom", "DDE7DE", "4"), ("right", "DDE7DE", "4")):
+        el = OxmlElement(f"w:{side}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), sz)
+        el.set(qn("w:color"), colour)
+        bdrs.append(el)
+    tcPr.append(bdrs)
+    _cell_pad(t, top=0.14, bottom=0.14, left=0.28, right=0.22)
+    p = c.paragraphs[0]
+    p.paragraph_format.space_after = Pt(0)
+    tick = p.add_run("\u2713  ")
+    tick.bold = True
+    tick.font.size = Pt(10)
+    tick.font.color.rgb = OK_GREEN
+    r = p.add_run(body_key)
+    r.font.size = Pt(9.5)
+    r.font.color.rgb = DARK
+    _p(doc, space_after=6)
+    return t
+
+
 def build(out_path: str = OUT) -> str:
     doc = Document()
     st = doc.styles["Normal"]
+    st.paragraph_format.line_spacing = 1.15
+    st.paragraph_format.space_after = Pt(6)
     st.font.name = "Times New Roman"
     st.font.size = Pt(11)
     for lvl in range(1, 4):
@@ -436,6 +616,7 @@ def build(out_path: str = OUT) -> str:
     _pad(wrap_cell, 0.35, 0.35, 1.5, 1.5)
     card = wrap_cell.add_table(rows=5, cols=2)
     card.style = "Table Grid"
+    _polish(card, zebra=False)
     cw = card._tbl.tblPr.find(qn("w:tblW"))
     if cw is None:
         cw = OxmlElement("w:tblW")
@@ -483,8 +664,9 @@ def build(out_path: str = OUT) -> str:
 
     sec2 = doc.add_section(WD_SECTION.NEW_PAGE)
     sec2.page_width, sec2.page_height = Cm(21.0), Cm(29.7)
-    sec2.top_margin = sec2.bottom_margin = Cm(2.2)
-    sec2.left_margin = sec2.right_margin = Cm(2.2)
+    sec2.top_margin = Cm(2.3)
+    sec2.bottom_margin = Cm(2.0)
+    sec2.left_margin = sec2.right_margin = Cm(2.3)
     sec2.top_margin = Cm(3.2)
     _header_footer(sec2)
 
@@ -498,6 +680,7 @@ def build(out_path: str = OUT) -> str:
 
     meta = doc.add_table(rows=4, cols=2)
     meta.style = "Table Grid"
+    _polish(meta)
     for i, (k, v) in enumerate([
         ("Project", "{{ project_name }}"),
         ("Document Title", "Ambient Air Quality Monitoring Report"),
@@ -508,14 +691,31 @@ def build(out_path: str = OUT) -> str:
         _shade(meta.cell(i, 0))
         _cell_text(meta.cell(i, 1), v, size=10)
     _p(doc, space_after=8)
-    rev = doc.add_table(rows=2, cols=4)
+    _p(doc, "Revision History", size=11, bold=True, color=NAVY, space_after=4)
+    rev = doc.add_table(rows=2, cols=5)
     rev.style = "Table Grid"
-    for j, h in enumerate(["Rev", "Reporting Date", "Prepared by", "Project supervision"]):
-        _cell_text(rev.cell(0, j), h, bold=True, size=10, align="center")
+    _polish(rev)
+    for j, h in enumerate(["REV", "REPORTING DATE", "PREPARED BY",
+                           "PROJECT SUPERVISION", "STATUS"]):
+        _cell_text(rev.cell(0, j), h, bold=True, size=9, align="center")
         _shade(rev.cell(0, j))
     for j, v in enumerate(["{{ revision }}", "{{ reporting_date }}",
-                           "{{ prepared_by }}", "{{ project_supervision }}"]):
-        _cell_text(rev.cell(1, j), v, size=10, align="center")
+                           "{{ prepared_by }}", "{{ project_supervision }}",
+                           "{{ document_status }}"]):
+        _cell_text(rev.cell(1, j), v, size=9.5, align="center")
+    _p(doc, space_after=10)
+
+    _p(doc, "Accreditation", size=11, bold=True, color=NAVY, space_after=4)
+    _p(doc, "{{ provider_legal_name }} is an environmental laboratory approved "
+            "by the National Center for Environmental Compliance (NCEC) of the "
+            "Kingdom of Saudi Arabia for ambient air quality monitoring. "
+            "Monitoring, quality assurance and data validation are undertaken "
+            "in accordance with the applicable USEPA reference methods and "
+            "data-handling guidance.", align="justify", size=10)
+    _p(doc, "Calibration of the gaseous analysers is performed against "
+            "internationally traceable reference standards; the expanded "
+            "uncertainty stated on the certificates is ±2% (k = 2, "
+            "approximately 95% confidence).", align="justify", size=10)
     doc.add_page_break()
 
     # --- TOC / LoF / LoT
@@ -595,15 +795,18 @@ def build(out_path: str = OUT) -> str:
             "handling guidelines were followed in collecting, verifying, and "
             "validating continuous ambient air quality and meteorological monitoring "
             "data in this report.", align="justify")
-    _p(doc, space_after=4)
-    _p(doc, "Key finding", size=11, bold=True, color=NAVY, space_after=2)
-    _p(doc, "{{ headline_finding }}", align="justify", space_after=8)
+    _p(doc, space_after=6)
+    _callout(doc, "KEY FINDING", "{{ headline_finding }}")
+    _p(doc, space_after=8)
     _p(doc, "{%p if site_geometry_text %}", size=1, space_after=0)
-    _p(doc, "{{ site_geometry_text }}", align="justify", space_after=8)
+    _callout(doc, "MONITORING LOCATION", "{{ site_geometry_text }}",
+             fill="F1F6F1", edge="2F7D32")
+    _p(doc, space_after=8)
     _p(doc, "{%p endif %}", size=1, space_after=0)
     _caption(doc, "Table", "Percent of Data Captured for all Parameters.")
     cap = doc.add_table(rows=4, cols=5)
     cap.style = "Table Grid"
+    _polish(cap)
     for j, h in enumerate(["Parameters", "Total hours in monitoring period",
                            "Total available hours in monitoring period",
                            "Exception hours", "AAQMS 1-Hour's data capture %"]):
@@ -660,6 +863,7 @@ def build(out_path: str = OUT) -> str:
     _caption(doc, "Table", "Location of Ambient Air Quality Monitoring Stations")
     loc = doc.add_table(rows=2, cols=2)
     loc.style = "Table Grid"
+    _polish(loc)
     _cell_text(loc.cell(0, 0), "Site Name", bold=True, size=10, align="center")
     _shade(loc.cell(0, 0))
     _cell_text(loc.cell(0, 1), "Geographical Coordinates", bold=True, size=10,
@@ -694,6 +898,7 @@ def build(out_path: str = OUT) -> str:
     _caption(doc, "Table", "Reference Measurement Principle and equivalent reference method")
     m = doc.add_table(rows=7, cols=5)
     m.style = "Table Grid"
+    _polish(m)
     for j, h in enumerate(["Measured Parameter", "Data Collection Methods Used",
                            "Description of the Method", "Method Type",
                            "Automated Equivalent Reference Method ID"]):
@@ -736,6 +941,7 @@ def build(out_path: str = OUT) -> str:
     _caption(doc, "Table", "Parameters Measured at Air Quality Monitoring Stations")
     inst = doc.add_table(rows=4, cols=3)
     inst.style = "Table Grid"
+    _polish(inst)
     for j, h in enumerate(["PARAMETERS MEASURED", "SN",
                            "INSTRUMENT AND MEASUREMENTS TECHNIQUES"]):
         _cell_text(inst.cell(0, j), h, bold=True, size=9, align="center")
@@ -831,6 +1037,7 @@ def build(out_path: str = OUT) -> str:
     _caption(doc, "Table", "KSA NCEC Ambient Air Quality Standards")
     ncec = doc.add_table(rows=4, cols=5)
     ncec.style = "Table Grid"
+    _polish(ncec)
     for j, h in enumerate(["Parameter", "Time Period", "Exceedance Level", "Units",
                            "Number of Allowable Exceedances"]):
         _cell_text(ncec.cell(0, j), h, bold=True, size=9, align="center")
@@ -875,25 +1082,41 @@ def build(out_path: str = OUT) -> str:
             "pollutant against the applicable NCEC 2020 limits. Detailed "
             "results for each pollutant follow in the sections below.",
        align="justify")
-    _caption(doc, "Table", "Compliance Summary against NCEC 2020 Standards")
-    cs = doc.add_table(rows=4, cols=6)
+    _caption(doc, "Table", "Compliance Summary Matrix")
+    cs = doc.add_table(rows=4, cols=7)
     cs.style = "Table Grid"
-    for j, h in enumerate(["POLLUTANT", "AVERAGING PERIOD", "MEASURED µg/m³",
-                           "NCEC LIMIT µg/m³", "% OF LIMIT", "STATUS"]):
+    _polish(cs)
+    for j, h in enumerate(["POLLUTANT", "HOURLY MAX", "8-HR MAX", "DAILY AVG",
+                           "APPLICABLE LIMIT", "% OF LIMIT", "STATUS"]):
         _cell_text(cs.cell(0, j), h, bold=True, size=8.5, align="center")
         _shade(cs.cell(0, j))
     _tr_tag_row(cs, 1, "{%tr for r in compliance_rows %}")
     row = cs.rows[2]
-    _cell_text(row.cells[0], "{{ r.pollutant }}", size=9)
-    _cell_text(row.cells[1], "{{ r.period }}", size=9, align="center")
-    _cell_text(row.cells[2], "{{ r.measured }}", size=9, align="center")
-    _cell_text(row.cells[3], "{{ r.limit }}", size=9, align="center")
-    _cell_text(row.cells[4], "{{ r.pct_of_limit }}", size=9, align="center")
-    _cell_text(row.cells[5], "{{ r.verdict }}", size=9, align="center")
+    _cell_text(row.cells[0], "{{ r.pollutant }}", size=9, bold=True)
+    for k, key in enumerate(["hourly_max", "rolling_8h", "daily_avg", "limit",
+                             "pct_of_limit"], start=1):
+        _cell_text(row.cells[k], "{{ r.%s }}" % key, size=9, align="center")
+    # Status is supplied as a RichText value so its colour is set with the
+    # verdict itself; inline Jinja colour tags would break the row loop.
+    _cell_text(cs.cell(2, 6), "{{ r.verdict }}", size=8.5, align="center",
+               bold=True)
     _tr_tag_row(cs, 3, "{%tr endfor %}")
-    _p(doc, "Measured values are the maximum recorded for each averaging "
-            "period. N/R* denotes a parameter for which data capture did not "
-            "meet the 75% requirement.", size=9, italic=True)
+
+    lg = doc.add_paragraph()
+    lg.paragraph_format.space_before = Pt(3)
+    lg.paragraph_format.space_after = Pt(2)
+    for label, colour in (("\u25A0 COMPLIANT", OK_GREEN),
+                          ("\u25A0 SEE NOTE \u2014 above limit, allowance not yet reached",
+                           WARN_AMBER),
+                          ("\u25A0 EXCEEDANCE", BAD_RED)):
+        rr = lg.add_run(label + "     ")
+        rr.font.size = Pt(7.5)
+        rr.font.color.rgb = colour
+        rr.bold = True
+    _p(doc, "Values are in \u00b5g/m\u00b3. The applicable limit shown is the "
+            "NCEC averaging period the data comes closest to; all periods are "
+            "assessed in the detailed tables that follow.", size=8.5,
+       italic=True, color=MUTED_GREY)
     _p(doc, space_after=6)
     _p(doc, "Tables 6 to 13 compare monitoring results for AAQMS for the period of "
             "{{ monitoring_window_text }} on the site. The results are explained as "
@@ -921,6 +1144,7 @@ def build(out_path: str = OUT) -> str:
         ("Hourly value > {{ so2.limit_1h }} (ug/m³)", "{{ so2.exceed_1h }}"),
     ], [("1 Hour", "{{ so2.limit_1h }}"), ("24 Hour", "{{ so2.limit_24h }}")])
     _p(doc, "{{ so2.footnote }}", size=9, italic=True)
+    _verdict_box(doc, "{{ so2.verdict_line }}")
     _p(doc, "{{ fig_so2 }}", align="center")
     _caption(doc, "Figure", "SO2 Hourly Concentration at the location.")
 
@@ -945,6 +1169,7 @@ def build(out_path: str = OUT) -> str:
     _caption(doc, "Table", "Summary of (NO, NO2, NOx) Results.")
     nx = doc.add_table(rows=16, cols=3)
     nx.style = "Table Grid"
+    _polish(nx)
     hdr = _merge_row(nx, 0, 0, 1)
     _cell_text(hdr, "NO₂ Concentration at sampling point", bold=True, size=10)
     _shade(hdr)
@@ -994,6 +1219,7 @@ def build(out_path: str = OUT) -> str:
     na2 = nx.cell(12, 2).merge(nx.cell(15, 2))
     _cell_text(na2, "NA", size=10, align="center")
     _p(doc, "{{ nox_group.footnote }}", size=9, italic=True)
+    _verdict_box(doc, "{{ nox_group.verdict_line }}")
     _p(doc, "{{ fig_no }}", align="center")
     _caption(doc, "Figure", "NO Hourly Concentration at the location.")
     _p(doc, "{{ fig_no2 }}", align="center")
@@ -1023,6 +1249,7 @@ def build(out_path: str = OUT) -> str:
         ("Daily average (ug/m³)", "{{ co.daily_avg }}"),
     ], [("1 Hour", "{{ co.limit_1h }}"), ("8 Hour", "{{ co.limit_8h }}")])
     _p(doc, "{{ co.footnote }}", size=9, italic=True)
+    _verdict_box(doc, "{{ co.verdict_line }}")
     _p(doc, "{{ fig_co }}", align="center")
     _caption(doc, "Figure", "CO Hourly Concentration at the location.")
     _p(doc, "{{ fig_co8h }}", align="center")
@@ -1044,6 +1271,7 @@ def build(out_path: str = OUT) -> str:
         ("Daily Average (µg/m³)", "{{ h2s.daily_avg }}"),
     ], [("1 Hour", "{{ h2s.limit_1h }}"), ("24 Hour", "{{ h2s.limit_24h }}")])
     _p(doc, "{{ h2s.footnote }}", size=9, italic=True)
+    _verdict_box(doc, "{{ h2s.verdict_line }}")
     _p(doc, "{{ fig_h2s }}", align="center")
     _caption(doc, "Figure", "H2S Hourly Concentration at the location.")
 
@@ -1069,6 +1297,7 @@ def build(out_path: str = OUT) -> str:
         ("Daily average (ug/m³)", "{{ o3.daily_avg }}"),
     ], [("8 Hour", "{{ o3.limit_8h }}")])
     _p(doc, "{{ o3.footnote }}", size=9, italic=True)
+    _verdict_box(doc, "{{ o3.verdict_line }}")
     _p(doc, "{{ fig_o3 }}", align="center")
     _caption(doc, "Figure", "O3 Hourly Concentration at the location.")
     _p(doc, "{{ fig_o38h }}", align="center")
@@ -1100,6 +1329,7 @@ def build(out_path: str = OUT) -> str:
         ("Daily average (ug/m³)", "{{ pm10.daily_avg }}"),
     ], [("24 Hour", "{{ pm10.limit_24h }}")])
     _p(doc, "{{ pm10.footnote }}", size=9, italic=True)
+    _verdict_box(doc, "{{ pm10.verdict_line }}")
     _caption(doc, "Table", "Summary of PM2.5 Results.")
     _summary_table(doc, [
         ("Percentage data capture (Hourly Values)", "{{ pm25.capture }}"),
@@ -1109,6 +1339,7 @@ def build(out_path: str = OUT) -> str:
         ("Daily average (ug/m³)", "{{ pm25.daily_avg }}"),
     ], [("24 Hour", "{{ pm25.limit_24h }}")])
     _p(doc, "{{ pm25.footnote }}", size=9, italic=True)
+    _verdict_box(doc, "{{ pm25.verdict_line }}")
     _p(doc, "{{ fig_pm10 }}", align="center")
     _caption(doc, "Figure", "PM10 Hourly Concentrations at the location.")
     _p(doc, "{{ fig_pm25 }}", align="center")
@@ -1155,6 +1386,7 @@ def build(out_path: str = OUT) -> str:
     _caption(doc, "Table", "Monitored Meteorological Parameters result.")
     met = doc.add_table(rows=17, cols=2)
     met.style = "Table Grid"
+    _polish(met)
     met_rows = [
         ("Ambient Temperature result", None),
         ("Percentage data capture (Hourly Values)", "{{ met.temp_capture }}"),
@@ -1203,6 +1435,7 @@ def build(out_path: str = OUT) -> str:
         _caption(doc, "Table", cap_text)
         wt = doc.add_table(rows=7, cols=5)
         wt.style = "Table Grid"
+        _polish(wt)
         # header row: label | tc-for | {{c}} | tc-endfor | Total
         _cell_text(wt.cell(0, 0), "Directions / Wind Classes (m/s)", bold=True, size=9)
         _shade(wt.cell(0, 0))
@@ -1263,7 +1496,7 @@ def build(out_path: str = OUT) -> str:
     # --- 7. Recommendations
     _heading(doc, "7. Recommendations", 1)
     _p(doc, "The following recommendations arise from the results of this "
-            "survey.", align="justify")
+            "survey.", align="justify", space_after=8)
     p = doc.add_paragraph(style="Normal")
     p.add_run("{%p for r in recommendations %}")
     doc.add_paragraph("{{ r }}", style="List Bullet")
@@ -1309,6 +1542,31 @@ def build(out_path: str = OUT) -> str:
         rr.bold = True
         pp.add_run(body)
     _heading(doc, "Appendix 3 Calibration certificates", 1)
+    _p(doc, "{%p if cert_rows %}", size=1, space_after=0)
+    _p(doc, "The gaseous analysers were calibrated by an accredited "
+            "calibration laboratory against internationally traceable "
+            "reference standards prior to the survey. The certificates are "
+            "summarised below and reproduced in full on the following pages.",
+       align="justify")
+    _caption(doc, "Table", "Calibration Certificate Summary")
+    ct = doc.add_table(rows=4, cols=6)
+    ct.style = "Table Grid"
+    _polish(ct)
+    for j, h in enumerate(["CERTIFICATE No.", "PARAMETER", "MODEL / S.N.",
+                           "CALIBRATION DATE", "DUE DATE", "RESULT"]):
+        _cell_text(ct.cell(0, j), h, bold=True, size=8.5, align="center")
+        _shade(ct.cell(0, j))
+    _tr_tag_row(ct, 1, "{%tr for c in cert_rows %}")
+    crow = ct.rows[2]
+    for k, key in enumerate(["number", "parameter", "model_sn", "date",
+                             "due_date"]):
+        _cell_text(crow.cells[k], "{{ c.%s }}" % key, size=9,
+                   align="center" if k else "left")
+    _cell_text(crow.cells[5], "{{ c.result }}", size=9, align="center",
+               bold=True)
+    _tr_tag_row(ct, 3, "{%tr endfor %}")
+    _p(doc, space_after=8)
+    _p(doc, "{%p endif %}", size=1, space_after=0)
     _p(doc, "{%p if calibration_images %}", size=1, space_after=0)
     _p(doc, "{%p for c in calibration_images %}", size=1, space_after=0)
     _p(doc, "{{ c.title }}", bold=True, size=10, color=NAVY, space_after=4)
