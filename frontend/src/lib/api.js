@@ -187,3 +187,18 @@ export const portalView = (token) =>
 export const portalDownloadUrl = (token, reportId) =>
   `${API_BASE}/portal/${token}/reports/${reportId}`;
 export const shareUrl = (token) => `${window.location.origin}/share/${token}`;
+
+
+// Calibration certificates held against a mobile lab
+export const listStationCertificates = (stationId) =>
+  api.get(`/stations/${stationId}/certificates`).then((r) => r.data);
+export const uploadStationCertificate = (stationId, file, fields = {}) => {
+  const fd = new FormData();
+  Object.entries(fields).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") fd.append(k, v);
+  });
+  fd.append("files", file);
+  return api.post(`/stations/${stationId}/certificates`, fd, {
+    headers: { "Content-Type": "multipart/form-data" }, timeout: 300000,
+  }).then((r) => r.data);
+};
