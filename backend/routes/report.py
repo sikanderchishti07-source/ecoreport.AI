@@ -112,22 +112,36 @@ async def create_report(campaign_id: str, lang: str = "en",
             title = a.get("caption") or "Calibration certificate"
         cal_items.append({"title": title.strip(" —"), "path": a["path"]})
 
-    cert_rows = []
-    for a in by_kind.get("calibration", []):
-        if not a.get("cert_number"):
+    # Calibration certificates: the lab's own records are used unless the
+    # campaign supplied its own, and only those valid for this survey window.
+    from report.certificates import select as select_certs, to_rows as cert_to_rows
+    station_certs = []
+    if campaign.station_id:
+        station_certs = await db.attachments.find(
+            {"station_id": campaign.station_id, "kind": "calibration"},
+            {"_id": 0}).to_list(length=200)
+    chosen_certs, cert_warnings = select_certs(
+        [a for a in by_kind.get("calibration", []) if a.get("cert_number")],
+        station_certs, w_start, w_end)
+    for msg in cert_warnings:
+        log.warning("campaign %s: %s", campaign_id, msg)
+    cert_rows = cert_to_rows(chosen_certs, campaign.instruments)
+
+    # Scans follow the same selection, so Appendix 3's table and its images
+    # always describe the same certificates.
+    for c in chosen_certs:
+        if not os.path.exists(c.get("path", "")):
             continue
-        instr = sn_map.get(a.get("instrument_sn")) or {}
-        cert_rows.append({
-            "number": a.get("cert_number", ""),
-            "parameter": (a.get("cert_parameter")
-                          or instr.get("parameter", "")),
-            "model_sn": (a.get("cert_model_sn")
-                         or (f"{instr.get('technique','').split('(')[0].strip()} / "
-                             f"{instr.get('sn','')}" if instr else "")),
-            "date": a.get("cert_date", ""),
-            "due_date": a.get("cert_due_date", ""),
-            "result": a.get("cert_result") or "PASSED",
-        })
+        if any(item["path"] == c["path"] for item in cal_items):
+            continue
+        instr = sn_map.get(c.get("instrument_sn"))
+        if instr:
+            title = (f"Calibration certificate — {instr.get('technique','')} "
+                     f"({instr.get('parameter','')}), S/N {instr.get('sn','')}")
+        else:
+            title = (f"Calibration certificate "
+                     f"{c.get('cert_number', '')}").strip()
+        cal_items.append({"title": title.strip(" —"), "path": c["path"]})
 
     # Figure 1 — satellite site map (operator upload wins over the auto map)
     site_map = next((a["path"] for a in by_kind.get("site_map", [])

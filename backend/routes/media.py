@@ -278,3 +278,91 @@ async def get_attachment_file(attachment_id: str):
     if not path:
         raise HTTPException(status_code=410, detail="File no longer available")
     return FileResponse(path, filename=doc["filename"])
+
+
+# ---------------------------------------------------------------------------
+# Certificates held against a mobile lab
+# ---------------------------------------------------------------------------
+@router.get("/stations/{station_id}/certificates",
+            response_model=List[Attachment])
+async def list_station_certificates(station_id: str):
+    docs = await db.attachments.find(
+        {"station_id": station_id, "kind": "calibration"}, {"_id": 0}) \
+        .sort([("cert_date", -1), ("uploaded_at", -1)]).to_list(length=200)
+    return [Attachment(**d) for d in docs]
+
+
+@router.post("/stations/{station_id}/certificates",
+             status_code=status.HTTP_201_CREATED)
+async def upload_station_certificate(
+    station_id: str,
+    instrument_sn: Optional[str] = Form(None),
+    cert_number: Optional[str] = Form(None),
+    cert_parameter: Optional[str] = Form(None),
+    cert_model_sn: Optional[str] = Form(None),
+    cert_date: Optional[str] = Form(None),
+    cert_due_date: Optional[str] = Form(None),
+    cert_result: Optional[str] = Form(None),
+    files: List[UploadFile] = File(...),
+    user: str = Depends(current_username),
+):
+    """Store a calibration certificate against the lab, so every campaign that
+    uses this lab picks it up automatically. Certificates are never replaced:
+    a renewal is a new record, which keeps historic reports reproducible."""
+    st = await db.stations.find_one({"id": station_id}, {"_id": 0})
+    if not st:
+        raise HTTPException(status_code=404, detail="Mobile lab not found")
+
+    dest_dir = os.path.join(MEDIA_DIR, "stations", station_id, "calibration")
+    os.makedirs(dest_dir, exist_ok=True)
+    created: List[Attachment] = []
+
+    for up in files:
+        raw = await up.read()
+        if len(raw) > MAX_MB * 1024 * 1024:
+            raise HTTPException(status_code=413,
+                                detail=f"{up.filename} exceeds {MAX_MB} MB")
+        ext = os.path.splitext(up.filename or "")[1].lower()
+        stored = []
+        if ext == ".pdf":
+            tmp = os.path.join(dest_dir, f"{uuid.uuid4().hex}.pdf")
+            with open(tmp, "wb") as fh:
+                fh.write(raw)
+            pages = _pdf_to_images(tmp, dest_dir)
+            os.remove(tmp)
+            if not pages:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(f"Could not read {up.filename}. Please upload the "
+                            f"certificate as an image instead."))
+            stored = [(os.path.basename(p), p) for p in pages]
+        elif ext in IMAGE_EXT:
+            p = os.path.join(dest_dir, f"{uuid.uuid4().hex}{ext}")
+            with open(p, "wb") as fh:
+                fh.write(raw)
+            stored = [(up.filename, p)]
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{up.filename}: only images and PDF are accepted")
+
+        for fname, path in stored:
+            meta = storage.store_report(
+                path, f"stations/{station_id}",
+                f"calibration/{os.path.basename(path)}")
+            att = Attachment(
+                campaign_id="", station_id=station_id, kind="calibration",
+                filename=fname or "certificate", path=path,
+                instrument_sn=instrument_sn, cert_number=cert_number,
+                cert_parameter=cert_parameter, cert_model_sn=cert_model_sn,
+                cert_date=cert_date, cert_due_date=cert_due_date,
+                cert_result=cert_result,
+                size_bytes=os.path.getsize(path),
+                storage=meta["storage"], s3_key=meta["s3_key"],
+                uploaded_by=user)
+            await db.attachments.insert_one(to_mongo(att.model_dump()))
+            created.append(att)
+
+    await audit("certificate.upload", "station", station_id, user,
+                {"cert_number": cert_number, "files": len(created)})
+    return created
