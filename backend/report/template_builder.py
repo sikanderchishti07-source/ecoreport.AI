@@ -545,8 +545,8 @@ def build(out_path: str = OUT) -> str:
     _full_width(head, 2)
     hl, hr = head.rows[0].cells
     hl.width, hr.width = Cm(11.5), Cm(9.5)
-    _pad(hl, 0.85, 0.6, 1.5, 0.2)
-    _pad(hr, 0.85, 0.6, 0.2, 1.5)
+    _pad(hl, 0.55, 0.4, 1.5, 0.2)
+    _pad(hr, 0.55, 0.4, 0.2, 1.5)
     try:
         hl.paragraphs[0].add_run().add_picture(
             os.path.join(ASSETS, "logo_left.png"), height=Cm(2.05))
@@ -594,14 +594,14 @@ def build(out_path: str = OUT) -> str:
         top = vals.cell(0, i)
         bot = vals.cell(1, i)
         top.width = bot.width = Cm(4.6)
-        _pad(top, 0.40, 0.10, 0.15, 0.15)
-        _pad(bot, 0.0, 0.40, 0.15, 0.15)
+        _pad(top, 0.28, 0.06, 0.15, 0.15)
+        _pad(bot, 0.0, 0.26, 0.15, 0.15)
         ip = top.paragraphs[0]
         ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
         ip.paragraph_format.space_after = Pt(3)
         try:
             ip.add_run().add_picture(
-                os.path.join(ASSETS, f"icon_{icon}.png"), height=Cm(1.05))
+                os.path.join(ASSETS, f"icon_{icon}.png"), height=Cm(0.9))
         except Exception:
             pass
         _txt(bot, title, 9.5, bold=True, colour=GREEN_ACCENT, align="center",
@@ -613,7 +613,7 @@ def build(out_path: str = OUT) -> str:
     card_wrap = doc.add_table(rows=1, cols=1)
     _full_width(card_wrap)
     wrap_cell = card_wrap.rows[0].cells[0]
-    _pad(wrap_cell, 0.35, 0.35, 1.5, 1.5)
+    _pad(wrap_cell, 0.22, 0.22, 1.5, 1.5)
     card = wrap_cell.add_table(rows=5, cols=2)
     card.style = "Table Grid"
     _polish(card, zebra=False)
@@ -631,8 +631,8 @@ def build(out_path: str = OUT) -> str:
     for i, (k, v) in enumerate(rows_):
         kc, vc = card.cell(i, 0), card.cell(i, 1)
         kc.width, vc.width = Cm(5.2), Cm(12.8)
-        _pad(kc, 0.17, 0.17, 0.4, 0.2)
-        _pad(vc, 0.17, 0.17, 0.45, 0.4)
+        _pad(kc, 0.12, 0.12, 0.4, 0.2)
+        _pad(vc, 0.12, 0.12, 0.45, 0.4)
         _fill(kc, NAVY_FILL)
         _txt(kc, k, 9.5, bold=True, colour=WHITE, first=True)
         _txt(vc, v, 10, colour=DARK, first=True)
@@ -641,9 +641,9 @@ def build(out_path: str = OUT) -> str:
     prep = doc.add_table(rows=1, cols=1)
     _full_width(prep)
     pc = prep.rows[0].cells[0]
-    _pad(pc, 0.7, 0.6, 1.5, 1.5)
+    _pad(pc, 0.45, 0.35, 1.5, 1.5)
     _txt(pc, "PREPARED BY", 9.5, bold=True, colour=GREEN_ACCENT, first=True)
-    _txt(pc, "{{ provider }}", 16, bold=True, colour=NAVY, before=2, after=1)
+    _txt(pc, "{{ provider }}", 15, bold=True, colour=NAVY, before=2, after=1)
     _txt(pc, "Environmental Consultant", 10, colour=GREEN_ACCENT, after=6)
     _txt(pc, "Accredited by the National Center for Environmental "
              "Compliance (NCEC)", 8.5, italic=True, colour=MUTED_GREY, after=1)
@@ -655,7 +655,7 @@ def build(out_path: str = OUT) -> str:
     _full_width(foot_t)
     fc = foot_t.rows[0].cells[0]
     _fill(fc, NAVY_FILL)
-    _pad(fc, 0.5, 0.5, 1.5, 1.5)
+    _pad(fc, 0.34, 0.34, 1.5, 1.5)
     _txt(fc, "{{ provider_legal_name }}", 10.5, bold=True, colour=WHITE,
          first=True)
     _txt(fc, "Tel. {{ provider_tel }}    |    Fax {{ provider_fax }}    |    "
@@ -757,10 +757,18 @@ def build(out_path: str = OUT) -> str:
         ("WD", "Wind Direction"),
         ("WS", "Wind Speed"),
     ]
-    dt = doc.add_table(rows=len(defs), cols=2)
-    for i, (a, b) in enumerate(defs):
-        _cell_text(dt.cell(i, 0), a, bold=True, size=10)
-        _cell_text(dt.cell(i, 1), b, size=10)
+    dt = doc.add_table(rows=len(defs) + 1, cols=2)
+    dt.style = "Table Grid"
+    _polish(dt, header_rows=1)
+    for j, h in enumerate(["ABBREVIATION", "DEFINITION"]):
+        _cell_text(dt.cell(0, j), h, bold=True, size=9,
+                   align="center" if j == 0 else "left")
+        _shade(dt.cell(0, j))
+    for i, (a, b) in enumerate(defs, start=1):
+        dt.cell(i, 0).width = Cm(3.2)
+        dt.cell(i, 1).width = Cm(13.3)
+        _cell_text(dt.cell(i, 0), a, bold=True, size=9.5, align="center")
+        _cell_text(dt.cell(i, 1), b, size=9.5)
     doc.add_page_break()
 
     # --- Executive Summary
