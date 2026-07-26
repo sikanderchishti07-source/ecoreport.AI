@@ -1,6 +1,6 @@
 """Phase 3 endpoint — generate and download the AAQ report DOCX."""
 from __future__ import annotations
-from starlette.concurrency import run_in_threadpool
+
 import logging
 import os
 import tempfile
@@ -10,6 +10,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 
 from audit import audit
 from auth import current_username
@@ -149,7 +150,8 @@ async def create_report(campaign_id: str, lang: str = "en",
     if not site_map:
         try:
             from report.sitemap import fetch_site_map
-         site_map = await run_in_threadpool(
+            # Blocking HTTP call — keep it off the event loop.
+            site_map = await run_in_threadpool(
                 fetch_site_map,
                 campaign.latitude, campaign.longitude,
                 os.path.join(REPORT_DIR, campaign_id, "site_map.png"))
@@ -157,7 +159,7 @@ async def create_report(campaign_id: str, lang: str = "en",
             log.warning("automatic site map unavailable", exc_info=True)
             site_map = None
 
-try:
+    try:
         # Rendering and LibreOffice conversion are blocking and CPU-bound.
         # Run them off the event loop or the whole API stops responding for
         # the duration of the build.
@@ -175,7 +177,9 @@ try:
     except Exception as exc:  # noqa: BLE001
         log.exception("report generation failed")
         raise HTTPException(status_code=500, detail=f"Report generation failed: {exc}")
-storage_meta = await run_in_threadpool(
+
+    # S3 mirror is a network upload — also blocking.
+    storage_meta = await run_in_threadpool(
         storage.store_report, out_path, campaign_id, fname)
     report_id = str(uuid.uuid4())
     await db.report_logs.insert_one(to_mongo({
