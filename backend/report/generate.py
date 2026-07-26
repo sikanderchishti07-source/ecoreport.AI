@@ -91,6 +91,7 @@ def generate_report(
     license_image_paths: Optional[List[str]] = None,
     charts_dir: Optional[str] = None,
     lang: str = "en",
+    build_indexes_after: bool = True,
 ) -> str:
     """Build the report and write the DOCX to out_path. Returns out_path.
 
@@ -201,11 +202,17 @@ def generate_report(
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     tpl.save(out_path)
 
-    # Bake the caption numbers into the saved file. Must run after render(),
+    # Write our own numbers into the saved file. Must run after render(),
     # because rendering is what expands the certificate/licence loops and so
-    # decides how many captions the document actually has.
-    from report.fields import populate_field_caches
-    populate_field_caches(out_path)
+    # decides how many captions and pages the document actually has.
+    #
+    # Skipped for the halves of a bilingual report: those are composed into a
+    # single document afterwards, which shifts every Arabic page number, so
+    # the indexes are built once on the composed file instead.
+    if build_indexes_after:
+        from report.fields import build_indexes, populate_field_caches
+        populate_field_caches(out_path)
+        build_indexes(out_path, convert_to_pdf)
     return out_path
 
 
@@ -227,13 +234,20 @@ def _generate_bilingual(campaign, readings, limits, out_path, site_map_path,
                 cover_photo_path=cover_photo_path,
                 calibration_image_paths=calibration_image_paths,
                 license_image_paths=license_image_paths,
-                charts_dir=charts_dir, lang=lg)
+                charts_dir=charts_dir, lang=lg,
+                build_indexes_after=False)
         master = Document(en_path)
         master.add_page_break()
         composer = Composer(master)
         composer.append(Document(ar_path))
         os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
         composer.save(out_path)
+
+    # Numbering runs on the composed document so the Arabic half's captions
+    # and page numbers follow on from the English half rather than restarting.
+    from report.fields import build_indexes, populate_field_caches
+    populate_field_caches(out_path)
+    build_indexes(out_path, convert_to_pdf)
     return out_path
 
 
