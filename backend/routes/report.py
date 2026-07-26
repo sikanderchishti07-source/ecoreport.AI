@@ -1,6 +1,6 @@
 """Phase 3 endpoint — generate and download the AAQ report DOCX."""
 from __future__ import annotations
-
+from starlette.concurrency import run_in_threadpool
 import logging
 import os
 import tempfile
@@ -149,29 +149,34 @@ async def create_report(campaign_id: str, lang: str = "en",
     if not site_map:
         try:
             from report.sitemap import fetch_site_map
-            site_map = fetch_site_map(
+         site_map = await run_in_threadpool(
+                fetch_site_map,
                 campaign.latitude, campaign.longitude,
                 os.path.join(REPORT_DIR, campaign_id, "site_map.png"))
         except Exception:  # noqa: BLE001
             log.warning("automatic site map unavailable", exc_info=True)
             site_map = None
 
-    try:
-        generate_report(campaign, readings, limits, out_path, lang=lang,
-                        site_map_path=site_map,
-                        site_photo_paths=site_photos,
-                        cover_photo_path=cover,
-                        calibration_items=cal_items,
-                        cert_rows=cert_rows,
-                        license_image_paths=licence)
+try:
+        # Rendering and LibreOffice conversion are blocking and CPU-bound.
+        # Run them off the event loop or the whole API stops responding for
+        # the duration of the build.
+        await run_in_threadpool(
+            generate_report, campaign, readings, limits, out_path, lang=lang,
+            site_map_path=site_map,
+            site_photo_paths=site_photos,
+            cover_photo_path=cover,
+            calibration_items=cal_items,
+            cert_rows=cert_rows,
+            license_image_paths=licence)
         if format == "pdf":
-            out_path = convert_to_pdf(out_path)
+            out_path = await run_in_threadpool(convert_to_pdf, out_path)
             fname = os.path.basename(out_path)
     except Exception as exc:  # noqa: BLE001
         log.exception("report generation failed")
         raise HTTPException(status_code=500, detail=f"Report generation failed: {exc}")
-
-    storage_meta = storage.store_report(out_path, campaign_id, fname)
+storage_meta = await run_in_threadpool(
+        storage.store_report, out_path, campaign_id, fname)
     report_id = str(uuid.uuid4())
     await db.report_logs.insert_one(to_mongo({
         "id": report_id,
