@@ -99,8 +99,11 @@ export default function CampaignForm({ mode }) {
           ? null : parseFloat(form.facility_longitude),
         longitude: parseFloat(form.longitude),
         inlet_height_m: parseFloat(form.inlet_height_m),
-        monitoring_start: new Date(form.monitoring_start).toISOString(),
-        monitoring_end: new Date(form.monitoring_end).toISOString(),
+      // Naive local time — the analyser logs local Saudi time and the
+        // report is read in local time. Converting to UTC here shifted the
+        // window 3 h against the readings and cost 3 h of data capture.
+        monitoring_start: form.monitoring_start,
+        monitoring_end: form.monitoring_end,
         reporting_date: form.reporting_date
           ? new Date(form.reporting_date).toISOString()
           : null,
