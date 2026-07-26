@@ -310,8 +310,10 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
                 errors.append(f"Row {idx + 2}: empty timestamp — skipped.")
                 continue
             ts = pd.to_datetime(ts_raw, utc=False, errors="raise")
-            if ts.tzinfo is None:
-                ts = ts.tz_localize(timezone.utc)
+            # Store the wall-clock time the analyser recorded. Stamping naive
+            # timestamps as UTC made them disagree with the campaign window.
+            if ts.tzinfo is not None:
+                ts = ts.tz_localize(None)
             reading_kwargs = {"campaign_id": campaign_id, "timestamp": ts.to_pydatetime()}
             for field in ALL_MEASUREMENT_FIELDS:
                 if field in df.columns:
