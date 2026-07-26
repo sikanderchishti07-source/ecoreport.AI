@@ -46,14 +46,20 @@ _DARK_FILLS = {NAVY_FILL, BLUE_FILL}
 # ---------------------------------------------------------------------------
 # Low-level helpers
 # ---------------------------------------------------------------------------
-def _field(paragraph, instr: str):
-    """Insert a Word field (TOC, PAGE, SEQ...) into a paragraph."""
+def _field(paragraph, instr: str, cached: str = " "):
+    """Insert a Word field (TOC, PAGE, SEQ...) into a paragraph.
+
+    `cached` is the field's stored result — what any reader that does not
+    evaluate fields will display. LibreOffice (our PDF path) never evaluates
+    them, so report.fields rewrites these caches after rendering. Leaving the
+    cache blank is what produced "Table . \u2014" in every exported PDF.
+    """
     r = paragraph.add_run()
     for el, attrs, text in (
         ("w:fldChar", {"w:fldCharType": "begin"}, None),
         ("w:instrText", {"xml:space": "preserve"}, instr),
         ("w:fldChar", {"w:fldCharType": "separate"}, None),
-        ("w:t", {}, " "),
+        ("w:t", {}, cached),
         ("w:fldChar", {"w:fldCharType": "end"}, None),
     ):
         e = OxmlElement(el)
@@ -257,19 +263,22 @@ def _heading(doc, text, level=1):
 def _caption(doc, kind: str, text: str):
     """'Table 5.2 — Summary of SO2 Results'.
 
-    The number is built from two Word fields: STYLEREF picks up the current
-    level-1 section number, and SEQ ... \\s 1 restarts the counter within that
-    section. Word therefore renumbers everything automatically, and the List of
-    Tables / List of Figures stay correct however the document changes.
+    A single SEQ field numbers captions consecutively through the document,
+    as the gold-standard report does. Word renumbers automatically; the cached
+    result is rewritten by report.fields after rendering so that the PDF —
+    which is produced by LibreOffice and never evaluates fields — matches.
     """
     p = doc.add_paragraph(style="Caption")
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     p.paragraph_format.keep_with_next = True
     r = p.add_run(f"{kind} ")
     r.bold = True
-    _field(p, " STYLEREF 1 \\s ")
-    p.add_run(".")
-    _field(p, f" SEQ {kind} \\* ARABIC \\s 1 ")
+    # Flat numbering (Table 1..15, Figure 1..20), matching the gold standard.
+    # The previous "STYLEREF 1 \\s" prefix asked Word for the list number of
+    # the nearest Heading 1 -- but the headings carry typed numbers, not list
+    # numbering, so Word had no number to return and the prefix rendered as an
+    # error or a blank.
+    _field(p, f" SEQ {kind} \\* ARABIC ")
     for run in p.runs:
         run.font.color.rgb = NAVY
         run.font.size = Pt(10)

@@ -7,7 +7,6 @@ Charts are regenerated from the raw data on every call.
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 from typing import Dict, List, Optional, Tuple
 
@@ -201,6 +200,12 @@ def generate_report(
     tpl.render(ctx, autoescape=True)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     tpl.save(out_path)
+
+    # Bake the caption numbers into the saved file. Must run after render(),
+    # because rendering is what expands the certificate/licence loops and so
+    # decides how many captions the document actually has.
+    from report.fields import populate_field_caches
+    populate_field_caches(out_path)
     return out_path
 
 
@@ -248,24 +253,16 @@ def convert_to_pdf(docx_path: str, out_dir: Optional[str] = None) -> str:
     pdf_path = os.path.join(
         out_dir, os.path.splitext(os.path.basename(docx_path))[0] + ".pdf")
 
-    # Preferred path: UNO bridge — updates TOC / List of Figures / List of
-    # Tables before export so index pages are populated in the PDF.
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "report.uno_pdf", docx_path, pdf_path],
-            check=True, capture_output=True, timeout=420,
-            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        if os.path.exists(pdf_path):
-            return pdf_path
-    except Exception:  # noqa: BLE001
-        import logging
-        logging.getLogger(__name__).warning(
-            "UNO PDF path failed — falling back to plain conversion "
-            "(TOC pages may be empty)", exc_info=True)
-
+    # Plain conversion only. The previous index-aware routes (a Basic macro
+    # and the UNO bridge, both in report/uno_pdf.py) do not work on this host:
+    # the macro hangs, holding a LibreOffice process in memory until the 420 s
+    # timeout expires, and on a small instance that alone exhausts RAM and the
+    # container is killed mid-request. Caption numbers no longer depend on
+    # LibreOffice evaluating fields -- report.fields writes them in before we
+    # get here -- so the plain path produces a correct document.
     subprocess.run(
-        [soffice, "--headless", "--convert-to", "pdf", "--outdir", out_dir,
-         docx_path],
+        [soffice, "--headless", "--norestore", "--nologo",
+         "--convert-to", "pdf", "--outdir", out_dir, docx_path],
         check=True, capture_output=True, timeout=300)
     if not os.path.exists(pdf_path):
         raise RuntimeError("PDF conversion produced no output file.")
