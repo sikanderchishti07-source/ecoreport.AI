@@ -61,6 +61,13 @@ ICON_PX = 320
 DIAG_L = 0.262
 DIAG_X = 0.710
 
+# Safe margin, as a fraction of the canvas. No text, pin or caption is drawn
+# outside it, so the band survives being placed at a width that does not match
+# its own aspect ratio without anything being trimmed at the paper edge. The
+# colour blocks still bleed to the edge, which is what the design calls for.
+PAD_L = 0.078
+PAD_R = 0.055
+
 
 def _font(bold: bool = False, arabic: bool = False) -> dict:
     have = {f.name for f in fm.fontManager.ttflist}
@@ -142,14 +149,15 @@ def _navy_right(y_frac: float) -> float:
 
 
 def _fit_text(fig, ax, x, y_frac, text, colour, max_fs, bold, ar, W, H,
-              pad: float = 0.022):
+              pad: float = 0.030):
     """Draw text guaranteed to stay inside the navy.
 
     The band narrows as it rises, so a project name that fits at the foot of
     the band would run onto the photograph higher up. Measure, then step the
     size down until it fits, rather than trusting a fixed point size.
     """
-    limit = (_navy_right(y_frac) - pad) * W - x
+    # never run past the navy's own edge, and never past the safe margin
+    limit = min(_navy_right(y_frac) - pad, 1.0 - PAD_R) * W - x
     if limit <= 0:
         limit = W * 0.25
     fs = max_fs
@@ -201,7 +209,7 @@ def build_hero(project_name: str, out_path: str,
                          closed=True, facecolor=GREEN, alpha=0.95,
                          edgecolor="none", zorder=6))
 
-    L = W * 0.073
+    L = W * PAD_L
 
     eyebrow = "الهواء المحيط" if ar else "AMBIENT AIR QUALITY"
     ax.text(L, H * 0.876, _shape_ar(eyebrow) if ar else eyebrow,

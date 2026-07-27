@@ -494,6 +494,27 @@ def _no_word_split(table):
                     pPr.append(OxmlElement("w:suppressAutoHyphens"))
 
 
+
+def _hairline(cell, colour="DCE5EE"):
+    """Light rule on all four edges of a cell.
+
+    The cover grid deliberately carries no table style — a style would draw
+    borders on every band including the hero — so the project card asks for
+    its own rules.
+    """
+    tcPr = cell._tc.get_or_add_tcPr()
+    borders = tcPr.find(qn("w:tcBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tcBorders")
+        tcPr.append(borders)
+    for side in ("top", "left", "bottom", "right"):
+        e = OxmlElement("w:%s" % side)
+        e.set(qn("w:val"), "single")
+        e.set(qn("w:sz"), "4")
+        e.set(qn("w:color"), colour)
+        borders.append(e)
+
+
 def _typeset(doc) -> dict:
     """Apply publication-grade pagination controls across the whole document.
 
@@ -668,101 +689,39 @@ def build(out_path: str = OUT) -> str:
             r.font.color.rgb = colour
         return p
 
-    # 1 — white masthead: the BSA mark, then the accreditation marks.
-    # The national emblem that used to sit on the right is now carried only
-    # in the running page header, so the cover masthead matches the approved
-    # design.
-    # A single strip image wins if present: certification bodies usually
-    # supply one artwork with all the marks and their captions already set,
-    # so there is no reason to make the operator cut it into pieces. Falling
-    # back to the individual slots keeps per-badge captions available for
-    # anyone who does have the marks separately.
-    strip = os.path.join(ASSETS, "badges.png")
-    badges = [] if os.path.exists(strip) else [
-        (f, cap) for f, cap in ACCREDITATION_BADGES
-        if os.path.exists(os.path.join(ASSETS, f))]
+    # ------------------------------------------------------------------
+    # Cover: one full-bleed table on a single twelve-column grid.
+    #
+    # Every band of the cover — masthead, hero, value propositions, project
+    # card, footer — is a row of the same table, merged to whatever span it
+    # needs. Nothing is nested. Nested tables carry their own width, and a
+    # child whose fixed width disagrees with its parent cell overhangs the
+    # margin or collapses; twelve columns divide cleanly by 2, 3, 4 and 6, so
+    # every band lands on the same grid and the edges line up down the page.
+    # The cover section already has zero margins, so the grid spans the full
+    # 21 cm page.
+    # ------------------------------------------------------------------
+    COLS = 12
+    COL_W = Cm(21.0 / COLS)
+    ROW_MASTHEAD, ROW_HERO, ROW_ICON, ROW_PROP = 0, 1, 2, 3
+    ROW_CARD, ROW_PREP = 4, 9
+    ROW_FOOT_NAME, ROW_FOOT_LINKS = 10, 11
 
-    if os.path.exists(strip):
-        head = doc.add_table(rows=1, cols=2)
-        _full_width(head, 2)
-        cells = head.rows[0].cells
-        cells[0].width, cells[1].width = Cm(7.0), Cm(14.0)
-        _pad(cells[1], 0.60, 0.4, 0.2, 1.2)
-    else:
-        head = doc.add_table(rows=1, cols=1 + len(badges))
-        _full_width(head, 1 + len(badges))
-        cells = head.rows[0].cells
+    cov = doc.add_table(rows=12, cols=COLS)
+    _full_width(cov, COLS)
+    for row in cov.rows:
+        for c in row.cells:
+            c.width = COL_W
 
-    hl = cells[0]
-    hl.width = Cm(7.0 if os.path.exists(strip)
-                  else (6.4 if badges else 11.5))
-    _pad(hl, 0.55, 0.4, 1.4, 0.2)
-    try:
-        hl.paragraphs[0].add_run().add_picture(
-            os.path.join(ASSETS, "logo_left.png"), height=Cm(2.05))
-    except Exception:
-        r = hl.paragraphs[0].add_run("BSA.lab")
-        r.bold = True
-        r.font.size = Pt(22)
-        r.font.color.rgb = NAVY
+    def _span(r, a, b):
+        """Merge columns a..b of row r and return the resulting cell."""
+        cell = cov.cell(r, a)
+        if b > a:
+            cell = cell.merge(cov.cell(r, b))
+        for para in cell.paragraphs:
+            para.paragraph_format.space_after = Pt(0)
+        return cell
 
-    if os.path.exists(strip):
-        sp = cells[1].paragraphs[0]
-        sp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        sp.paragraph_format.space_after = Pt(0)
-        try:
-            sp.add_run().add_picture(strip, width=Cm(13.2))
-        except Exception:
-            pass
-
-    for cell, (fname, caption) in zip(cells[1:], badges):
-        cell.width = Cm(14.6 / len(badges))
-        _pad(cell, 0.62, 0.35, 0.10, 0.10)
-        ip = cell.paragraphs[0]
-        ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        ip.paragraph_format.space_after = Pt(2)
-        try:
-            ip.add_run().add_picture(os.path.join(ASSETS, fname),
-                                     height=Cm(1.05))
-        except Exception:
-            continue
-        for i, line in enumerate(caption):
-            cp = cell.add_paragraph()
-            cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            cp.paragraph_format.space_after = Pt(0)
-            cp.paragraph_format.line_spacing = 1.0
-            r = cp.add_run(line)
-            r.font.size = Pt(5.5)
-            r.bold = (i == 0)
-            r.font.color.rgb = NAVY
-
-    # 2 — hero band (rendered per report: imagery + title + tagline)
-    hero_t = doc.add_table(rows=1, cols=1)
-    _full_width(hero_t)
-    hero_c = hero_t.rows[0].cells[0]
-    hp = hero_c.paragraphs[0]
-    hp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    hp.paragraph_format.space_after = Pt(0)
-    hp.add_run("{{ cover_hero }}")
-
-    # 3 — value propositions, inset from the page edges
-    vals_wrap = doc.add_table(rows=1, cols=1)
-    _full_width(vals_wrap)
-    vw = vals_wrap.rows[0].cells[0]
-    _pad(vw, 0.30, 0.25, 1.3, 1.3)
-    vals = vw.add_table(rows=2, cols=4)
-    vwid = vals._tbl.tblPr.find(qn("w:tblW"))
-    if vwid is None:
-        vwid = OxmlElement("w:tblW")
-        vals._tbl.tblPr.append(vwid)
-    vwid.set(qn("w:w"), "5000")
-    vwid.set(qn("w:type"), "pct")
-    props = [
-        ("accurate", "ACCURATE", "Precision monitoring\nwith calibrated instruments"),
-        ("reliable", "RELIABLE", "Data you can trust,\nanytime, anywhere"),
-        ("compliant", "COMPLIANT", "Aligned with KSA NCEC\n& international standards"),
-        ("sustainable", "SUSTAINABLE", "Supporting a cleaner\nand healthier future"),
-    ]
     def _left_rule(cell, colour="DCE5EE"):
         """Hairline on a cell's left edge — the dividers between the four
         value propositions in the approved cover."""
@@ -777,11 +736,86 @@ def build(out_path: str = OUT) -> str:
         e.set(qn("w:color"), colour)
         borders.append(e)
 
+    # --- row 0: masthead — BSA mark, then the accreditation marks ----------
+    # A single strip image wins if present: certification bodies supply one
+    # artwork with the marks and captions already set, so there is no reason
+    # to make the operator cut it into pieces. The individual slots remain
+    # for anyone who holds the marks separately, and a badge with no file is
+    # skipped — the row never claims an accreditation the lab does not hold.
+    strip = os.path.join(ASSETS, "badges.png")
+    badges = [] if os.path.exists(strip) else [
+        (f, cap) for f, cap in ACCREDITATION_BADGES
+        if os.path.exists(os.path.join(ASSETS, f))]
+
+    logo_span = 3 if (badges or os.path.exists(strip)) else COLS - 1
+    hl = _span(ROW_MASTHEAD, 0, logo_span)
+    _pad(hl, 0.55, 0.4, 1.4, 0.2)
+    try:
+        hl.paragraphs[0].add_run().add_picture(
+            os.path.join(ASSETS, "logo_left.png"), height=Cm(2.05))
+    except Exception:
+        r = hl.paragraphs[0].add_run("BSA.lab")
+        r.bold = True
+        r.font.size = Pt(22)
+        r.font.color.rgb = NAVY
+
+    if os.path.exists(strip):
+        sc = _span(ROW_MASTHEAD, logo_span + 1, COLS - 1)
+        _pad(sc, 0.60, 0.4, 0.2, 1.2)
+        sp = sc.paragraphs[0]
+        sp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        try:
+            sp.add_run().add_picture(strip, width=Cm(13.2))
+        except Exception:
+            pass
+    elif badges:
+        first = logo_span + 1
+        each = max((COLS - first) // len(badges), 1)
+        for n, (fname, caption) in enumerate(badges):
+            a = first + n * each
+            b = COLS - 1 if n == len(badges) - 1 else min(a + each - 1, COLS - 1)
+            if a > COLS - 1:
+                break
+            cell = _span(ROW_MASTHEAD, a, b)
+            _pad(cell, 0.62, 0.35, 0.10, 0.10)
+            ip = cell.paragraphs[0]
+            ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            ip.paragraph_format.space_after = Pt(2)
+            try:
+                ip.add_run().add_picture(os.path.join(ASSETS, fname),
+                                         height=Cm(1.05))
+            except Exception:
+                continue
+            for i, line in enumerate(caption):
+                cp = cell.add_paragraph()
+                cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                cp.paragraph_format.space_after = Pt(0)
+                cp.paragraph_format.line_spacing = 1.0
+                rr = cp.add_run(line)
+                rr.font.size = Pt(5.5)
+                rr.bold = (i == 0)
+                rr.font.color.rgb = NAVY
+
+    # --- row 1: hero band, full bleed --------------------------------------
+    hero_c = _span(ROW_HERO, 0, COLS - 1)
+    _pad(hero_c, 0, 0, 0, 0)
+    hp = hero_c.paragraphs[0]
+    hp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    hp.paragraph_format.space_after = Pt(0)
+    hp.add_run("{{ cover_hero }}")
+
+    # --- rows 2-3: value propositions, three columns of the grid each ------
+    props = [
+        ("accurate", "ACCURATE", "Precision monitoring\nwith calibrated instruments"),
+        ("reliable", "RELIABLE", "Data you can trust,\nanytime, anywhere"),
+        ("compliant", "COMPLIANT", "Aligned with KSA NCEC\n& international standards"),
+        ("sustainable", "SUSTAINABLE", "Supporting a cleaner\nand healthier future"),
+    ]
     for i, (icon, title, blurb) in enumerate(props):
-        top = vals.cell(0, i)
-        bot = vals.cell(1, i)
-        top.width = bot.width = Cm(4.6)
-        _pad(top, 0.28, 0.06, 0.15, 0.15)
+        a, b = i * 3, i * 3 + 2
+        top = _span(ROW_ICON, a, b)
+        bot = _span(ROW_PROP, a, b)
+        _pad(top, 0.30, 0.06, 0.15, 0.15)
         _pad(bot, 0.0, 0.26, 0.15, 0.15)
         if i:                       # no rule to the left of the first column
             _left_rule(top)
@@ -799,40 +833,26 @@ def build(out_path: str = OUT) -> str:
         for line in blurb.split("\n"):
             _txt(bot, line, 8, colour=DARK, align="center", after=0)
 
-    # 4 — project details card, inset from both page edges
-    card_wrap = doc.add_table(rows=1, cols=1)
-    _full_width(card_wrap)
-    wrap_cell = card_wrap.rows[0].cells[0]
-    _pad(wrap_cell, 0.22, 0.22, 1.5, 1.5)
-    card = wrap_cell.add_table(rows=5, cols=2)
-    card.style = "Table Grid"
-    _polish(card, zebra=False)
-    cw = card._tbl.tblPr.find(qn("w:tblW"))
-    if cw is None:
-        cw = OxmlElement("w:tblW")
-        card._tbl.tblPr.append(cw)
-    cw.set(qn("w:w"), "5000")
-    cw.set(qn("w:type"), "pct")
+    # --- rows 4-8: project details card ------------------------------------
     rows_ = [("CLIENT", "{{ client }}"),
              ("SITE", "{{ site_name }}"),
              ("MONITORING PERIOD", "{{ monitoring_window_text }}"),
              ("REPORT NUMBER", "{{ report_number }}"),
              ("REVISION / DATE", "{{ revision }}   |   {{ reporting_date }}")]
     for i, (k, v) in enumerate(rows_):
-        kc, vc = card.cell(i, 0), card.cell(i, 1)
-        kc.width, vc.width = Cm(5.2), Cm(12.8)
-        _pad(kc, 0.12, 0.12, 0.4, 0.2)
-        _pad(vc, 0.12, 0.12, 0.45, 0.4)
-        # the concept sets the labels in navy on a light ground rather than
-        # reversed out of a solid navy block
+        r = ROW_CARD + i
+        kc = _span(r, 0, 3)      # a third of the grid: fits MONITORING PERIOD
+        vc = _span(r, 4, COLS - 1)
+        _pad(kc, 0.14, 0.14, 1.5, 0.2)
+        _pad(vc, 0.14, 0.14, 0.45, 1.5)
         _fill(kc, ZEBRA_FILL)
+        _hairline(kc)
+        _hairline(vc)
         _txt(kc, k, 9.5, bold=True, colour=NAVY, first=True)
         _txt(vc, v, 10, colour=DARK, first=True)
 
-    # 5 — prepared by
-    prep = doc.add_table(rows=1, cols=1)
-    _full_width(prep)
-    pc = prep.rows[0].cells[0]
+    # --- row 9: prepared by -------------------------------------------------
+    pc = _span(ROW_PREP, 0, COLS - 1)
     _pad(pc, 0.30, 0.22, 1.5, 1.5)
     _txt(pc, "PREPARED BY", 9.5, bold=True, colour=GREEN_ACCENT, first=True)
     _txt(pc, "{{ provider }}", 15, bold=True, colour=NAVY, before=2, after=1)
@@ -842,29 +862,19 @@ def build(out_path: str = OUT) -> str:
     _txt(pc, "Reported to KSA NCEC 2020 ambient air quality standards", 8.5,
          italic=True, colour=MUTED_GREY)
 
-    # 6 — navy contact footer
-    foot_t = doc.add_table(rows=1, cols=1)
-    _full_width(foot_t)
-    fc = foot_t.rows[0].cells[0]
-    _fill(fc, NAVY_FILL)
-    _pad(fc, 0.34, 0.34, 1.5, 1.5)
-    _txt(fc, "{{ provider_legal_name }}", 10.5, bold=True, colour=WHITE,
+    # --- rows 10-11: navy contact footer ------------------------------------
+    fn = _span(ROW_FOOT_NAME, 0, COLS - 1)
+    _fill(fn, NAVY_FILL)
+    _pad(fn, 0.34, 0.10, 1.5, 1.5)
+    _txt(fn, "{{ provider_legal_name }}", 10.5, bold=True, colour=WHITE,
          first=True)
-    # four evenly spaced contact items, as in the approved cover, rather than
-    # one long pipe-separated line that wraps awkwardly on a narrow page
-    contact = fc.add_table(rows=1, cols=4)
-    cwid = contact._tbl.tblPr.find(qn("w:tblW"))
-    if cwid is None:
-        cwid = OxmlElement("w:tblW")
-        contact._tbl.tblPr.append(cwid)
-    cwid.set(qn("w:w"), "5000")
-    cwid.set(qn("w:type"), "pct")
+
     items = ["{{ provider_website }}", "{{ provider_email }}",
              "{{ provider_tel }}", "{{ provider_address }}"]
     for i, item in enumerate(items):
-        c = contact.cell(0, i)
-        c.width = Cm(4.5)
-        _pad(c, 0.14, 0.02, 0.05, 0.05)
+        c = _span(ROW_FOOT_LINKS, i * 3, i * 3 + 2)
+        _fill(c, NAVY_FILL)
+        _pad(c, 0.04, 0.34, 0.15, 0.15)
         _txt(c, item, 8.5, colour=RGBColor(0xC5, 0xDA, 0xEC),
              align="center", first=True)
 
