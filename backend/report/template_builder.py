@@ -515,6 +515,48 @@ def _hairline(cell, colour="DCE5EE"):
         borders.append(e)
 
 
+
+def _fit_picture(paragraph, path, max_w_cm, max_h_cm, trim=True):
+    """Insert a picture scaled to fit inside a box, trimming blank edges.
+
+    Artwork from a certification body usually arrives centred on a large
+    white canvas. Inserted at a fixed width that canvas becomes several
+    centimetres of empty masthead — enough to push the cover onto a second
+    page. Trimming the uniform border and then fitting to a box means the
+    mark occupies the space it is given whatever shape the source file is.
+
+    Falls back to a plain width-constrained insert if anything goes wrong;
+    a slightly large logo is better than a build failure.
+    """
+    try:
+        from PIL import Image, ImageChops
+        im = Image.open(path)
+        if trim:
+            rgb = im.convert("RGB")
+            corner = rgb.getpixel((0, 0))
+            bg = Image.new("RGB", rgb.size, corner)
+            box = ImageChops.difference(rgb, bg).getbbox()
+            if box and box[2] - box[0] > 20 and box[3] - box[1] > 20:
+                area_before = im.size[0] * im.size[1]
+                cropped = im.crop(box)
+                if cropped.size[0] * cropped.size[1] < area_before * 0.98:
+                    import tempfile
+                    fd, tmp = tempfile.mkstemp(suffix=".png")
+                    os.close(fd)
+                    cropped.save(tmp)
+                    path, im = tmp, cropped
+        w, h = im.size
+        aspect = w / float(h) if h else 1.0
+    except Exception:
+        paragraph.add_run().add_picture(path, width=Cm(max_w_cm))
+        return
+
+    if max_w_cm / aspect <= max_h_cm:
+        paragraph.add_run().add_picture(path, width=Cm(max_w_cm))
+    else:
+        paragraph.add_run().add_picture(path, height=Cm(max_h_cm))
+
+
 def _typeset(doc) -> dict:
     """Apply publication-grade pagination controls across the whole document.
 
@@ -754,8 +796,8 @@ def build(out_path: str = OUT) -> str:
     hl = _span(ROW_MASTHEAD, 0, logo_span)
     _pad(hl, 0.55, 0.4, 1.4, 0.2)
     try:
-        hl.paragraphs[0].add_run().add_picture(
-            os.path.join(ASSETS, "logo_left.png"), height=Cm(2.05))
+        _fit_picture(hl.paragraphs[0], os.path.join(ASSETS, "logo_left.png"),
+                     max_w_cm=5.6, max_h_cm=2.05)
     except Exception:
         r = hl.paragraphs[0].add_run("BSA.lab")
         r.bold = True
@@ -767,10 +809,9 @@ def build(out_path: str = OUT) -> str:
         _pad(sc, 0.60, 0.4, 0.2, 1.2)
         sp = sc.paragraphs[0]
         sp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        try:
-            sp.add_run().add_picture(strip, width=Cm(13.2))
-        except Exception:
-            pass
+        # fit to a box rather than a fixed width, so a near-square source
+        # file cannot inflate the masthead
+        _fit_picture(sp, strip, max_w_cm=13.2, max_h_cm=2.3)
     elif badges:
         first = logo_span + 1
         each = max((COLS - first) // len(badges), 1)
@@ -784,11 +825,8 @@ def build(out_path: str = OUT) -> str:
             ip = cell.paragraphs[0]
             ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
             ip.paragraph_format.space_after = Pt(2)
-            try:
-                ip.add_run().add_picture(os.path.join(ASSETS, fname),
-                                         height=Cm(1.05))
-            except Exception:
-                continue
+            _fit_picture(ip, os.path.join(ASSETS, fname),
+                         max_w_cm=3.2, max_h_cm=1.15)
             for i, line in enumerate(caption):
                 cp = cell.add_paragraph()
                 cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
