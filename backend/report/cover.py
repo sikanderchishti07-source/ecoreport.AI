@@ -265,51 +265,62 @@ def build_hero(project_name: str, out_path: str,
 # Value-proposition icons (drawn once, cached in assets/)
 # ---------------------------------------------------------------------------
 def _icon_canvas():
+    """Transparent canvas with a thin green ring — the outline treatment used
+    in the approved cover, in place of the earlier solid navy disc."""
     fig = plt.figure(figsize=(ICON_PX / 200, ICON_PX / 200), dpi=200)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, 100)
     ax.set_ylim(0, 100)
     ax.axis("off")
-    ax.add_patch(Circle((50, 50), 46, facecolor=NAVY, edgecolor="none"))
+    ax.add_patch(Circle((50, 50), 45, facecolor="none", edgecolor=GREEN,
+                        lw=2.6))
     return fig, ax
 
 
 def _icon_accurate(ax):
-    for r, c in ((26, WHITE), (18, NAVY), (10, WHITE)):
-        ax.add_patch(Circle((50, 50), r, facecolor=c, edgecolor="none"))
-    ax.add_patch(Circle((50, 50), 4.5, facecolor=NAVY, edgecolor="none"))
-    ax.plot([50, 76], [50, 74], color=WHITE, lw=4, solid_capstyle="round")
+    """Target: concentric rings with a crosshair."""
+    for r in (27, 17):
+        ax.add_patch(Circle((50, 50), r, facecolor="none", edgecolor=GREEN,
+                            lw=2.6))
+    ax.add_patch(Circle((50, 50), 6.5, facecolor=GREEN, edgecolor="none"))
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        ax.plot([50 + dx * 27, 50 + dx * 37], [50 + dy * 27, 50 + dy * 37],
+                color=GREEN, lw=2.6, solid_capstyle="round")
 
 
 def _icon_reliable(ax):
-    shield = [[50, 80], [26, 68], [26, 42], [50, 24], [74, 42], [74, 68]]
-    ax.add_patch(Polygon(shield, closed=True, facecolor=WHITE, edgecolor="none"))
-    ax.plot([38, 47, 64], [52, 42, 63], color=NAVY, lw=6.5,
+    """Shield with a tick."""
+    shield = [[50, 79], [27, 67], [27, 44], [50, 27], [73, 44], [73, 67]]
+    ax.add_patch(Polygon(shield, closed=True, facecolor="none",
+                         edgecolor=GREEN, lw=2.8, joinstyle="round"))
+    ax.plot([39, 47, 63], [52, 43, 62], color=GREEN, lw=3.4,
             solid_capstyle="round", solid_joinstyle="round")
 
 
 def _icon_compliant(ax):
-    for i, h in enumerate((18, 28, 38)):
-        ax.add_patch(plt.Rectangle((32 + i * 13, 30), 9, h, facecolor=WHITE,
-                                   edgecolor="none"))
-    ax.plot([32, 45, 58, 72], [56, 46, 62, 74], color=GREEN, lw=4.5,
-            solid_capstyle="round")
-    ax.scatter([72], [74], s=60, color=GREEN, zorder=5)
+    """Rising bars with a trend arrow."""
+    for i, h in enumerate((14, 22, 30)):
+        ax.add_patch(plt.Rectangle((33 + i * 12, 31), 8, h, facecolor="none",
+                                   edgecolor=GREEN, lw=2.4))
+    ax.plot([34, 46, 58, 70], [56, 47, 62, 73], color=GREEN, lw=2.8,
+            solid_capstyle="round", solid_joinstyle="round")
+    ax.plot([70, 70], [73, 64], color=GREEN, lw=2.8, solid_capstyle="round")
+    ax.plot([70, 61], [73, 73], color=GREEN, lw=2.8, solid_capstyle="round")
 
 
 def _icon_sustainable(ax):
-    ax.add_patch(Circle((50, 50), 27, facecolor="none", edgecolor=WHITE, lw=4))
-    ax.plot([23, 77], [50, 50], color=WHITE, lw=3)
-    for w in (14, 26):
-        ax.add_patch(Wedge((50, 50), 27, 90 - 0, 90 + 0, width=0))
-    th = np.linspace(-np.pi / 2, np.pi / 2, 60)
-    for k in (0.5, 1.0):
-        ax.plot(50 + 27 * k * np.cos(th) * 0.55, 50 + 27 * np.sin(th),
-                color=WHITE, lw=2.6)
-        ax.plot(50 - 27 * k * np.cos(th) * 0.55, 50 + 27 * np.sin(th),
-                color=WHITE, lw=2.6)
-    leaf = [[50, 34], [62, 44], [50, 56], [40, 44]]
-    ax.add_patch(Polygon(leaf, closed=True, facecolor=GREEN, edgecolor="none"))
+    """Globe with meridians."""
+    ax.add_patch(Circle((50, 50), 27, facecolor="none", edgecolor=GREEN,
+                        lw=2.6))
+    ax.plot([23, 77], [50, 50], color=GREEN, lw=2.2)
+    ax.plot([28.5, 71.5], [63, 63], color=GREEN, lw=2.0)
+    ax.plot([28.5, 71.5], [37, 37], color=GREEN, lw=2.0)
+    th = np.linspace(-np.pi / 2, np.pi / 2, 80)
+    for k in (0.45, 1.0):
+        ax.plot(50 + 27 * k * np.cos(th), 50 + 27 * np.sin(th), color=GREEN,
+                lw=2.0)
+        ax.plot(50 - 27 * k * np.cos(th), 50 + 27 * np.sin(th), color=GREEN,
+                lw=2.0)
 
 
 ICONS = {

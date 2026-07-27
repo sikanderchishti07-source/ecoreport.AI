@@ -856,8 +856,10 @@ def build(out_path: str = OUT) -> str:
         a, b = i * 3, i * 3 + 2
         top = _span(ROW_ICON, a, b)
         bot = _span(ROW_PROP, a, b)
-        _pad(top, 0.30, 0.06, 0.15, 0.15)
-        _pad(bot, 0.0, 0.26, 0.15, 0.15)
+        left = 1.4 if i == 0 else 0.15
+        right = 1.4 if i == len(props) - 1 else 0.15
+        _pad(top, 0.30, 0.06, left, right)
+        _pad(bot, 0.0, 0.26, left, right)
         if i:                       # no rule to the left of the first column
             _left_rule(top)
             _left_rule(bot)
@@ -909,7 +911,12 @@ def build(out_path: str = OUT) -> str:
     for i, item in enumerate(items):
         c = _span(ROW_FOOT_LINKS, i * 3, i * 3 + 2)
         _fill(c, NAVY_FILL)
-        _pad(c, 0.04, 0.34, 0.15, 0.15)
+        # the outer columns are inset to the same safe margin as the rest of
+        # the cover: on a full-bleed page the last contact item was ending
+        # 2.6 mm from the trim edge, close enough to be cut off in print
+        _pad(c, 0.04, 0.34,
+             1.5 if i == 0 else 0.15,
+             1.5 if i == len(items) - 1 else 0.15)
         _txt(c, item, 8.5, colour=RGBColor(0xC5, 0xDA, 0xEC),
              align="center", first=True)
 
