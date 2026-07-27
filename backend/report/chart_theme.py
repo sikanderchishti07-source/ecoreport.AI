@@ -68,7 +68,7 @@ ROSE_W_MM = 130.0
 MM_PER_IN = 25.4
 FIG_W, FIG_H = INSERT_W_MM / MM_PER_IN, 3.35
 ROSE_W = ROSE_W_MM / MM_PER_IN
-AX_LEFT, AX_RIGHT = 0.095, 0.975
+AX_LEFT, AX_RIGHT = 0.095, 0.940   # 0.975 clipped the final x label
 AX_BOTTOM, AX_TOP = 0.235, 0.735      # room for header above, legend below
 TITLE_Y, SUB_Y = 0.955, 0.885
 CHIP_Y, CHIP_H = 0.882, 0.078
@@ -80,7 +80,10 @@ SOURCE_NOTE = "Generated from validated monitoring data"
 def apply_theme() -> None:
     """Global rcParams — call once per figure build."""
     plt.rcParams.update({
-        "font.family": FONT,
+        # A list gives matplotlib per-glyph fallback. Wind class labels carry
+        # characters such as U+2265 (>=) that the display font may not have;
+        # without a fallback those render as an empty box on the chart.
+        "font.family": [FONT, "DejaVu Sans"],
         "font.size": 9,
         "text.color": INK,
         "axes.edgecolor": AXIS,

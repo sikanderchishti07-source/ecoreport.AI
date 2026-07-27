@@ -477,6 +477,23 @@ def _verdict_box(doc, body_key):
 
 
 
+
+def _no_word_split(table):
+    """Stop Word breaking a word across lines inside table cells.
+
+    Word will hyphenate-by-force inside a narrow cell, producing headers like
+    "APPLICABL / E LIMIT". Turning off automatic hyphenation for the runs in
+    the table makes it wrap at spaces instead, which is what a typesetter
+    would do.
+    """
+    for row in table.rows:
+        for cell in row.cells:
+            for p in cell.paragraphs:
+                pPr = p._p.get_or_add_pPr()
+                if pPr.find(qn("w:suppressAutoHyphens")) is None:
+                    pPr.append(OxmlElement("w:suppressAutoHyphens"))
+
+
 def _typeset(doc) -> dict:
     """Apply publication-grade pagination controls across the whole document.
 
@@ -1287,6 +1304,13 @@ def build(out_path: str = OUT) -> str:
                            "APPLICABLE LIMIT", "% OF LIMIT", "STATUS"]):
         _cell_text(cs.cell(0, j), h, bold=True, size=8.5, align="center")
         _shade(cs.cell(0, j))
+    # Explicit widths proportional to content. With seven equal columns Word
+    # has to break "APPLICABLE" mid-word to fit it, which is why the header
+    # printed as "APPLICABL / E LIMIT".
+    for j, w in enumerate((2.6, 2.2, 2.0, 2.1, 3.1, 2.0, 2.4)):
+        for r_ in cs.rows:
+            r_.cells[j].width = Cm(w)
+    _no_word_split(cs)
     _tr_tag_row(cs, 1, "{%tr for r in compliance_rows %}")
     row = cs.rows[2]
     _cell_text(row.cells[0], "{{ r.pollutant }}", size=9, bold=True)
