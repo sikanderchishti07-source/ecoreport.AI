@@ -581,9 +581,12 @@ def _typeset(doc) -> dict:
                 trPr.append(OxmlElement("w:cantSplit"))
                 stats["rows_unsplit"] += 1
 
-        # repeat the header on every continuation page, but only for real
-        # data tables — the cover and masthead use one-row layout tables
-        if len(rows) >= 4:
+        # Repeat the header on continuation pages, but only for real data
+        # tables. The cover is a twelve-column layout grid, not a data table:
+        # marking its first row as a header made Word reprint the masthead at
+        # the top of the following page.
+        is_layout_grid = len(table.columns) >= 8
+        if len(rows) >= 4 and not is_layout_grid:
             trPr = rows[0]._tr.get_or_add_trPr()
             if trPr.find(qn("w:tblHeader")) is None:
                 trPr.append(OxmlElement("w:tblHeader"))
@@ -704,10 +707,10 @@ def build(out_path: str = OUT) -> str:
     COLS = 12
     COL_W = Cm(21.0 / COLS)
     ROW_MASTHEAD, ROW_HERO, ROW_ICON, ROW_PROP = 0, 1, 2, 3
-    ROW_CARD, ROW_PREP = 4, 9
-    ROW_FOOT_NAME, ROW_FOOT_LINKS = 10, 11
+    ROW_CARD = 4
+    ROW_FOOT_NAME, ROW_FOOT_LINKS = 9, 10
 
-    cov = doc.add_table(rows=12, cols=COLS)
+    cov = doc.add_table(rows=11, cols=COLS)
     _full_width(cov, COLS)
     for row in cov.rows:
         for c in row.cells:
@@ -851,16 +854,10 @@ def build(out_path: str = OUT) -> str:
         _txt(kc, k, 9.5, bold=True, colour=NAVY, first=True)
         _txt(vc, v, 10, colour=DARK, first=True)
 
-    # --- row 9: prepared by -------------------------------------------------
-    pc = _span(ROW_PREP, 0, COLS - 1)
-    _pad(pc, 0.30, 0.22, 1.5, 1.5)
-    _txt(pc, "PREPARED BY", 9.5, bold=True, colour=GREEN_ACCENT, first=True)
-    _txt(pc, "{{ provider }}", 15, bold=True, colour=NAVY, before=2, after=1)
-    _txt(pc, "Environmental Consultant", 10, colour=GREEN_ACCENT, after=6)
-    _txt(pc, "Accredited by the National Center for Environmental "
-             "Compliance (NCEC)", 8.5, italic=True, colour=MUTED_GREY, after=1)
-    _txt(pc, "Reported to KSA NCEC 2020 ambient air quality standards", 8.5,
-         italic=True, colour=MUTED_GREY)
+    # The approved concept carries no prepared-by block on the cover, and
+    # the same detail is already set out on the document control page. Its
+    # removal is also what lets the cover close on a single page now that the
+    # hero band is taller.
 
     # --- rows 10-11: navy contact footer ------------------------------------
     fn = _span(ROW_FOOT_NAME, 0, COLS - 1)
