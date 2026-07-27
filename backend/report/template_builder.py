@@ -573,13 +573,30 @@ def build(out_path: str = OUT) -> str:
     # The national emblem that used to sit on the right is now carried only
     # in the running page header, so the cover masthead matches the approved
     # design.
-    badges = [(f, cap) for f, cap in ACCREDITATION_BADGES
-              if os.path.exists(os.path.join(ASSETS, f))]
-    head = doc.add_table(rows=1, cols=1 + len(badges))
-    _full_width(head, 1 + len(badges))
-    cells = head.rows[0].cells
+    # A single strip image wins if present: certification bodies usually
+    # supply one artwork with all the marks and their captions already set,
+    # so there is no reason to make the operator cut it into pieces. Falling
+    # back to the individual slots keeps per-badge captions available for
+    # anyone who does have the marks separately.
+    strip = os.path.join(ASSETS, "badges.png")
+    badges = [] if os.path.exists(strip) else [
+        (f, cap) for f, cap in ACCREDITATION_BADGES
+        if os.path.exists(os.path.join(ASSETS, f))]
+
+    if os.path.exists(strip):
+        head = doc.add_table(rows=1, cols=2)
+        _full_width(head, 2)
+        cells = head.rows[0].cells
+        cells[0].width, cells[1].width = Cm(7.0), Cm(14.0)
+        _pad(cells[1], 0.60, 0.4, 0.2, 1.2)
+    else:
+        head = doc.add_table(rows=1, cols=1 + len(badges))
+        _full_width(head, 1 + len(badges))
+        cells = head.rows[0].cells
+
     hl = cells[0]
-    hl.width = Cm(6.4 if badges else 11.5)
+    hl.width = Cm(7.0 if os.path.exists(strip)
+                  else (6.4 if badges else 11.5))
     _pad(hl, 0.55, 0.4, 1.4, 0.2)
     try:
         hl.paragraphs[0].add_run().add_picture(
@@ -589,6 +606,15 @@ def build(out_path: str = OUT) -> str:
         r.bold = True
         r.font.size = Pt(22)
         r.font.color.rgb = NAVY
+
+    if os.path.exists(strip):
+        sp = cells[1].paragraphs[0]
+        sp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        sp.paragraph_format.space_after = Pt(0)
+        try:
+            sp.add_run().add_picture(strip, width=Cm(13.2))
+        except Exception:
+            pass
 
     for cell, (fname, caption) in zip(cells[1:], badges):
         cell.width = Cm(14.6 / len(badges))
@@ -638,12 +664,29 @@ def build(out_path: str = OUT) -> str:
         ("compliant", "COMPLIANT", "Aligned with KSA NCEC\n& international standards"),
         ("sustainable", "SUSTAINABLE", "Supporting a cleaner\nand healthier future"),
     ]
+    def _left_rule(cell, colour="DCE5EE"):
+        """Hairline on a cell's left edge — the dividers between the four
+        value propositions in the approved cover."""
+        tcPr = cell._tc.get_or_add_tcPr()
+        borders = tcPr.find(qn("w:tcBorders"))
+        if borders is None:
+            borders = OxmlElement("w:tcBorders")
+            tcPr.append(borders)
+        e = OxmlElement("w:left")
+        e.set(qn("w:val"), "single")
+        e.set(qn("w:sz"), "4")
+        e.set(qn("w:color"), colour)
+        borders.append(e)
+
     for i, (icon, title, blurb) in enumerate(props):
         top = vals.cell(0, i)
         bot = vals.cell(1, i)
         top.width = bot.width = Cm(4.6)
         _pad(top, 0.28, 0.06, 0.15, 0.15)
         _pad(bot, 0.0, 0.26, 0.15, 0.15)
+        if i:                       # no rule to the left of the first column
+            _left_rule(top)
+            _left_rule(bot)
         ip = top.paragraphs[0]
         ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
         ip.paragraph_format.space_after = Pt(3)
@@ -681,15 +724,17 @@ def build(out_path: str = OUT) -> str:
         kc.width, vc.width = Cm(5.2), Cm(12.8)
         _pad(kc, 0.12, 0.12, 0.4, 0.2)
         _pad(vc, 0.12, 0.12, 0.45, 0.4)
-        _fill(kc, NAVY_FILL)
-        _txt(kc, k, 9.5, bold=True, colour=WHITE, first=True)
+        # the concept sets the labels in navy on a light ground rather than
+        # reversed out of a solid navy block
+        _fill(kc, ZEBRA_FILL)
+        _txt(kc, k, 9.5, bold=True, colour=NAVY, first=True)
         _txt(vc, v, 10, colour=DARK, first=True)
 
     # 5 — prepared by
     prep = doc.add_table(rows=1, cols=1)
     _full_width(prep)
     pc = prep.rows[0].cells[0]
-    _pad(pc, 0.45, 0.35, 1.5, 1.5)
+    _pad(pc, 0.30, 0.22, 1.5, 1.5)
     _txt(pc, "PREPARED BY", 9.5, bold=True, colour=GREEN_ACCENT, first=True)
     _txt(pc, "{{ provider }}", 15, bold=True, colour=NAVY, before=2, after=1)
     _txt(pc, "Environmental Consultant", 10, colour=GREEN_ACCENT, after=6)
@@ -706,9 +751,23 @@ def build(out_path: str = OUT) -> str:
     _pad(fc, 0.34, 0.34, 1.5, 1.5)
     _txt(fc, "{{ provider_legal_name }}", 10.5, bold=True, colour=WHITE,
          first=True)
-    _txt(fc, "Tel. {{ provider_tel }}    |    Fax {{ provider_fax }}    |    "
-             "{{ provider_email }}    |    {{ provider_address }}", 8.5,
-         colour=RGBColor(0xC5, 0xDA, 0xEC), before=3)
+    # four evenly spaced contact items, as in the approved cover, rather than
+    # one long pipe-separated line that wraps awkwardly on a narrow page
+    contact = fc.add_table(rows=1, cols=4)
+    cwid = contact._tbl.tblPr.find(qn("w:tblW"))
+    if cwid is None:
+        cwid = OxmlElement("w:tblW")
+        contact._tbl.tblPr.append(cwid)
+    cwid.set(qn("w:w"), "5000")
+    cwid.set(qn("w:type"), "pct")
+    items = ["{{ provider_website }}", "{{ provider_email }}",
+             "{{ provider_tel }}", "{{ provider_address }}"]
+    for i, item in enumerate(items):
+        c = contact.cell(0, i)
+        c.width = Cm(4.5)
+        _pad(c, 0.14, 0.02, 0.05, 0.05)
+        _txt(c, item, 8.5, colour=RGBColor(0xC5, 0xDA, 0xEC),
+             align="center", first=True)
 
     sec2 = doc.add_section(WD_SECTION.NEW_PAGE)
     sec2.page_width, sec2.page_height = Cm(21.0), Cm(29.7)
