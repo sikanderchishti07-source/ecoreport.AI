@@ -156,7 +156,10 @@ def generate_report(
     # the right size and the operator's own photo can be used as the backdrop.
     try:
         from report.cover import build_hero, build_icons
-        build_icons()
+        # force: the icons are cached in assets/, so a change to how they are
+        # drawn would otherwise never reach a deployment that already has the
+        # old files sitting there
+        build_icons(force=True)
         hero_dir = charts_dir or os.path.join(os.path.dirname(
             os.path.abspath(out_path)), "charts")
         os.makedirs(hero_dir, exist_ok=True)

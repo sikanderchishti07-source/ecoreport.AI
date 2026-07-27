@@ -906,10 +906,14 @@ def build(out_path: str = OUT) -> str:
     _txt(fn, "{{ provider_legal_name }}", 10.5, bold=True, colour=WHITE,
          first=True)
 
-    items = ["{{ provider_website }}", "{{ provider_email }}",
-             "{{ provider_tel }}", "{{ provider_address }}"]
-    for i, item in enumerate(items):
-        c = _span(ROW_FOOT_LINKS, i * 3, i * 3 + 2)
+    # uneven spans: the address is the longest item and was wrapping to a
+    # second line once the outer columns were inset for print safety
+    items = [("{{ provider_website }}", 0, 2),
+             ("{{ provider_email }}", 3, 5),
+             ("{{ provider_tel }}", 6, 7),
+             ("{{ provider_address }}", 8, 11)]
+    for i, (item, a, b) in enumerate(items):
+        c = _span(ROW_FOOT_LINKS, a, b)
         _fill(c, NAVY_FILL)
         # the outer columns are inset to the same safe margin as the rest of
         # the cover: on a full-bleed page the last contact item was ending
