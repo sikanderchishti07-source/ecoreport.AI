@@ -162,7 +162,8 @@ def generate_report(
         os.makedirs(hero_dir, exist_ok=True)
         hero_png = os.path.join(hero_dir, f"cover_hero_{lang}.png")
         build_hero(campaign.project_name, hero_png,
-                   photo_path=cover_photo_path, lang=lang)
+                   photo_path=cover_photo_path, lang=lang,
+                   site_line=campaign.site_name)
         ctx["cover_hero"] = InlineImage(tpl, hero_png, width=Mm(212))
     except Exception:  # noqa: BLE001
         import logging

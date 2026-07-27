@@ -1,17 +1,35 @@
+# -*- coding: utf-8 -*-
 """Cover artwork for the report — hero band and value-proposition icons.
 
-The hero band is rendered per report so the project name is baked in at the
-right size and the operator's own station photograph can be used. When no
-photo is supplied an abstract air-flow graphic is drawn instead, so a cover
-never looks unfinished.
+The hero band is rendered per report so the project name is set at the right
+size and the operator's own station photograph can be used as the backdrop.
 
-Text inside the hero is drawn with the report's display font; Arabic is
-reshaped and bidi-ordered so it renders correctly in the image.
+Composition, back to front:
+
+  1. the photograph, filling the whole band;
+  2. a light panel over the left, its right edge stepping down in two
+     segments until it meets the main diagonal;
+  3. one continuous diagonal from the left edge down to the lower right, a
+     thin green strip riding above it and a navy triangle below;
+  4. a dot texture on the thick part of the navy, a green wedge at the far
+     bottom right;
+  5. the type: eyebrow, rule, three-line title, tagline, and the location pin
+     with the project name and sub-location on the navy.
+
+Every coordinate is a fraction of the canvas, so the band re-renders at any
+size without the layout drifting. The project name is measured against the
+navy's own edge and stepped down until it fits — the triangle narrows as it
+rises, so a long site name that would sit comfortably at the foot of the band
+runs off the colour higher up.
+
+Text is drawn with the report's display font; Arabic is reshaped and
+bidi-ordered so it renders correctly in the image.
 """
 from __future__ import annotations
 
 import logging
 import os
+import textwrap
 from typing import Optional
 
 import matplotlib
@@ -24,26 +42,31 @@ from matplotlib.patches import Circle, Polygon, Wedge
 
 log = logging.getLogger(__name__)
 
-NAVY = "#123A63"
-NAVY_DEEP = "#0C2C4D"
-GREEN = "#4CA64C"
-GREEN_DARK = "#2F7D32"
-GOLD = "#C9A227"
+NAVY = "#12315B"
+NAVY_DEEP = "#0C2444"
+GREEN = "#4FA23F"
+GREEN_DARK = "#41903A"
 WHITE = "#FFFFFF"
+PANEL = "#F7F9FB"
+INK_SUB = "#3C4A5A"
+PALE = "#C9D8E8"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ASSETS = os.path.join(HERE, "assets")
 
-HERO_W, HERO_H = 2100, 1180          # ~155 mm wide at print resolution
+HERO_W, HERO_H = 2100, 1580
 ICON_PX = 320
+
+# --- the main diagonal: height DIAG_L at x = 0, reaching 0 at x = DIAG_X ---
+DIAG_L = 0.262
+DIAG_X = 0.710
 
 
 def _font(bold: bool = False, arabic: bool = False) -> dict:
-    names = ({"Amiri", "Noto Sans Arabic"} if arabic
-             else {"IBM Plex Sans", "Inter", "Noto Sans", "DejaVu Sans"})
     have = {f.name for f in fm.fontManager.ttflist}
-    for n in (["Amiri", "Noto Sans Arabic"] if arabic else
-              ["IBM Plex Sans", "Inter", "Noto Sans", "DejaVu Sans"]):
+    order = (["Amiri", "Noto Sans Arabic"] if arabic
+             else ["IBM Plex Sans", "Inter", "Noto Sans", "DejaVu Sans"])
+    for n in order:
         if n in have:
             return {"fontname": n, "fontweight": "bold" if bold else "normal"}
     return {"fontweight": "bold" if bold else "normal"}
@@ -58,180 +81,172 @@ def _shape_ar(text: str) -> str:
         return text
 
 
+def _backdrop(ax, photo_path: Optional[str]) -> bool:
+    """The campaign's photograph; a neutral graphic when none is supplied."""
+    if not (photo_path and os.path.exists(photo_path)):
+        default = os.path.join(ASSETS, "hero_default.png")
+        photo_path = default if os.path.exists(default) else None
+    if photo_path:
+        try:
+            img = plt.imread(photo_path)
+            ih, iw = img.shape[:2]
+            target = HERO_W / HERO_H
+            if iw / ih > target:
+                nw = int(ih * target)
+                x0 = int((iw - nw) * 0.62)       # favour the right of frame
+                img = img[:, x0:x0 + nw]
+            else:
+                nh = int(iw / target)
+                y0 = int((ih - nh) * 0.28)
+                img = img[y0:y0 + nh, :]
+            ax.imshow(img, extent=[0, HERO_W, 0, HERO_H], aspect="auto",
+                      zorder=1)
+            return True
+        except Exception:  # noqa: BLE001
+            log.warning("cover photo unreadable, using graphic", exc_info=True)
 
-def _draw_skyline(ax) -> None:
-    """Vector Riyadh-style skyline used when no photograph is supplied:
-    daylight sky, layered towers, a treeline, and a monitoring sensor on its
-    mast at the right — the same composition as a station photo."""
-    # sky
     sky = LinearSegmentedColormap.from_list(
-        "sky", ["#1B4E7E", "#3E82B8", "#8FC0DF", "#CFE3F1"])
+        "sky", ["#8FB6D4", "#B7D0E3", "#D6E4EF", "#EDF3F8"])
     ax.imshow(np.linspace(1, 0, 256).reshape(-1, 1),
               extent=[0, HERO_W, 0, HERO_H], origin="upper", aspect="auto",
               cmap=sky, zorder=1)
+    rng = np.random.default_rng(11)
+    base = HERO_H * 0.14
+    for _ in range(30):
+        x = rng.uniform(HERO_W * 0.38, HERO_W)
+        ax.add_patch(plt.Rectangle((x, base), rng.uniform(40, 120),
+                                   rng.uniform(140, 620), facecolor="#7FA4C2",
+                                   alpha=0.45, edgecolor="none", zorder=2))
+    xs = np.linspace(HERO_W * 0.30, HERO_W, 260)
+    tops = base + 60 + 26 * np.sin(xs / 70)
+    ax.fill_between(xs, base - 60, tops, color="#3D7A50", alpha=0.85, zorder=3)
+    return False
 
-    rng = np.random.default_rng(5)
-    base = HERO_H * 0.20
 
-    def tower(x, w, h, colour, alpha):
-        ax.add_patch(plt.Rectangle((x, base), w, h, facecolor=colour,
-                                   alpha=alpha, edgecolor="none", zorder=2))
+def _dots(ax, W: float, H: float) -> None:
+    """Faint dot grid on the thick part of the navy."""
+    for i in range(4):
+        for j in range(4):
+            x = W * (0.020 + i * 0.014)
+            y = H * (0.038 + j * 0.030)
+            if y < DIAG_L * H * (1 - x / (DIAG_X * W)) - H * 0.03:
+                ax.add_patch(Circle((x, y), W * 0.0021, facecolor="#4C6C97",
+                                    edgecolor="none", zorder=7))
 
-    # far haze layer
-    for _ in range(22):
-        x = rng.uniform(HERO_W * 0.30, HERO_W)
-        tower(x, rng.uniform(38, 92), rng.uniform(90, 300), "#7FA9CB", .55)
 
-    # mid layer
-    for _ in range(16):
-        x = rng.uniform(HERO_W * 0.34, HERO_W * 0.99)
-        tower(x, rng.uniform(46, 104), rng.uniform(140, 400), "#5E8CB4", .75)
+def _navy_right(y_frac: float) -> float:
+    """x (as a fraction of width) where the navy ends at the given height."""
+    if y_frac >= DIAG_L:
+        return 0.0
+    return DIAG_X * (1.0 - y_frac / DIAG_L)
 
-    # landmark 1 — tall tower with an open arch near the crown
-    lx, lw = HERO_W * 0.615, 150
-    lh = HERO_H * 0.60
-    tower(lx, lw, lh, "#44749E", .95)
-    ax.add_patch(plt.Rectangle((lx + lw * 0.22, base + lh * 0.80),
-                               lw * 0.56, lh * 0.13, facecolor="#9CC3DF",
-                               alpha=.95, edgecolor="none", zorder=3))
-    ax.add_patch(Polygon([[lx, base + lh], [lx + lw, base + lh],
-                          [lx + lw * 0.72, base + lh * 1.10],
-                          [lx + lw * 0.28, base + lh * 1.10]],
-                         closed=True, facecolor="#44749E", alpha=.95, zorder=3))
 
-    # landmark 2 — slender tower with a spire and orb
-    sx, sw = HERO_W * 0.745, 96
-    sh = HERO_H * 0.50
-    ax.add_patch(Polygon([[sx, base], [sx + sw, base],
-                          [sx + sw * 0.62, base + sh],
-                          [sx + sw * 0.38, base + sh]],
-                         closed=True, facecolor="#3F6E96", alpha=.95, zorder=3))
-    ax.add_patch(Circle((sx + sw * 0.5, base + sh * 1.06), 22,
-                        facecolor="#B9D6EA", alpha=.95, zorder=4))
-    ax.plot([sx + sw * 0.5, sx + sw * 0.5],
-            [base + sh * 1.10, base + sh * 1.30], color="#B9D6EA", lw=3,
-            zorder=4)
+def _fit_text(fig, ax, x, y_frac, text, colour, max_fs, bold, ar, W, H,
+              pad: float = 0.022):
+    """Draw text guaranteed to stay inside the navy.
 
-    # near layer
-    for _ in range(12):
-        x = rng.uniform(HERO_W * 0.36, HERO_W * 0.98)
-        tower(x, rng.uniform(54, 118), rng.uniform(110, 260), "#2F5D86", .92)
-
-    # treeline
-    xs = np.linspace(HERO_W * 0.28, HERO_W, 260)
-    tops = base + 34 + 16 * np.sin(xs / 55) + 10 * np.sin(xs / 23 + 1.3)
-    ax.fill_between(xs, base - 30, tops, color="#2E6B4A", alpha=.95, zorder=5)
-    ax.fill_between(xs, base - 30, tops - 16, color="#24583C", alpha=.9,
-                    zorder=5)
-
-    # ---- monitoring sensor on its mast, right-hand side ----
-    mx = HERO_W * 0.885
-    ax.add_patch(plt.Rectangle((mx - 9, base - 40), 18, HERO_H * 0.46,
-                               facecolor="#C9CFD4", edgecolor="#8A9298",
-                               lw=1.2, zorder=6))
-    top_y = base - 40 + HERO_H * 0.46
-    # radiation-shield plates
-    for k in range(7):
-        w = 96 - k * 5
-        y = top_y + k * 17
-        ax.add_patch(plt.Rectangle((mx - w / 2, y), w, 11,
-                                   facecolor="#E4E8EB", edgecolor="#9AA2A8",
-                                   lw=1.0, zorder=7))
-    ax.add_patch(Circle((mx, top_y + 7 * 17 + 22), 26, facecolor="#EDF0F2",
-                        edgecolor="#9AA2A8", lw=1.2, zorder=7))
-    # analyser enclosure
-    ax.add_patch(plt.Rectangle((mx - 62, base + HERO_H * 0.10), 124,
-                               HERO_H * 0.20, facecolor="#DDE2E6",
-                               edgecolor="#9AA2A8", lw=1.4, zorder=7))
-    ax.add_patch(plt.Rectangle((mx - 44, base + HERO_H * 0.155), 88,
-                               HERO_H * 0.075, facecolor="#C4CBD1",
-                               alpha=.8, edgecolor="none", zorder=8))
-    # inlet tube curving down
-    tt = np.linspace(0, 1, 60)
-    ax.plot(mx + 62 + 40 * np.sin(tt * 2.1), base + HERO_H * 0.12 - tt * 150,
-            color="#6E767D", lw=5, solid_capstyle="round", zorder=8)
+    The band narrows as it rises, so a project name that fits at the foot of
+    the band would run onto the photograph higher up. Measure, then step the
+    size down until it fits, rather than trusting a fixed point size.
+    """
+    limit = (_navy_right(y_frac) - pad) * W - x
+    if limit <= 0:
+        limit = W * 0.25
+    fs = max_fs
+    while fs > 9:
+        t = ax.text(x, y_frac * H, text, color=colour, fontsize=fs,
+                    va="center", zorder=9, **_font(bold, ar))
+        fig.canvas.draw()
+        if t.get_window_extent(fig.canvas.get_renderer()).width <= limit:
+            return t
+        t.remove()
+        fs -= 1
+    return ax.text(x, y_frac * H, text, color=colour, fontsize=9,
+                   va="center", zorder=9, **_font(bold, ar))
 
 
 def build_hero(project_name: str, out_path: str,
-               photo_path: Optional[str] = None, lang: str = "en") -> str:
-    """Render the cover hero band: imagery, gradient scrim, title, tagline."""
+               photo_path: Optional[str] = None, lang: str = "en",
+               site_line: Optional[str] = None) -> str:
+    """Render the cover hero band."""
     ar = lang == "ar"
     fig = plt.figure(figsize=(HERO_W / 200, HERO_H / 200), dpi=200)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, HERO_W)
     ax.set_ylim(0, HERO_H)
     ax.axis("off")
+    W, H = HERO_W, HERO_H
 
-    # ---- background: the campaign's own photo wins; otherwise the bundled
-    # station/skyline photograph; otherwise a drawn illustration ----
-    used_photo = False
-    if not (photo_path and os.path.exists(photo_path)):
-        default_hero = os.path.join(ASSETS, "hero_default.png")
-        if os.path.exists(default_hero):
-            photo_path = default_hero
-    if photo_path and os.path.exists(photo_path):
-        try:
-            img = plt.imread(photo_path)
-            ih, iw = img.shape[:2]
-            target = HERO_W / HERO_H
-            if iw / ih > target:                     # crop sides
-                new_w = int(ih * target)
-                x0 = (iw - new_w) // 2
-                img = img[:, x0:x0 + new_w]
-            else:                                    # crop top/bottom
-                new_h = int(iw / target)
-                y0 = int((ih - new_h) * 0.35)
-                img = img[y0:y0 + new_h, :]
-            ax.imshow(img, extent=[0, HERO_W, 0, HERO_H], aspect="auto",
-                      zorder=1)
-            used_photo = True
-        except Exception:  # noqa: BLE001
-            log.warning("cover photo unreadable, using graphic", exc_info=True)
+    _backdrop(ax, photo_path)
 
-    if not used_photo:
-        _draw_skyline(ax)
+    # light panel — its foot rides the same line as the top of the green
+    # strip, so no sliver of photograph shows between them
+    ax.add_patch(Polygon([(0, H), (W * 0.638, H), (W * 0.598, H * 0.615),
+                          (W * 0.430, H * 0.137), (0, H * 0.295)],
+                         closed=True, facecolor=PANEL, edgecolor="none",
+                         zorder=4))
 
-    # ---- scrim so text always reads, whatever the photo ----
-    scrim = LinearSegmentedColormap.from_list(
-        "s", [(0.05, 0.18, 0.31, 0.94), (0.05, 0.18, 0.31, 0.86),
-              (0.05, 0.18, 0.31, 0.30), (0.05, 0.18, 0.31, 0.06)])
-    ax.imshow(np.linspace(0, 1, 256).reshape(1, -1),
-              extent=[0, HERO_W, 0, HERO_H], aspect="auto", cmap=scrim,
-              zorder=4)
+    t = H * 0.033
+    ax.add_patch(Polygon([(0, DIAG_L * H + t), (W * 0.470, H * 0.089 + t),
+                          (W * 0.470, H * 0.089), (0, DIAG_L * H)],
+                         closed=True, facecolor=GREEN, edgecolor="none",
+                         zorder=5))
 
-    # ---- text block ----
-    L = HERO_W * 0.055
+    ax.add_patch(Polygon([(0, DIAG_L * H), (W * DIAG_X, 0), (0, 0)],
+                         closed=True, facecolor=NAVY, edgecolor="none",
+                         zorder=6))
+    _dots(ax, W, H)
+
+    ax.add_patch(Polygon([(W * 0.860, 0), (W, 0), (W, H * 0.105)],
+                         closed=True, facecolor=GREEN, alpha=0.95,
+                         edgecolor="none", zorder=6))
+
+    L = W * 0.073
+
     eyebrow = "الهواء المحيط" if ar else "AMBIENT AIR QUALITY"
-    t1 = "تقرير رصد" if ar else "AIR QUALITY"
-    t2 = "جودة الهواء" if ar else "MONITORING REPORT"
-    tag1 = "رصد دقيق · نتائج موثوقة" if ar else "Accurate Monitoring. Reliable Results."
-    tag2 = "بيئة أكثر صحة" if ar else "Healthier Environment."
-    if ar:
-        eyebrow, t1, t2, tag1, tag2 = map(_shape_ar, (eyebrow, t1, t2, tag1, tag2))
+    ax.text(L, H * 0.876, _shape_ar(eyebrow) if ar else eyebrow,
+            color=GREEN_DARK, fontsize=17.5, va="center", zorder=9,
+            **_font(True, ar))
+    ax.plot([L, L + W * 0.030], [H * 0.822, H * 0.822], color=NAVY, lw=5,
+            solid_capstyle="butt", zorder=9)
 
-    ax.text(L, HERO_H * 0.795, eyebrow, color="#7FD08A", fontsize=15,
-            zorder=6, **_font(True, ar))
-    ax.text(L, HERO_H * 0.665, t1, color=WHITE, fontsize=44, zorder=6,
-            **_font(True, ar))
-    ax.text(L, HERO_H * 0.545, t2, color=WHITE, fontsize=44, zorder=6,
-            **_font(True, ar))
-    ax.plot([L, L + HERO_W * 0.085], [HERO_H * 0.475, HERO_H * 0.475],
-            color=GREEN, lw=7, solid_capstyle="round", zorder=6)
-    ax.text(L, HERO_H * 0.365, tag1, color="#DCE7F2", fontsize=15.5, zorder=6,
-            **_font(False, ar))
-    ax.text(L, HERO_H * 0.295, tag2, color="#DCE7F2", fontsize=15.5, zorder=6,
-            **_font(False, ar))
-    if project_name:
-        pn = _shape_ar(project_name) if ar else project_name
-        ax.text(L, HERO_H * 0.175, pn, color="#9FC3E3", fontsize=17, zorder=6,
+    title = (["تقرير رصد", "جودة الهواء"] if ar
+             else ["AIR QUALITY", "MONITORING", "REPORT"])
+    for i, line in enumerate(title):
+        ax.text(L, H * (0.745 - i * 0.104), _shape_ar(line) if ar else line,
+                color=NAVY, fontsize=46, va="center", zorder=9,
                 **_font(True, ar))
 
-    # ---- curved white sweep along the bottom edge ----
-    xs = np.linspace(0, HERO_W, 400)
-    curve = HERO_H * 0.075 + HERO_H * 0.075 * np.sin(xs / HERO_W * np.pi * 1.15
-                                                     - 0.4)
-    ax.fill_between(xs, 0, curve, color=WHITE, zorder=7)
-    ax.plot(xs, curve, color=GREEN, lw=4, zorder=8)
+    tag = ([("رصد دقيق.", INK_SUB), ("نتائج موثوقة.", INK_SUB),
+            ("بيئة أكثر صحة.", GREEN_DARK)] if ar else
+           [("Accurate Monitoring.", INK_SUB), ("Reliable Results.", INK_SUB),
+            ("Healthier Environment.", GREEN_DARK)])
+    for i, (line, colour) in enumerate(tag):
+        ax.text(L, H * (0.447 - i * 0.050), _shape_ar(line) if ar else line,
+                color=colour, fontsize=19.5, va="center", zorder=9,
+                **_font(False, ar))
+
+    # location pin
+    px, py = W * 0.082, H * 0.098
+    r = W * 0.0185
+    ax.add_patch(Circle((px, py + r * 0.35), r, facecolor="none",
+                        edgecolor=GREEN, lw=4.2, zorder=9))
+    ax.add_patch(Circle((px, py + r * 0.45), r * 0.34, facecolor=GREEN,
+                        edgecolor="none", zorder=10))
+    ax.plot([px, px], [py - r * 0.62, py - r * 1.55], color=GREEN, lw=4.2,
+            solid_capstyle="round", zorder=9)
+
+    name = (project_name or "").upper()
+    lines = textwrap.wrap(name, width=18)[:2] or [""]
+    tx = W * 0.126
+    ys = (0.132, 0.088) if len(lines) > 1 else (0.115,)
+    for line, yf in zip(lines, ys):
+        _fit_text(fig, ax, tx, yf, _shape_ar(line) if ar else line,
+                  WHITE, 20, True, ar, W, H)
+    if site_line:
+        _fit_text(fig, ax, tx, 0.042 if len(lines) > 1 else 0.062,
+                  _shape_ar(site_line) if ar else site_line,
+                  PALE, 16, False, ar, W, H)
 
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
@@ -314,5 +329,6 @@ def build_icons(dest_dir: str = ASSETS, force: bool = False) -> dict:
 
 if __name__ == "__main__":
     build_icons(force=True)
-    build_hero("Sample Project", os.path.join(HERE, "assets", "_hero_demo.png"))
+    build_hero("Sample Project", os.path.join(HERE, "assets", "_hero_demo.png"),
+               site_line="Sample Site")
     print("cover artwork built")
