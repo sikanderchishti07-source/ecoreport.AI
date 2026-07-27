@@ -19,6 +19,26 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 ASSETS = os.path.join(os.path.dirname(__file__), "assets")
+
+# Accreditation marks printed across the cover masthead, left to right.
+# Each entry is a PNG filename in assets/ plus the caption beneath it.
+#
+# A badge whose file is not present is skipped entirely, so the row shows
+# only what BSA actually holds and never leaves a placeholder claiming an
+# accreditation the lab does not have. To change a mark, replace its PNG;
+# to change the wording or a certificate number, edit it here.
+ACCREDITATION_BADGES = [
+    ("badge_1.png", ["ONES INTERNATIONAL LIMITED",
+                     "Health and Safety Management System",
+                     "Certificate No: C00175-01"]),
+    ("badge_2.png", ["ACCREDITED",
+                     "Management System Certification Body",
+                     "MSCB-127"]),
+    ("badge_3.png", ["ACCREDITED",
+                     "Management System Certification Body",
+                     "MSCB-127"]),
+    ("badge_4.png", []),
+]
 OUT = os.path.join(os.path.dirname(__file__), "master_template.docx")
 
 # Brand palette — blue-dominant with a restrained green accent
@@ -549,13 +569,18 @@ def build(out_path: str = OUT) -> str:
             r.font.color.rgb = colour
         return p
 
-    # 1 — white masthead: logo left, national emblem right
-    head = doc.add_table(rows=1, cols=2)
-    _full_width(head, 2)
-    hl, hr = head.rows[0].cells
-    hl.width, hr.width = Cm(11.5), Cm(9.5)
-    _pad(hl, 0.55, 0.4, 1.5, 0.2)
-    _pad(hr, 0.55, 0.4, 0.2, 1.5)
+    # 1 — white masthead: the BSA mark, then the accreditation marks.
+    # The national emblem that used to sit on the right is now carried only
+    # in the running page header, so the cover masthead matches the approved
+    # design.
+    badges = [(f, cap) for f, cap in ACCREDITATION_BADGES
+              if os.path.exists(os.path.join(ASSETS, f))]
+    head = doc.add_table(rows=1, cols=1 + len(badges))
+    _full_width(head, 1 + len(badges))
+    cells = head.rows[0].cells
+    hl = cells[0]
+    hl.width = Cm(6.4 if badges else 11.5)
+    _pad(hl, 0.55, 0.4, 1.4, 0.2)
     try:
         hl.paragraphs[0].add_run().add_picture(
             os.path.join(ASSETS, "logo_left.png"), height=Cm(2.05))
@@ -564,13 +589,27 @@ def build(out_path: str = OUT) -> str:
         r.bold = True
         r.font.size = Pt(22)
         r.font.color.rgb = NAVY
-    rp = hr.paragraphs[0]
-    rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    try:
-        rp.add_run().add_picture(
-            os.path.join(ASSETS, "logo_right.png"), height=Cm(2.05))
-    except Exception:
-        pass
+
+    for cell, (fname, caption) in zip(cells[1:], badges):
+        cell.width = Cm(14.6 / len(badges))
+        _pad(cell, 0.62, 0.35, 0.10, 0.10)
+        ip = cell.paragraphs[0]
+        ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        ip.paragraph_format.space_after = Pt(2)
+        try:
+            ip.add_run().add_picture(os.path.join(ASSETS, fname),
+                                     height=Cm(1.05))
+        except Exception:
+            continue
+        for i, line in enumerate(caption):
+            cp = cell.add_paragraph()
+            cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            cp.paragraph_format.space_after = Pt(0)
+            cp.paragraph_format.line_spacing = 1.0
+            r = cp.add_run(line)
+            r.font.size = Pt(5.5)
+            r.bold = (i == 0)
+            r.font.color.rgb = NAVY
 
     # 2 — hero band (rendered per report: imagery + title + tagline)
     hero_t = doc.add_table(rows=1, cols=1)
