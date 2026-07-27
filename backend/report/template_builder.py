@@ -17,6 +17,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
+from docx.text.paragraph import Paragraph
 
 ASSETS = os.path.join(os.path.dirname(__file__), "assets")
 
@@ -250,12 +251,15 @@ def _p(doc, text="", size=11, bold=False, italic=False, align="left",
 
 
 def _heading(doc, text, level=1):
+    # note: keep_with_next below binds the heading to the paragraph that
+    # follows; keep_together stops a two-line heading breaking across pages
     """Section heading. Level 1 gets a navy number badge and a full-width rule
     so sections are visually separated; deeper levels are quieter."""
     p = doc.add_paragraph(style=f"Heading {level}")
     p.paragraph_format.space_before = Pt(16 if level == 1 else 11)
     p.paragraph_format.space_after = Pt(6 if level == 1 else 4)
     p.paragraph_format.keep_with_next = True
+    p.paragraph_format.keep_together = True
     if level == 1:
         num, _, rest = text.partition(" ")
         if num.rstrip(".").replace(".", "").isdigit():
@@ -470,6 +474,84 @@ def _verdict_box(doc, body_key):
     r.font.color.rgb = DARK
     _p(doc, space_after=6)
     return t
+
+
+
+def _typeset(doc) -> dict:
+    """Apply publication-grade pagination controls across the whole document.
+
+    Word will happily break a table row in half, drop a header row off the
+    top of a continuation page, or strand a single line at the foot of a
+    page. None of that is acceptable in a document going to a ministry under
+    a stamp, and none of it can be fixed by editing content — it is governed
+    by properties that have to be set on the paragraphs and rows themselves.
+
+    Applied here as one pass over the finished template rather than at each
+    of the thirty-odd call sites, so nothing can be missed when a new table
+    or figure is added later.
+
+    Returns a count of what was set, for the build log.
+    """
+    stats = {"rows_unsplit": 0, "header_rows_repeated": 0,
+             "kept_with_table": 0, "figures_kept": 0, "widow_control": 0}
+
+    def _pPr(p):
+        return p._p.get_or_add_pPr()
+
+    def _flag(p, tag, attr=None):
+        pPr = _pPr(p)
+        if pPr.find(qn(tag)) is None:
+            e = OxmlElement(tag)
+            if attr:
+                e.set(qn("w:val"), attr)
+            pPr.append(e)
+            return True
+        return False
+
+    # --- paragraphs -------------------------------------------------------
+    body = list(doc.element.body)
+    for i, el in enumerate(body):
+        if not el.tag.endswith("}p"):
+            continue
+        para = Paragraph(el, doc)
+
+        # never strand a single line at the top or bottom of a page
+        if _flag(para, "w:widowControl"):
+            stats["widow_control"] += 1
+
+        text = (para.text or "").strip()
+
+        # a paragraph carrying an image must not be parted from the caption
+        # that follows it
+        if "<pic:pic" in el.xml or "{{ fig_" in text or "{{ cover_hero" in text:
+            para.paragraph_format.keep_with_next = True
+            stats["figures_kept"] += 1
+            continue
+
+        # a lead-in line or caption immediately above a table stays with it
+        nxt = body[i + 1] if i + 1 < len(body) else None
+        if nxt is not None and nxt.tag.endswith("}tbl") and text:
+            para.paragraph_format.keep_with_next = True
+            stats["kept_with_table"] += 1
+
+    # --- tables -----------------------------------------------------------
+    for table in doc.tables:
+        rows = table.rows
+        for row in rows:
+            trPr = row._tr.get_or_add_trPr()
+            if trPr.find(qn("w:cantSplit")) is None:
+                trPr.append(OxmlElement("w:cantSplit"))
+                stats["rows_unsplit"] += 1
+
+        # repeat the header on every continuation page, but only for real
+        # data tables — the cover and masthead use one-row layout tables
+        if len(rows) >= 4:
+            trPr = rows[0]._tr.get_or_add_trPr()
+            if trPr.find(qn("w:tblHeader")) is None:
+                trPr.append(OxmlElement("w:tblHeader"))
+                stats["header_rows_repeated"] += 1
+
+    return stats
 
 
 def build(out_path: str = OUT) -> str:
@@ -1701,9 +1783,13 @@ def build(out_path: str = OUT) -> str:
             "this provider.]", italic=True)
     _p(doc, "{%p endif %}", size=1, space_after=0)
 
+    stats = _typeset(doc)
     _update_fields_on_open(doc)
     _modernise_settings(doc)
     doc.save(out_path)
+    import logging
+    logging.getLogger(__name__).info(
+        "typesetting: %s", ", ".join(f"{k}={v}" for k, v in stats.items()))
     return out_path
 
 
