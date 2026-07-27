@@ -103,6 +103,17 @@ def generate_report(
             campaign, readings, limits, out_path, site_map_path,
             site_photo_path, cover_photo_path, calibration_image_paths,
             license_image_paths, charts_dir)
+    # Redraw the value-prop icons before the freshness check. The template
+    # embeds them, so building it first would bake in whatever was already
+    # cached in assets/ and a change to how they are drawn would not appear
+    # until the report after next.
+    try:
+        from report.cover import build_icons as _build_icons
+        _build_icons(force=True)
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("icon rebuild failed",
+                                            exc_info=True)
     _ensure_templates_fresh()
     summary = build_campaign_summary(campaign, readings, limits)
 
@@ -155,11 +166,7 @@ def generate_report(
     # Cover hero band — drawn for this report so the project name is set at
     # the right size and the operator's own photo can be used as the backdrop.
     try:
-        from report.cover import build_hero, build_icons
-        # force: the icons are cached in assets/, so a change to how they are
-        # drawn would otherwise never reach a deployment that already has the
-        # old files sitting there
-        build_icons(force=True)
+        from report.cover import build_hero
         hero_dir = charts_dir or os.path.join(os.path.dirname(
             os.path.abspath(out_path)), "charts")
         os.makedirs(hero_dir, exist_ok=True)
