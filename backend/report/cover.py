@@ -187,12 +187,20 @@ def build_hero(project_name: str, out_path: str,
 
     _backdrop(ax, photo_path)
 
-    # light panel — its foot rides the same line as the top of the green
-    # strip, so no sliver of photograph shows between them
-    ax.add_patch(Polygon([(0, H), (W * 0.638, H), (W * 0.598, H * 0.615),
-                          (W * 0.430, H * 0.137), (0, H * 0.295)],
-                         closed=True, facecolor=PANEL, edgecolor="none",
-                         zorder=4))
+    # Legibility scrim instead of a light panel: the photograph now fills the
+    # whole band, so the type needs a guaranteed ground to sit on. A
+    # horizontal gradient from near-opaque navy at the left to clear at the
+    # right keeps the title readable over any image — bright sky, busy plant,
+    # anything — while leaving the right-hand side of the photograph open.
+    scrim = LinearSegmentedColormap.from_list("scrim", [
+        (0.055, 0.165, 0.325, 0.96),
+        (0.055, 0.165, 0.325, 0.92),
+        (0.055, 0.165, 0.325, 0.72),
+        (0.055, 0.165, 0.325, 0.28),
+        (0.055, 0.165, 0.325, 0.00),
+    ])
+    ax.imshow(np.linspace(0, 1, 512).reshape(1, -1),
+              extent=[0, W, 0, H], aspect="auto", cmap=scrim, zorder=4)
 
     t = H * 0.033
     ax.add_patch(Polygon([(0, DIAG_L * H + t), (W * 0.470, H * 0.089 + t),
@@ -213,22 +221,24 @@ def build_hero(project_name: str, out_path: str,
 
     eyebrow = "الهواء المحيط" if ar else "AMBIENT AIR QUALITY"
     ax.text(L, H * 0.876, _shape_ar(eyebrow) if ar else eyebrow,
-            color=GREEN_DARK, fontsize=17.5, va="center", zorder=9,
+            color="#8FD08A", fontsize=17.5, va="center", zorder=9,
             **_font(True, ar))
-    ax.plot([L, L + W * 0.030], [H * 0.822, H * 0.822], color=NAVY, lw=5,
+    ax.plot([L, L + W * 0.030], [H * 0.822, H * 0.822], color=GREEN, lw=5,
             solid_capstyle="butt", zorder=9)
 
     title = (["تقرير رصد", "جودة الهواء"] if ar
              else ["AIR QUALITY", "MONITORING", "REPORT"])
     for i, line in enumerate(title):
         ax.text(L, H * (0.745 - i * 0.104), _shape_ar(line) if ar else line,
-                color=NAVY, fontsize=46, va="center", zorder=9,
+                color=WHITE, fontsize=46, va="center", zorder=9,
                 **_font(True, ar))
 
-    tag = ([("رصد دقيق.", INK_SUB), ("نتائج موثوقة.", INK_SUB),
-            ("بيئة أكثر صحة.", GREEN_DARK)] if ar else
-           [("Accurate Monitoring.", INK_SUB), ("Reliable Results.", INK_SUB),
-            ("Healthier Environment.", GREEN_DARK)])
+    TAG_INK = "#DCE7F2"
+    TAG_GREEN = "#8FD08A"
+    tag = ([("رصد دقيق.", TAG_INK), ("نتائج موثوقة.", TAG_INK),
+            ("بيئة أكثر صحة.", TAG_GREEN)] if ar else
+           [("Accurate Monitoring.", TAG_INK), ("Reliable Results.", TAG_INK),
+            ("Healthier Environment.", TAG_GREEN)])
     for i, (line, colour) in enumerate(tag):
         ax.text(L, H * (0.447 - i * 0.050), _shape_ar(line) if ar else line,
                 color=colour, fontsize=19.5, va="center", zorder=9,
