@@ -370,7 +370,9 @@ def _header_footer(section):
         lp.add_run("[BSA]")
     mp = mid.paragraphs[0]
     mp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r1 = mp.add_run("Ambient Air Quality Monitoring Report for")
+    # trailing space: this run is followed directly by the project name,
+    # and without it the header reads "...Report forRed Sea"
+    r1 = mp.add_run("Ambient Air Quality Monitoring Report for ")
     r1.italic = True
     r1.bold = True
     r1.font.size = Pt(10)
@@ -933,7 +935,8 @@ def build(out_path: str = OUT) -> str:
     _header_footer(sec2)
 
     # --- Document control page
-    _p(doc, "Air quality Monitoring Report", size=16, bold=True, align="center",
+    _p(doc, "Ambient Air Quality Monitoring Report", size=16, bold=True,
+       align="center",
        space_after=2)
     _p(doc, "for", size=12, align="center", space_after=2)
     _p(doc, "{{ project_name }}", size=15, bold=True, align="center", space_after=10)

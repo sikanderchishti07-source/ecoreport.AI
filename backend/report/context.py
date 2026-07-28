@@ -6,6 +6,8 @@ are produced here, so the template stays purely structural.
 """
 from __future__ import annotations
 
+import re
+
 from typing import Dict, List, Optional
 
 from models import Campaign, CampaignSummary, PeriodEvaluation, PollutantEvaluation
@@ -74,6 +76,40 @@ def _daily_avg(p: PollutantEvaluation) -> Optional[float]:
     if e24 is not None and e24.mean_value is not None:
         return e24.mean_value
     return p.hourly_mean
+
+
+
+# Fields typed by an operator arrive with whatever spacing they were given. A
+# trailing space on the project name propagates into the running header, the
+# executive summary and every sentence that names the site — "monitoring at
+# Red Sea ." — so it is normalised once here rather than patched at each use.
+_TEXT_FIELDS = ("project_name", "client", "site_name", "provider",
+                "provider_short", "report_number", "revision",
+                "prepared_by", "project_supervision")
+_NAME_FIELDS = ("prepared_by", "project_supervision")
+
+
+def _tidy_name(value: str) -> str:
+    """'Eng.Sikander Chishti' -> 'Eng. Sikander Chishti'.
+
+    Only a full stop closing a word of two or more letters and immediately
+    followed by a letter is opened up, so initials such as "B.S.A" and
+    version-like strings are left alone.
+    """
+    return re.sub(r"(?<=[A-Za-z]{2})\.(?=[A-Za-z])", ". ", value)
+
+
+def _tidy(ctx: dict) -> dict:
+    """Collapse stray whitespace in operator-entered fields."""
+    for key in _TEXT_FIELDS:
+        v = ctx.get(key)
+        if isinstance(v, str):
+            ctx[key] = re.sub(r"\s+", " ", v).strip()
+    for key in _NAME_FIELDS:
+        v = ctx.get(key)
+        if isinstance(v, str) and v not in ("", "\u2014"):
+            ctx[key] = _tidy_name(v)
+    return ctx
 
 
 def build_context(campaign: Campaign, summary: CampaignSummary,
@@ -314,7 +350,7 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
                       "particulate monitor"},
     ]
 
-    return {
+    return _tidy({
         # identity / metadata
         "project_name": campaign.project_name,
         "client": campaign.client,
@@ -324,8 +360,8 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
         "provider_legal_name": "Bander Said Allehiany for Environmental Consultancy",
         "provider_tel": "00966114611939",
         "provider_fax": "00966114659739",
-        "provider_address": "Riyadh 11351 – Kingdom Saudi Arabia",
-        "provider_email": "Info@alemadonline.com",
+        "provider_address": "Riyadh 11351 – Kingdom of Saudi Arabia",
+        "provider_email": "info@alemadonline.com",
         "site_name": campaign.site_name,
         "latitude": f"{campaign.latitude:.6f}",
         "longitude": f"{campaign.longitude:.6f}",
@@ -398,4 +434,4 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
         "uncertainty_text": uncertainty_text(lang),
         "site_geometry_text": site_geometry_text(campaign, summary, lang) or "",
         "appendix1_text": appendix1,
-    }
+    })
