@@ -170,6 +170,10 @@ export const updateAttachment = (id, p) =>
   api.patch(`/attachments/${id}`, p).then((r) => r.data);
 export const deleteAttachment = (id) => api.delete(`/attachments/${id}`);
 export const attachmentFileUrl = (id) => `${API_BASE}/attachments/${id}/file`;
+export async function fetchAttachmentBlob(id) {
+  const res = await api.get(`/attachments/${id}/file`, { responseType: "blob" });
+  return res.data;
+}
 
 
 // Home dashboard and client portal — shipment 3
