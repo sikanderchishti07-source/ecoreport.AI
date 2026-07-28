@@ -8,9 +8,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  attachmentFileUrl, deleteAttachment, listAttachments, updateAttachment,
-  uploadAttachments,
+  deleteAttachment, listAttachments, updateAttachment, uploadAttachments,
 } from "@/lib/api";
+import AuthImage from "@/components/AuthImage";
 
 const SECTIONS = [
   { kind: "site_photo", title: "Field photos", icon: ImageIcon,
@@ -128,11 +128,12 @@ function Section({ campaignId, section, items, instruments, onChange }) {
           {items.map((a) => (
             <div key={a.id} className="border border-border rounded-sm p-2 space-y-1.5">
               <div className="aspect-[4/3] bg-secondary/50 rounded-sm overflow-hidden flex items-center justify-center">
-                <img
-                  src={attachmentFileUrl(a.id)}
+                {/* the file route needs a Bearer token, which a plain <img>
+                    cannot send — AuthImage fetches it and supplies a blob */}
+                <AuthImage
+                  attachmentId={a.id}
                   alt={a.filename}
                   className="object-cover w-full h-full"
-                  onError={(e) => { e.currentTarget.style.display = "none"; }}
                 />
               </div>
               <Input
