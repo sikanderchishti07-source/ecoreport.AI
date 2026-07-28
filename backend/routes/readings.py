@@ -5,7 +5,7 @@ import io
 import logging
 import re
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 from audit import audit
@@ -79,6 +79,80 @@ _KNOWN_IGNORED_TOKENS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Units carried in the file itself
+#
+# Analyser exports commonly put a units row directly under the parameter
+# names, and the units are not always the same across the row: CO in ppm
+# while every other gas is in ppb is a normal vendor layout. A single
+# campaign-level setting cannot describe that — declaring the file "ppb"
+# would divide CO by a thousand, and "ppm" would multiply everything else by
+# a thousand, in both cases silently and plausibly.
+#
+# So the units row, where present, is read and applied per column. The
+# campaign setting remains the fallback for columns the file says nothing
+# about, and for files with no units row at all.
+# ---------------------------------------------------------------------------
+_GAS_UNIT_TOKENS = {
+    "ppb": "ppb",
+    "ppm": "ppm",
+    "ug/m3": "ugm3", "µg/m3": "ugm3", "μg/m3": "ugm3",
+    "ugm3": "ugm3", "µgm3": "ugm3",
+    "mg/m3": "mgm3",
+}
+
+# units that identify a units row without themselves naming a gas scale
+_OTHER_UNIT_TOKENS = {
+    "c", "°c", "degc", "f", "°f", "k",
+    "mbar", "hpa", "kpa", "pa", "bar",
+    "%", "pct", "rh%",
+    "deg", "degree", "degrees", "°",
+    "m/s", "ms-1", "knots", "kt",
+    "mm", "w/m2", "w/m²",
+}
+
+
+def _norm_unit(value) -> str:
+    """Lower-case, strip spaces, and fold the common superscript/µ variants."""
+    if value is None:
+        return ""
+    t = str(value).strip().lower()
+    t = t.replace("\u00b3", "3").replace("\u03bc", "\u00b5")
+    return re.sub(r"\s+", "", t)
+
+
+def _gas_unit(value) -> Optional[str]:
+    """'ppb' -> 'ppb', 'µg/m3' -> 'ugm3', anything else -> None."""
+    return _GAS_UNIT_TOKENS.get(_norm_unit(value))
+
+
+def _row_looks_like_units(row: pd.Series) -> bool:
+    """True when a row is a units banner rather than data.
+
+    Recognised by content, not position: three or more cells that read as a
+    unit, and no cell that reads as a number. A data row fails the second
+    test immediately, so a real measurement can never be mistaken for a
+    header.
+    """
+    hits = 0
+    for v in row:
+        if pd.isna(v):
+            continue
+        t = _norm_unit(v)
+        if not t:
+            continue
+        try:                              # a number is data, not a unit
+            float(t)
+            return False
+        except ValueError:
+            pass
+        if t in _GAS_UNIT_TOKENS or t in _OTHER_UNIT_TOKENS:
+            hits += 1
+        elif t in ("date", "time", "datetime", "timestamp"):
+            hits += 1
+    return hits >= 3
+
+
 def _norm_key(col) -> str:
     return re.sub(r"\s+", " ", str(col).strip().lower())
 
@@ -117,34 +191,47 @@ def _row_looks_like_sublabel(row: pd.Series) -> bool:
     return _norm_key(non_null[0]) in {"date", "time", "timestamp", "datetime"}
 
 
-def _promote_header_if_needed(df: pd.DataFrame) -> pd.DataFrame:
+def _promote_header_if_needed(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
     """Vendor exports often merge the top row across all columns (yielding
     'Unnamed: 0' / 'AQMS' repeated headers). In that case the real headers
-    are on the first data row, and the second data row is a 'Date' sub-label.
-    Detect and rewrite so downstream code sees a normal DataFrame."""
+    are on the first data row, and the row below it is either a lone 'Date'
+    sub-label or a full units banner.
+
+    Returns the rewritten frame and, where one was found, the units banner as
+    {column name: unit text}.
+    """
+    units: Dict[str, str] = {}
     if not _looks_like_generic_headers(list(df.columns)):
-        return df
+        return df, units
     if df.empty:
-        return df
+        return df, units
     first = df.iloc[0]
     if not _row_looks_like_parameter_names(first):
-        return df
+        return df, units
 
     new_cols = [str(v).strip() if not pd.isna(v) else f"col_{i}"
                 for i, v in enumerate(first)]
     df2 = df.iloc[1:].copy()
     df2.columns = new_cols
 
-    # If the next row is a "Date" sub-label, drop it as well.
-    if not df2.empty and _row_looks_like_sublabel(df2.iloc[0]):
-        df2 = df2.iloc[1:]
+    # Drop the row beneath the headers when it is a label or a units banner,
+    # capturing the units on the way past.
+    if not df2.empty:
+        nxt = df2.iloc[0]
+        if _row_looks_like_units(nxt):
+            units = {col: str(val).strip()
+                     for col, val in zip(new_cols, nxt) if not pd.isna(val)}
+            df2 = df2.iloc[1:]
+        elif _row_looks_like_sublabel(nxt):
+            df2 = df2.iloc[1:]
 
     df2.reset_index(drop=True, inplace=True)
-    return df2
+    return df2, units
 
 
-def _normalize_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[str]]:
-    """Rename columns to schema names. Returns (df, recognized, ignored)."""
+def _normalize_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[str], Dict[str, str]]:
+    """Rename columns to schema names.
+    Returns (df, recognized, ignored, original->schema map)."""
     rename_map: dict = {}
     recognized: List[str] = []
     ignored: List[str] = []
@@ -159,7 +246,7 @@ def _normalize_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[
     df2 = df.rename(columns=rename_map)
     # De-dup recognized in case aliases collide (e.g. Temp + AMBTEMP both map)
     recognized = list(dict.fromkeys(recognized))
-    return df2, recognized, ignored
+    return df2, recognized, ignored, rename_map
 
 
 def _detect_timestamp_by_content(df: pd.DataFrame) -> Optional[str]:
@@ -253,8 +340,15 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     df, file_type = await _load_dataframe(file)
-    df = _promote_header_if_needed(df)
-    df, recognized, ignored = _normalize_columns(df)
+    df, raw_units = _promote_header_if_needed(df)
+    df, recognized, ignored, rename_map = _normalize_columns(df)
+
+    # Units banner from the file, keyed by schema field name.
+    file_units: Dict[str, str] = {}
+    for original, unit in raw_units.items():
+        field = rename_map.get(original)
+        if field:
+            file_units[field] = unit
 
     # Fallback: if 'timestamp' is missing but one of the unrecognized columns
     # holds datetime-looking values, adopt it as the timestamp column.
@@ -292,15 +386,28 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
             errors.append(
                 "Note: timestamps were read as day/month/year (DD/MM/YYYY).")
 
-    # Convert gas columns to µg/m³ when the file is in ppb/ppm, so everything
-    # downstream (limits, compliance, charts) works in one consistent unit.
-    if gas_units != "ugm3":
-        for gas in GAS_FIELDS:
-            if gas in df.columns:
-                df[gas] = pd.to_numeric(df[gas], errors="coerce").apply(
-                    lambda v: to_ugm3(v, gas, gas_units) if pd.notna(v) else v)
-        errors.append(f"Gas values converted from {gas_units} to µg/m³ "
-                      f"(25 °C, 101.3 kPa).")
+    # Convert gases to µg/m³. The file's own units row wins column by column;
+    # the campaign setting covers anything the file did not label. Mixed rows
+    # (CO in ppm, the rest in ppb) are therefore handled correctly, which one
+    # campaign-wide setting cannot do.
+    converted_notes: List[str] = []
+    for gas in GAS_FIELDS:
+        if gas not in df.columns:
+            continue
+        unit = _gas_unit(file_units.get(gas)) or gas_units
+        if unit == "mgm3":
+            df[gas] = pd.to_numeric(df[gas], errors="coerce") * 1000.0
+            converted_notes.append(f"{gas} mg/m³→µg/m³")
+            continue
+        if unit == "ugm3":
+            continue
+        df[gas] = pd.to_numeric(df[gas], errors="coerce").apply(
+            lambda v, u=unit, g=gas: to_ugm3(v, g, u) if pd.notna(v) else v)
+        converted_notes.append(f"{gas} {unit}")
+    if converted_notes:
+        src = "the file's units row" if file_units else "the campaign setting"
+        errors.append(f"Gas values converted to µg/m³ (25 °C, 101.3 kPa) using "
+                      f"{src}: " + ", ".join(converted_notes) + ".")
 
     for idx, row in df.iterrows():
         try:
@@ -373,7 +480,7 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
             col = col[col > 0]
             if len(col):
                 medians[gas] = float(col.median())
-    warn = check_units_plausible(medians, gas_units)
+    warn = check_units_plausible(medians, "ugm3" if file_units else gas_units)
     if warn:
         errors.insert(0, warn)
 
