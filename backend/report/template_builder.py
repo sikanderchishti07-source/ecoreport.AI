@@ -52,7 +52,8 @@ NAVY_FILL = "0F3D6E"
 BLUE_FILL = "1F6FB2"
 SKY_FILL = "E8F1F9"
 GREEN_ACCENT = RGBColor(0x2F, 0x7D, 0x32)
-ZEBRA_FILL = "F4F7FA"        # very light blue-grey for alternating table rows
+ZEBRA_FILL = "F4F7FA"
+HERO_EDGE_FILL = "163259"    # matches the scrim at the hero's left edge        # very light blue-grey for alternating table rows
 OK_GREEN = RGBColor(0x1E, 0x7D, 0x4F)     # compliant
 WARN_AMBER = RGBColor(0xB0, 0x6A, 0x00)   # information only
 BAD_RED = RGBColor(0xB3, 0x1F, 0x1F)      # exceedance
@@ -748,8 +749,15 @@ def build(out_path: str = OUT) -> str:
     # The cover section already has zero margins, so the grid spans the full
     # 21 cm page.
     # ------------------------------------------------------------------
-    COLS = 12
-    COL_W = Cm(21.0 / COLS)
+    # Fourteen columns: a narrow margin column at each edge, and twelve
+    # content columns between them. Twelve divides by 2, 3, 4 and 6, so the
+    # value propositions, the card and the footer all land on the same lines;
+    # the margin columns keep those bands off the paper edge while the hero
+    # and the footer band still bleed across the full page.
+    COLS = 14
+    MARGIN_W, CONTENT_W = 0.9, 19.2 / 12
+    COL_WIDTHS = [MARGIN_W] + [CONTENT_W] * 12 + [MARGIN_W]
+    C0, C1 = 1, 12                     # first and last content column
     ROW_MASTHEAD, ROW_HERO, ROW_ICON, ROW_PROP = 0, 1, 2, 3
     ROW_CARD = 4
     ROW_FOOT_NAME, ROW_FOOT_LINKS = 9, 10
@@ -757,8 +765,8 @@ def build(out_path: str = OUT) -> str:
     cov = doc.add_table(rows=11, cols=COLS)
     _full_width(cov, COLS)
     for row in cov.rows:
-        for c in row.cells:
-            c.width = COL_W
+        for i, c in enumerate(row.cells):
+            c.width = Cm(COL_WIDTHS[i])
 
     def _span(r, a, b):
         """Merge columns a..b of row r and return the resulting cell."""
@@ -794,7 +802,7 @@ def build(out_path: str = OUT) -> str:
         (f, cap) for f, cap in ACCREDITATION_BADGES
         if os.path.exists(os.path.join(ASSETS, f))]
 
-    logo_span = 3 if (badges or os.path.exists(strip)) else COLS - 1
+    logo_span = 4 if (badges or os.path.exists(strip)) else C1
     hl = _span(ROW_MASTHEAD, 0, logo_span)
     _pad(hl, 0.55, 0.4, 1.4, 0.2)
     try:
@@ -842,9 +850,17 @@ def build(out_path: str = OUT) -> str:
     # --- row 1: hero band, full bleed --------------------------------------
     hero_c = _span(ROW_HERO, 0, COLS - 1)
     _pad(hero_c, 0, 0, 0, 0)
+    # Cell shading reaches the paper edge; an inline image does not — the
+    # renderer insets the text flow by about 3 mm. Filling the cell with the
+    # colour of the band's own left edge closes that strip, so the hero reads
+    # as full bleed exactly like the footer below it.
+    _fill(hero_c, HERO_EDGE_FILL)
     hp = hero_c.paragraphs[0]
     hp.alignment = WD_ALIGN_PARAGRAPH.CENTER
     hp.paragraph_format.space_after = Pt(0)
+    # no indent of any kind, so the band bleeds evenly to both edges
+    hp.paragraph_format.left_indent = Cm(0)
+    hp.paragraph_format.right_indent = Cm(0)
     hp.add_run("{{ cover_hero }}")
 
     # --- rows 2-3: value propositions, three columns of the grid each ------
@@ -855,13 +871,13 @@ def build(out_path: str = OUT) -> str:
         ("sustainable", "SUSTAINABLE", "Supporting a cleaner\nand healthier future"),
     ]
     for i, (icon, title, blurb) in enumerate(props):
-        a, b = i * 3, i * 3 + 2
+        a, b = C0 + i * 3, C0 + i * 3 + 2
         top = _span(ROW_ICON, a, b)
         bot = _span(ROW_PROP, a, b)
-        left = 1.4 if i == 0 else 0.15
-        right = 1.4 if i == len(props) - 1 else 0.15
-        _pad(top, 0.30, 0.06, left, right)
-        _pad(bot, 0.0, 0.26, left, right)
+        # the grid's margin columns already hold the band off the page edge,
+        # so the cells themselves only need even internal padding
+        _pad(top, 0.30, 0.06, 0.2, 0.2)
+        _pad(bot, 0.0, 0.26, 0.2, 0.2)
         if i:                       # no rule to the left of the first column
             _left_rule(top)
             _left_rule(bot)
@@ -886,10 +902,10 @@ def build(out_path: str = OUT) -> str:
              ("REVISION / DATE", "{{ revision }}   |   {{ reporting_date }}")]
     for i, (k, v) in enumerate(rows_):
         r = ROW_CARD + i
-        kc = _span(r, 0, 3)      # a third of the grid: fits MONITORING PERIOD
-        vc = _span(r, 4, COLS - 1)
-        _pad(kc, 0.14, 0.14, 1.5, 0.2)
-        _pad(vc, 0.14, 0.14, 0.45, 1.5)
+        kc = _span(r, C0, C0 + 3)     # four columns: fits MONITORING PERIOD
+        vc = _span(r, C0 + 4, C1)
+        _pad(kc, 0.16, 0.16, 0.35, 0.2)
+        _pad(vc, 0.16, 0.16, 0.4, 0.3)
         _fill(kc, ZEBRA_FILL)
         _hairline(kc)
         _hairline(vc)
@@ -904,25 +920,25 @@ def build(out_path: str = OUT) -> str:
     # --- rows 10-11: navy contact footer ------------------------------------
     fn = _span(ROW_FOOT_NAME, 0, COLS - 1)
     _fill(fn, NAVY_FILL)
-    _pad(fn, 0.34, 0.10, 1.5, 1.5)
+    _pad(fn, 0.34, 0.10, 1.25, 1.25)
     _txt(fn, "{{ provider_legal_name }}", 10.5, bold=True, colour=WHITE,
          first=True)
 
     # uneven spans: the address is the longest item and was wrapping to a
     # second line once the outer columns were inset for print safety
-    items = [("{{ provider_website }}", 0, 2),
-             ("{{ provider_email }}", 3, 5),
-             ("{{ provider_tel }}", 6, 7),
-             ("{{ provider_address }}", 8, 11)]
+    items = [("{{ provider_website }}", C0, C0 + 2),
+             ("{{ provider_email }}", C0 + 3, C0 + 5),
+             ("{{ provider_tel }}", C0 + 6, C0 + 7),
+             ("{{ provider_address }}", C0 + 8, C1)]
+    for edge in (0, COLS - 1):          # keep the navy bleeding to the edge
+        _fill(cov.cell(ROW_FOOT_LINKS, edge), NAVY_FILL)
     for i, (item, a, b) in enumerate(items):
         c = _span(ROW_FOOT_LINKS, a, b)
         _fill(c, NAVY_FILL)
         # the outer columns are inset to the same safe margin as the rest of
         # the cover: on a full-bleed page the last contact item was ending
         # 2.6 mm from the trim edge, close enough to be cut off in print
-        _pad(c, 0.04, 0.34,
-             1.5 if i == 0 else 0.15,
-             1.5 if i == len(items) - 1 else 0.15)
+        _pad(c, 0.04, 0.34, 0.15, 0.15)
         _txt(c, item, 8.5, colour=RGBColor(0xC5, 0xDA, 0xEC),
              align="center", first=True)
 

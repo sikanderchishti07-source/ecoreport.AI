@@ -174,7 +174,9 @@ def generate_report(
         build_hero(campaign.project_name, hero_png,
                    photo_path=cover_photo_path, lang=lang,
                    site_line=campaign.site_name)
-        ctx["cover_hero"] = InlineImage(tpl, hero_png, width=Mm(212))
+        # exactly the page width: at 212 mm the band was wider than the
+        # 210 mm page and sat 3 mm off-centre against the footer below it
+        ctx["cover_hero"] = InlineImage(tpl, hero_png, width=Mm(210))
     except Exception:  # noqa: BLE001
         import logging
         logging.getLogger(__name__).warning("cover hero failed", exc_info=True)
