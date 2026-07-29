@@ -147,84 +147,240 @@ def wind_rose_chart(
     readings: List[Reading],
     bins: List[WindClassBin],
     out_path: str,
+    project_name: str = "",
+    station_label: str = "AAQMS",
+    window_text: str = "",
+    window_start=None,
+    window_end=None,
 ) -> str:
-    """Polar stacked wind rose over the campaign's configurable speed classes.
-    Calm class is excluded from the petals (shown in caption tables instead),
-    consistent with WRPLOT convention used in the gold-standard report."""
+    """Wind rose drawn as a technical plate.
+
+    Laid out the way a survey plot is: the rose itself, a stacked bar showing
+    how the whole survey divides between speed classes, and a panel carrying
+    the figures a reviewer checks — period, record count, mean and maximum
+    speed, prevailing direction, calms.
+
+    Calm hours have no direction, so they cannot be a petal. They are shown
+    on a disc at the centre instead, which also accounts for the hollow
+    middle rather than leaving it looking like a drawing artefact.
+
+    Colours run across the campaign's own speed classes, so a campaign with
+    two bands and one with six both come out legible.
+    """
+    from matplotlib.colors import LinearSegmentedColormap
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Rectangle
+
+    RAMP = LinearSegmentedColormap.from_list(
+        "spd", ["#BFDCEF", "#5BA3D9", "#1F8FBF", "#17A398", "#3FAE62"])
+    RULE = "#D6DFE8"
+    RED = "#C0392B"
+
     pairs = []
     for r in readings:
-        ws = _effective(r, "WindSpeed")
-        wd = _effective(r, "WindDirection")
-        if ws is not None and wd is not None:
-            pairs.append((ws, wd))
+        sp = _effective(r, "WindSpeed")
+        di = _effective(r, "WindDirection")
+        if sp is not None and di is not None:
+            pairs.append((sp, di))
     total = len(pairs)
 
-    non_calm_bins = [b for b in bins if b.label.strip().lower() not in ("calm", "calms")]
-    counts = {b.label: [0] * 16 for b in non_calm_bins}
-    for ws, wd in pairs:
-        cls = _speed_class(ws, bins)
-        if cls is None or cls not in counts:
-            continue
-        idx = COMPASS_16.index(_compass_bin(wd))
-        counts[cls][idx] += 1
+    non_calm = [b for b in bins
+                if b.label.strip().lower() not in ("calm", "calms")]
+    counts = {b.label: [0] * 16 for b in non_calm}
+    calm = 0
+    for sp, di in pairs:
+        cls = _speed_class(sp, bins)
+        if cls in counts:
+            counts[cls][COMPASS_16.index(_compass_bin(di))] += 1
+        else:
+            calm += 1
 
-    theta = np.deg2rad(np.arange(0, 360, 22.5))
-    width = np.deg2rad(20.5)
+    freqs, labels, class_tot = [], [], []
+    for b in non_calm:
+        c = np.asarray(counts[b.label], dtype=float)
+        freqs.append(c / total * 100.0 if total else np.zeros(16))
+        labels.append(b.label)
+        class_tot.append(int(c.sum()))
+    if not freqs:
+        freqs, labels, class_tot = [np.zeros(16)], ["\u2014"], [0]
+    colours = [RAMP(i / max(len(freqs) - 1, 1)) for i in range(len(freqs))]
+
+    speeds = [sp for sp, _ in pairs]
+    mean_sp = float(np.mean(speeds)) if speeds else 0.0
+    max_sp = float(np.max(speeds)) if speeds else 0.0
+    calm_pct = (calm / total * 100.0) if total else 0.0
+
     T.apply_theme()
-    fig = plt.figure(figsize=(T.ROSE_W, T.ROSE_W * 1.08))
-    ax = fig.add_axes([0.10, 0.14, 0.80, 0.72], projection="polar")
+    fig = plt.figure(figsize=(T.FIG_W, T.FIG_W * 0.667), dpi=T.DPI)
+    fig.patch.set_facecolor("white")
+
+    fig.patches.append(Rectangle((0.012, 0.015), 0.976, 0.970, fill=False,
+                                 edgecolor=RULE, linewidth=1.2,
+                                 transform=fig.transFigure, zorder=1))
+    fig.patches.append(Rectangle((0.012, 0.897), 0.976, 0.088,
+                                 facecolor=T.NAVY, edgecolor="none",
+                                 transform=fig.transFigure, zorder=2))
+    fig.text(0.030, 0.952, "WIND ROSE", color="white", fontsize=13,
+             fontweight="bold", va="center")
+    fig.text(0.030, 0.921,
+             "Frequency of counts by wind direction (blowing from)",
+             color="#C3D6E8", fontsize=8.0, va="center")
+    if project_name:
+        fig.text(0.970, 0.952, project_name.upper()[:34], color="white",
+                 fontsize=9.5, fontweight="bold", ha="right", va="center")
+    sub = " \u00b7 ".join(x for x in (station_label, window_text) if x)
+    if sub:
+        fig.text(0.970, 0.921, sub[:52], color="#C3D6E8", fontsize=8.0,
+                 ha="right", va="center")
+
+    # ---- rose --------------------------------------------------------
+    ax = fig.add_axes([0.045, 0.215, 0.535, 0.655], projection="polar")
+    ax.set_facecolor("white")
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
-    ax.set_facecolor("#FCFDFE")
-
-    freqs = []
-    for b in non_calm_bins:
-        freqs.append(np.array(counts[b.label]) / total * 100.0 if total
-                     else np.zeros(16))
-    stacked = np.sum(freqs, axis=0) if freqs else np.zeros(16)
-    hole = (stacked.max() * 0.16) if stacked.max() else 0.2
+    th = np.deg2rad(np.arange(0, 360, 22.5))
+    stacked = np.sum(freqs, axis=0)
+    top = max(float(stacked.max()), 1.0)
+    hole = top * 0.16
+    ax.set_ylim(0, top * 1.10 + hole)
 
     bottom = np.full(16, hole)
-    for i, b in enumerate(non_calm_bins):
-        ax.bar(theta, freqs[i], width=width, bottom=bottom,
-               color=T.ROSE_SCALE[i % len(T.ROSE_SCALE)],
-               edgecolor="white", linewidth=1.15, zorder=3,
-               label=f"{b.label} m/s")
-        bottom += freqs[i]
+    for i, f in enumerate(freqs):
+        ax.bar(th, f, width=np.deg2rad(19.0), bottom=bottom, color=colours[i],
+               edgecolor="white", linewidth=1.0, zorder=4)
+        bottom += f
 
-    rmax = max(bottom.max() * 1.12, hole * 2)
-    ax.set_ylim(0, rmax)
-    ax.set_xticks(theta)
-    ax.set_xticklabels(COMPASS_16, fontsize=8.4, color=T.INK)
-    for lbl, ang in zip(ax.get_xticklabels(), np.arange(0, 360, 22.5)):
-        if ang % 90 == 0:
-            lbl.set_fontweight("bold")
-            lbl.set_fontsize(10)
-    rings = np.linspace(hole + (rmax - hole) * 0.33, rmax * 0.96, 3)
-    ax.set_yticks(rings)
-    ax.set_yticklabels([f"{v - hole:.0f}%" for v in rings], fontsize=7.4,
-                       color=T.FAINT)
-    ax.set_rlabel_position(112.5)
-    ax.grid(color="#E6ECF2", linewidth=0.9)
-    ax.spines["polar"].set_color(T.AXIS)
+    rings = np.linspace(top / 5, top, 5)
+    ax.set_yticks(rings + hole)
+    ax.set_yticklabels([f"{r:.0f}%" for r in rings], fontsize=7.0,
+                       color=T.MUTED)
+    ax.set_rlabel_position(58)
+    ax.set_xticks(th)
+    ax.set_xticklabels([])
+    ax.grid(color=RULE, linewidth=0.8, linestyle=(0, (2, 3)))
+    ax.spines["polar"].set_color(RULE)
 
-    if total and stacked.max():
-        prevailing = COMPASS_16[int(np.argmax(stacked))]
-        ax.text(0, 0, f"{prevailing}\nprevailing", ha="center", va="center",
-                fontsize=8.6, fontweight="bold", color=T.NAVY, zorder=6,
-                linespacing=1.35)
+    ax.scatter([0], [0], s=1150, facecolor=T.NAVY, edgecolor="white",
+               linewidth=1.6, zorder=6)
+    ax.text(0, 0, f"{calm_pct:.0f}%\ncalm", ha="center", va="center",
+            fontsize=7.4, color="white", fontweight="bold", zorder=7,
+            linespacing=1.2)
 
-    fig.text(0.10, 0.955, "Wind Rose", fontsize=13, fontweight="bold",
-             color=T.NAVY, va="top")
-    fig.text(0.10, 0.915, f"Frequency of counts by direction · "
-             f"{total} valid hourly records", fontsize=8.4, color=T.MUTED,
-             va="top")
-    ax.legend(title="Wind speed (m/s)", loc="upper center",
-              bbox_to_anchor=(0.5, -0.06),
-              ncol=min(len(non_calm_bins), 4), fontsize=8,
-              title_fontsize=8.4, frameon=False)
-    fig.text(0.10, 0.028, T.SOURCE_NOTE, fontsize=6.8, color=T.FAINT)
-    return T.save(fig, out_path)
+    prevailing = COMPASS_16[int(np.argmax(stacked))] if stacked.max() else "\u2014"
+    if stacked.max():
+        pi = int(np.argmax(stacked))
+        ax.annotate("", xy=(th[pi], top * 1.02 + hole),
+                    xytext=(th[pi], top * 1.10 + hole),
+                    arrowprops=dict(arrowstyle="-|>", color=RED, lw=2.2),
+                    zorder=8)
+
+    for lbl, ang in (("N", 0), ("NE", 45), ("E", 90), ("SE", 135),
+                     ("S", 180), ("SW", 225), ("W", 270), ("NW", 315)):
+        big = lbl in ("N", "E", "S", "W")
+        ax.text(np.deg2rad(ang), top * 1.24 + hole, lbl, ha="center",
+                va="center", fontsize=9.5 if big else 7.4,
+                color=T.INK if big else T.MUTED,
+                fontweight="bold" if big else "normal")
+
+    # ---- distribution bar --------------------------------------------
+    bx, bw, by, bh = 0.055, 0.520, 0.105, 0.042
+    fig.text(bx, by + bh + 0.028, "SPEED CLASS DISTRIBUTION", fontsize=7.0,
+             color=T.NAVY, fontweight="bold", va="center")
+    fig.text(bx + bw, by + bh + 0.028, "m/s", fontsize=7.0, color=T.MUTED,
+             ha="right", va="center")
+    segs = [(calm / total if total else 0, "white", "Calm")]
+    segs += [(class_tot[i] / total if total else 0, colours[i], labels[i])
+             for i in range(len(freqs))]
+    x = bx
+    for frac, c, lab in segs:
+        if frac <= 0:
+            continue
+        w = bw * frac
+        fig.patches.append(Rectangle((x, by), w, bh, facecolor=c,
+                                     edgecolor="white", linewidth=1.0,
+                                     transform=fig.transFigure, zorder=4))
+        if w > 0.035:
+            fig.text(x + w / 2, by + bh / 2, f"{frac * 100:.0f}%",
+                     fontsize=8.0,
+                     color=T.INK if c == "white" else "white",
+                     ha="center", va="center", fontweight="bold", zorder=5)
+        x += w
+    x = bx
+    for frac, c, lab in segs:
+        if frac <= 0:
+            continue
+        w = bw * frac
+        if w > 0.055:
+            fig.text(x + w / 2, by - 0.026, lab, fontsize=6.8, color=T.MUTED,
+                     ha="center", va="center")
+        x += w
+
+    # ---- panel --------------------------------------------------------
+    px, pw = 0.628, 0.332
+
+    def _rule(y, w=0.9, c=RULE):
+        fig.add_artist(Line2D([px, px + pw], [y, y], color=c, lw=w))
+
+    def _head(y, t):
+        fig.text(px, y, t, fontsize=7.0, color=T.NAVY, fontweight="bold",
+                 va="center")
+        _rule(y - 0.020, 1.0, T.NAVY)
+
+    def _row(y, k, v):
+        fig.text(px, y, k, fontsize=8.0, color=T.MUTED, va="center")
+        fig.text(px + pw, y, v, fontsize=8.0, color=T.INK, ha="right",
+                 va="center", fontweight="bold")
+
+    fmt = "%d %b %Y  %H:%M"
+    y = 0.828
+    _head(y, "SURVEY")
+    y -= 0.058
+    for k, v in (("Start", window_start.strftime(fmt) if window_start else "\u2014"),
+                 ("End", window_end.strftime(fmt) if window_end else "\u2014"),
+                 ("Valid records", f"{total} hours")):
+        _row(y, k, v)
+        y -= 0.048
+    y -= 0.010
+    _rule(y)
+    y -= 0.040
+
+    _head(y, "WIND CHARACTER")
+    y -= 0.058
+    for k, v in (("Mean speed", f"{mean_sp:.2f} m/s"),
+                 ("Maximum", f"{max_sp:.2f} m/s"),
+                 ("Prevailing", prevailing),
+                 ("Calms", f"{calm_pct:.2f}%")):
+        _row(y, k, v)
+        y -= 0.048
+    y -= 0.010
+    _rule(y)
+    y -= 0.040
+
+    _head(y, "SPEED CLASSES")
+    y -= 0.058
+    for i, lab in enumerate(labels):
+        fig.patches.append(Rectangle((px, y - 0.013), 0.026, 0.026,
+                                     facecolor=colours[i], edgecolor=T.INK,
+                                     linewidth=0.5, transform=fig.transFigure,
+                                     zorder=5))
+        fig.text(px + 0.038, y, f"{lab} m/s", fontsize=8.0, color=T.INK,
+                 va="center")
+        fig.text(px + pw, y,
+                 f"{(class_tot[i] / total * 100) if total else 0:.1f}%",
+                 fontsize=8.0, color=T.MUTED, ha="right", va="center")
+        y -= 0.048
+    fig.patches.append(Rectangle((px, y - 0.013), 0.026, 0.026,
+                                 facecolor="white", edgecolor=T.INK,
+                                 linewidth=0.5, transform=fig.transFigure,
+                                 zorder=5))
+    fig.text(px + 0.038, y, "Calms", fontsize=8.0, color=T.INK, va="center")
+    fig.text(px + pw, y, f"{calm_pct:.1f}%", fontsize=8.0, color=T.MUTED,
+             ha="right", va="center")
+
+    fig.text(px, 0.045, T.SOURCE_NOTE, fontsize=6.6, color=T.FAINT)
+    fig.savefig(out_path, dpi=T.DPI, facecolor="white")
+    plt.close(fig)
+    return out_path
 
 
 def wind_class_frequency_chart(
@@ -260,6 +416,9 @@ def generate_all_charts(
     out_dir: str,
     window_start=None,
     class_frequency_pct: Optional[Dict[str, float]] = None,
+    window_end=None,
+    project_name: str = "",
+    window_text: str = "",
 ) -> Dict[str, str]:
     """Generate every figure of the gold-standard report. Returns
     {figure_key: file_path}. `limits` maps (pollutant, period) -> µg/m³."""
@@ -330,7 +489,10 @@ def generate_all_charts(
     figs["ws"] = timeseries_chart(
         readings, "WindSpeed", p("fig_ws.png"),
         "Hourly Wind Speed (m/s)", "Wind Speed")
-    figs["wind_rose"] = wind_rose_chart(readings, bins, p("fig_windrose.png"))
+    figs["wind_rose"] = wind_rose_chart(
+        readings, bins, p("fig_windrose.png"),
+        project_name=project_name, window_start=window_start,
+        window_end=window_end, window_text=window_text)
     if class_frequency_pct is not None:
         figs["wind_class_freq"] = wind_class_frequency_chart(
             class_frequency_pct, p("fig_windclassfreq.png"))

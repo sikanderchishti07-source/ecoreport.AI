@@ -133,6 +133,10 @@ def generate_report(
         win_readings, campaign.wind_rose_bins, limits_map, charts_dir,
         window_start=w_start,
         class_frequency_pct=summary.wind_rose.class_frequency_pct,
+        # context for the wind rose plate's header and survey panel
+        window_end=w_end,
+        project_name=campaign.project_name or "",
+        window_text=f"{w_start.strftime('%d')}\u2013{w_end.strftime('%d %b %Y')}",
     )
 
     template_path = TEMPLATE_PATH_AR if lang == "ar" else TEMPLATE_PATH
