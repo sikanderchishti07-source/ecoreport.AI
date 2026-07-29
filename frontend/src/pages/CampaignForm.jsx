@@ -20,9 +20,9 @@ const defaults = {
   latitude: "",
   longitude: "",
   inlet_height_m: 5.0,
-    gas_units: "ugm3",
-    facility_latitude: "",
-    facility_longitude: "",
+  gas_units: "ugm3",
+  facility_latitude: "",
+  facility_longitude: "",
   monitoring_start: "",
   monitoring_end: "",
   prepared_by: "",
@@ -46,12 +46,108 @@ function toIsoDate(value) {
   return new Date(value).toISOString().slice(0, 10);
 }
 
+/**
+ * Fold Arabic script into the ASCII the parser expects.
+ *
+ * A camera set to Arabic stamps the position as \u0662\u0664\u066B\u0665\u0665\u0663\u0664 \u0634\u0645\u0627\u0644 rather than
+ * 24.5534N — different digits, a different decimal mark, and the compass
+ * point written as a word. Normalising here means one parser handles a
+ * photograph taken on an Arabic handset and an English one alike.
+ */
+function normaliseArabic(text) {
+  let out = "";
+  for (const ch of text) {
+    const c = ch.codePointAt(0);
+    if (c >= 0x0660 && c <= 0x0669) {        // Arabic-Indic digits
+      out += String(c - 0x0660);
+    } else if (c >= 0x06f0 && c <= 0x06f9) { // Extended Arabic-Indic digits
+      out += String(c - 0x06f0);
+    } else if (c === 0x066b) {               // Arabic decimal separator
+      out += ".";
+    } else if (c === 0x066c) {               // Arabic thousands separator
+      // dropped
+    } else if (c === 0x060c) {               // Arabic comma
+      out += ",";
+    } else if (c === 0x200e || c === 0x200f || c === 0x061c) {
+      // bidi marks carry no meaning here
+    } else {
+      out += ch;
+    }
+  }
+  // compass points written as words; longest first so no prefix is clipped
+  return out
+    .replace(/\u0634\u0645\u0627\u0644\u064a|\u0634\u0645\u0627\u0644/g, "N")   // shamal - north
+    .replace(/\u062c\u0646\u0648\u0628\u064a|\u062c\u0646\u0648\u0628/g, "S")   // janub - south
+    .replace(/\u0634\u0631\u0642\u064a|\u0634\u0631\u0642/g, "E")                 // sharq - east
+    .replace(/\u063a\u0631\u0628\u064a|\u063a\u0631\u0628/g, "W");                // gharb - west
+}
+
+/**
+ * Read a full coordinate pair out of one string.
+ *
+ * Field photographs carry the position stamped across the image as a single
+ * line — "24.5534N 39.6027E". Split across two inputs that has to be read,
+ * divided and typed twice, which is where a leading digit goes missing. Read
+ * as one string it is entered the way it is written.
+ *
+ * Accepts the forms that actually turn up:
+ *   24.5534N 39.6027E      24.5534, 39.6027
+ *   24.5534 N, 39.6027 E   N 24.5534 E 39.6027
+ *   24.5534°N 39.6027°E
+ * Arabic digits and compass words are folded first, so a photograph taken
+ * on an Arabic handset reads the same as an English one.
+ * Hemisphere letters, where present, decide which number is which, so a pair
+ * written longitude-first is still read correctly.
+ */
+export function parseCoordinates(text) {
+  if (!text || !text.trim()) return null;
+  const cleaned = normaliseArabic(text)
+    .replace(/[°º]/g, " ")
+    .replace(/\u2212/g, "-");
+
+  // a number with an optional hemisphere letter on either side of it
+  const re = /([NSEWnsew])?\s*(-?\d{1,3}(?:\.\d+)?)\s*([NSEWnsew])?/g;
+  const found = [];
+  let m;
+  while ((m = re.exec(cleaned)) !== null && found.length < 2) {
+    if (m[2] === undefined) continue;
+    found.push({
+      value: parseFloat(m[2]),
+      hemi: (m[1] || m[3] || "").toUpperCase(),
+    });
+  }
+  if (found.length < 2) return null;
+
+  const [first, second] = found;
+  // if either letter identifies a longitude first, the pair is reversed
+  const reversed =
+    first.hemi === "E" || first.hemi === "W" ||
+    second.hemi === "N" || second.hemi === "S";
+  const latPart = reversed ? second : first;
+  const lonPart = reversed ? first : second;
+
+  const applySign = (part, negativeLetter) => {
+    if (!part.hemi) return part.value;
+    const abs = Math.abs(part.value);
+    return part.hemi === negativeLetter ? -abs : abs;
+  };
+
+  const lat = applySign(latPart, "S");
+  const lon = applySign(lonPart, "W");
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return { lat, lon };
+}
+
 export default function CampaignForm({ mode }) {
   const { id } = useParams();
   const nav = useNavigate();
   const [form, setForm] = useState(defaults);
   const [loading, setLoading] = useState(mode === "edit");
   const [saving, setSaving] = useState(false);
+  const [pasted, setPasted] = useState("");
+  const [pastedError, setPastedError] = useState(false);
 
   useEffect(() => {
     if (mode !== "edit" || !id) return;
@@ -68,6 +164,7 @@ export default function CampaignForm({ mode }) {
           facility_longitude: c.facility_longitude ?? "",
           longitude: c.longitude ?? "",
           inlet_height_m: c.inlet_height_m ?? 5.0,
+          gas_units: c.gas_units || "ugm3",
           monitoring_start: toLocalInput(c.monitoring_start),
           monitoring_end: toLocalInput(c.monitoring_end),
           prepared_by: c.prepared_by || "",
@@ -86,6 +183,25 @@ export default function CampaignForm({ mode }) {
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  const applyPasted = (value) => {
+    setPasted(value);
+    if (!value.trim()) {
+      setPastedError(false);
+      return;
+    }
+    const parsed = parseCoordinates(value);
+    if (!parsed) {
+      setPastedError(true);
+      return;
+    }
+    setPastedError(false);
+    setForm((f) => ({
+      ...f,
+      latitude: String(parsed.lat),
+      longitude: String(parsed.lon),
+    }));
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -99,7 +215,7 @@ export default function CampaignForm({ mode }) {
           ? null : parseFloat(form.facility_longitude),
         longitude: parseFloat(form.longitude),
         inlet_height_m: parseFloat(form.inlet_height_m),
-      // Naive local time — the analyser logs local Saudi time and the
+        // Naive local time — the analyser logs local Saudi time and the
         // report is read in local time. Converting to UTC here shifted the
         // window 3 h against the readings and cost 3 h of data capture.
         monitoring_start: form.monitoring_start,
@@ -189,6 +305,30 @@ export default function CampaignForm({ mode }) {
             className="rounded-sm"
           />
         </Field>
+
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">
+            Coordinates from the field photo
+          </Label>
+          <Input
+            value={pasted}
+            onChange={(e) => applyPasted(e.target.value)}
+            placeholder="24.5534N 39.6027E"
+            className="rounded-sm font-mono"
+          />
+          {pastedError ? (
+            <p className="text-[11px] text-amber-500">
+              Could not read a coordinate pair from that. Enter latitude and
+              longitude below instead.
+            </p>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              Type the position exactly as it appears on the photograph and both
+              fields below are filled for you. Check the values it reads back.
+            </p>
+          )}
+        </div>
+
         <div className="grid grid-cols-3 gap-4">
           <Field label="Latitude (°N)" required>
             <Input
@@ -223,6 +363,7 @@ export default function CampaignForm({ mode }) {
             />
           </Field>
         </div>
+
         <div className="space-y-1.5">
           <Label className="text-xs">Gas data units *</Label>
           <Select value={form.gas_units || "ugm3"}
@@ -237,6 +378,7 @@ export default function CampaignForm({ mode }) {
           <p className="text-[11px] text-muted-foreground">
             Units of the gas columns in your uploaded file. NCEC limits are
             µg/m³ at 25 °C and 101.3 kPa; ppb/ppm files are converted on ingest.
+            A units row inside the file takes precedence over this setting.
           </p>
         </div>
         <div className="space-y-1.5">
