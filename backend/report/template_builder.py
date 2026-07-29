@@ -357,71 +357,105 @@ def _tr_tag_row(table, row_idx, tag):
 
 
 def _header_footer(section):
-    """Two-logo header with centered italic title; footer with page number."""
+    """Compact running header and footer.
+
+    The previous header stacked a 1.6 cm logo, a three-line centred title and
+    a second emblem, which cost close to three centimetres off the top of
+    every page. Here the mark is small on the left and the document identifies
+    itself on the right in two lines — title, then project, report number and
+    revision — over a hairline rule. Same information, roughly a third of the
+    height, and the same shape a consultancy report normally carries.
+    """
     hdr = section.header
     hdr.is_linked_to_previous = False
-    tbl = hdr.add_table(rows=1, cols=3, width=Cm(17))
+    tbl = hdr.add_table(rows=1, cols=2, width=Cm(17))
     tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-    left, mid, right = tbl.rows[0].cells
+    left, right = tbl.rows[0].cells
+    left.width, right.width = Cm(4.2), Cm(12.8)
+
     lp = left.paragraphs[0]
     lp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    lp.paragraph_format.space_after = Pt(0)
     try:
-        lp.add_run().add_picture(os.path.join(ASSETS, "logo_left.png"), height=Cm(1.6))
+        lp.add_run().add_picture(os.path.join(ASSETS, "logo_left.png"),
+                                 height=Cm(0.85))
     except Exception:
-        lp.add_run("[BSA]")
-    mp = mid.paragraphs[0]
-    mp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    # trailing space: this run is followed directly by the project name,
-    # and without it the header reads "...Report forRed Sea"
-    r1 = mp.add_run("Ambient Air Quality Monitoring Report for ")
-    r1.italic = True
-    r1.bold = True
-    r1.font.size = Pt(10)
-    r1.font.color.rgb = NAVY
-    r1.font.size = Pt(9.5)
-    mp2 = mid.add_paragraph()
-    mp2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r2 = mp2.add_run("{{ project_name }}")
-    r2.italic = True
-    r2.bold = True
-    r2.font.size = Pt(10)
-    r2.font.color.rgb = NAVY
-    r2.font.size = Pt(9.5)
+        r = lp.add_run("BSA.lab")
+        r.bold = True
+        r.font.size = Pt(10)
+        r.font.color.rgb = NAVY
+
     rp = right.paragraphs[0]
     rp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    try:
-        rp.add_run().add_picture(os.path.join(ASSETS, "logo_right.png"), height=Cm(1.6))
-    except Exception:
-        rp.add_run("[LOGO]")
-    # bottom rule under the header
+    rp.paragraph_format.space_after = Pt(0)
+    r1 = rp.add_run("Ambient Air Quality Monitoring Report")
+    r1.bold = True
+    r1.font.size = Pt(9.5)
+    r1.font.color.rgb = NAVY
+
+    rp2 = right.add_paragraph()
+    rp2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    rp2.paragraph_format.space_after = Pt(0)
+    # project, report number and revision on one line: enough for a reader to
+    # identify a loose page without a second trip to the cover
+    r2 = rp2.add_run("{{ project_name }}  \u00b7  {{ report_number }}"
+                     "  \u00b7  Rev {{ revision }}")
+    r2.font.size = Pt(7.5)
+    r2.font.color.rgb = MUTED_GREY
+
     rule = hdr.add_paragraph()
+    rule.paragraph_format.space_before = Pt(1)
+    rule.paragraph_format.space_after = Pt(0)
+    for run in rule.runs:
+        run.font.size = Pt(1)
     pPr = rule._p.get_or_add_pPr()
     borders = OxmlElement("w:pBdr")
     bot = OxmlElement("w:bottom")
     bot.set(qn("w:val"), "single")
-    bot.set(qn("w:sz"), "14")
+    bot.set(qn("w:sz"), "8")
     bot.set(qn("w:color"), BLUE_FILL)
     borders.append(bot)
     pPr.append(borders)
 
     ftr = section.footer
     ftr.is_linked_to_previous = False
-    fp = ftr.paragraphs[0]
-    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    fPr = fp._p.get_or_add_pPr()
+    ft = ftr.add_table(rows=1, cols=2, width=Cm(17))
+    ft.alignment = WD_TABLE_ALIGNMENT.CENTER
+    fl, fr = ft.rows[0].cells
+    fl.width, fr.width = Cm(12.8), Cm(4.2)
+
+    flp = fl.paragraphs[0]
+    flp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    flp.paragraph_format.space_after = Pt(0)
+    fpr = flp._p.get_or_add_pPr()
     fBdr = OxmlElement("w:pBdr")
     ftop = OxmlElement("w:top")
     ftop.set(qn("w:val"), "single")
-    ftop.set(qn("w:sz"), "8")
-    ftop.set(qn("w:color"), NAVY_FILL)
+    ftop.set(qn("w:sz"), "6")
+    ftop.set(qn("w:color"), "C9D6E2")
     fBdr.append(ftop)
-    fPr.append(fBdr)
-    pre = fp.add_run("Page ")
-    pre.font.size = Pt(9)
+    fpr.append(fBdr)
+    fl_run = flp.add_run("CONFIDENTIAL  \u00b7  {{ provider_legal_name }}")
+    fl_run.font.size = Pt(7)
+    fl_run.font.color.rgb = MUTED_GREY
+
+    frp = fr.paragraphs[0]
+    frp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    frp.paragraph_format.space_after = Pt(0)
+    fpr2 = frp._p.get_or_add_pPr()
+    fBdr2 = OxmlElement("w:pBdr")
+    ftop2 = OxmlElement("w:top")
+    ftop2.set(qn("w:val"), "single")
+    ftop2.set(qn("w:sz"), "6")
+    ftop2.set(qn("w:color"), "C9D6E2")
+    fBdr2.append(ftop2)
+    fpr2.append(fBdr2)
+    pre = frp.add_run("Page ")
+    pre.font.size = Pt(8)
     pre.font.color.rgb = NAVY
-    _field(fp, " PAGE ")
-    for r in fp.runs:
-        r.font.size = Pt(9)
+    _field(frp, " PAGE ")
+    for r in frp.runs:
+        r.font.size = Pt(8)
         r.font.color.rgb = NAVY
 
 
