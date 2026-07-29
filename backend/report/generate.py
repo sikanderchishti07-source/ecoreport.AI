@@ -13,7 +13,9 @@ from typing import Dict, List, Optional, Tuple
 from docxtpl import DocxTemplate, InlineImage, RichText
 from docx.shared import Mm
 
-from calc import build_campaign_summary, _as_utc
+import numpy as np
+
+from calc import COMPASS_16, build_campaign_summary, _as_utc
 from models import Campaign, PollutantLimit, Reading
 from report.charts import generate_all_charts
 from report.context import build_context
@@ -44,6 +46,7 @@ FIG_MAP = {
     "fig_pressure": "pressure",
     "fig_ws": "ws",
     "fig_windrose": "wind_rose",
+    "fig_windrose_map": "wind_rose_map",
     "fig_windclassfreq": "wind_class_freq",
 }
 
@@ -181,6 +184,43 @@ def generate_report(
         import logging
         logging.getLogger(__name__).warning("cover hero failed", exc_info=True)
         ctx["cover_hero"] = ""
+
+    # Wind rose laid over the satellite tile. Built here rather than in
+    # charts.py because it needs the site map, which is fetched by the route.
+    if site_map_path and os.path.exists(site_map_path):
+        try:
+            from report.sitemap import wind_rose_on_map
+            rose = summary.wind_rose
+            bands = [b for b in (campaign.wind_rose_bins or [])
+                     if b.label.strip().lower() not in ("calm", "calms")]
+            # direction_rows carries counts per speed class per compass
+            # point; the overlay wants each class as a percentage of all
+            # valid records, in COMPASS_16 order
+            by_dir = {r.direction: r.counts_by_class for r in rose.direction_rows}
+            total = float(rose.total_valid or 0)
+            freqs, labels = [], []
+            if total > 0:
+                for b in bands:
+                    vals = [by_dir.get(d, {}).get(b.label, 0) / total * 100.0
+                            for d in COMPASS_16]
+                    if any(v > 0 for v in vals):
+                        freqs.append(np.asarray(vals, dtype=float))
+                        labels.append(b.label)
+            if freqs:
+                overlay = wind_rose_on_map(
+                    site_map_path, freqs, labels,
+                    os.path.join(charts_dir, "fig_windrose_map.png"),
+                    records=len(win_readings),
+                    prevailing=rose.prevailing_direction)
+                if overlay and os.path.exists(overlay):
+                    figs["wind_rose_map"] = overlay
+                    ctx["fig_windrose_map"] = InlineImage(
+                        tpl, overlay, width=Mm(ROSE_WIDTH_MM))
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning(
+                "wind rose overlay skipped", exc_info=True)
+    ctx.setdefault("fig_windrose_map", "")
 
     ctx["fig_site_map"] = (InlineImage(tpl, site_map_path, width=Mm(150))
                            if site_map_path and os.path.exists(site_map_path)

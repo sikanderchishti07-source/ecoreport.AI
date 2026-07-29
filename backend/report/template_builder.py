@@ -1722,6 +1722,15 @@ def build(out_path: str = OUT) -> str:
         _p(doc, "{{ %s }}" % key, align="center")
         _caption(doc, "Figure", cap_text)
 
+    # Wind rose over the satellite tile. Wrapped in a condition because the
+    # site map can be absent — no coordinates, no API key, a failed fetch —
+    # and an empty figure with a live caption would misnumber everything
+    # after it in the List of Figures.
+    _p(doc, "{%p if fig_windrose_map %}", size=1, space_after=0)
+    _p(doc, "{{ fig_windrose_map }}", align="center")
+    _caption(doc, "Figure", "Wind Rose over the monitoring location.")
+    _p(doc, "{%p endif %}", size=1, space_after=0)
+
     # Wind tables 14/15 — dynamic columns via dedicated {%tc %} cells
     for cap_text, rows_key, totals_key in [
         ("Wind class frequency distribution at the location.", "wind_pct_rows",
