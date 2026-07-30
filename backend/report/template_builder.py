@@ -14,7 +14,8 @@ from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml import OxmlElement
+from docx.oxml import OxmlElement, parse_xml
+from docx.oxml.ns import nsdecls
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 from docx.text.paragraph import Paragraph
@@ -417,6 +418,22 @@ def _header_footer(section):
     borders.append(bot)
     pPr.append(borders)
 
+    # Faded mark behind the body text. Uses assets/watermark.png when one is
+    # supplied, otherwise the BSA logo faded down; absent either, skipped.
+    wm_src = os.path.join(ASSETS, "watermark.png")
+    if not os.path.exists(wm_src):
+        logo = os.path.join(ASSETS, "logo_left.png")
+        if os.path.exists(logo):
+            try:
+                wm_src = _make_watermark_png(
+                    logo, os.path.join(ASSETS, "_watermark_generated.png"))
+            except Exception:  # noqa: BLE001
+                wm_src = ""
+        else:
+            wm_src = ""
+    if wm_src and os.path.exists(wm_src):
+        _watermark(section, wm_src)
+
     ftr = section.footer
     ftr.is_linked_to_previous = False
     ft = ftr.add_table(rows=1, cols=2, width=Cm(17))
@@ -592,6 +609,80 @@ def _fit_picture(paragraph, path, max_w_cm, max_h_cm, trim=True):
         paragraph.add_run().add_picture(path, width=Cm(max_w_cm))
     else:
         paragraph.add_run().add_picture(path, height=Cm(max_h_cm))
+
+
+
+def _make_watermark_png(src: str, dest: str, strength: float = 0.10) -> str:
+    """Fade a logo into a watermark.
+
+    Word can wash an image out through VML gain/blacklevel attributes, but
+    LibreOffice ignores them and would print the mark at full strength across
+    every page. Fading the pixels instead is renderer-independent.
+    """
+    from PIL import Image
+    im = Image.open(src).convert("RGBA")
+    white = Image.new("RGBA", im.size, (255, 255, 255, 255))
+    faded = Image.blend(white, im, strength)
+    faded.putalpha(im.getchannel("A").point(lambda a: int(a * strength * 3)))
+    faded.save(dest)
+    return dest
+
+
+VML_NS = (
+    'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+    'xmlns:v="urn:schemas-microsoft-com:vml" '
+    'xmlns:o="urn:schemas-microsoft-com:office:office"'
+)
+
+
+def _watermark(section, image_path: str, width_pt: float = 300.0) -> bool:
+    """Place a faded mark behind the text on every page of this section.
+
+    A watermark is a VML shape anchored in the header with a negative
+    z-index, which is what puts it behind the body text rather than over it.
+    python-docx has no API for this, so the shape is built as raw XML.
+    """
+    try:
+        from PIL import Image
+        with Image.open(image_path) as probe:
+            w, h = probe.size
+        height_pt = width_pt * h / float(w)
+
+        part = section.header.part
+        rid, _ = part.get_or_add_image(image_path)
+
+        para = section.header.add_paragraph()
+        para.paragraph_format.space_before = Pt(0)
+        para.paragraph_format.space_after = Pt(0)
+        xml = (
+            '<w:r %s>'
+            '<w:pict>'
+            '<v:shape id="ecoreport_watermark" o:spid="_x0000_s2051" '
+            'type="#_x0000_t75" '
+            'style="position:absolute;margin-left:0;margin-top:0;'
+            'width:%.1fpt;height:%.1fpt;z-index:-251654144;'
+            'mso-position-horizontal:center;'
+            'mso-position-horizontal-relative:margin;'
+            'mso-position-vertical:center;'
+            'mso-position-vertical-relative:margin;'
+            'rotation:-30" o:allowincell="f">'
+            '<v:imagedata r:id="%s" o:title="watermark"/>'
+            '</v:shape>'
+            '</w:pict>'
+            '</w:r>'
+        # nsdecls only carries the WordprocessingML prefixes; v (VML) and o
+        # (Office drawing) have to be declared by hand, and asking nsdecls for
+        # them raised KeyError, which the except below swallowed. That is why
+        # no report has ever carried the watermark.
+        ) % (VML_NS, width_pt, height_pt, rid)
+        para._p.append(parse_xml(xml))
+        return True
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("watermark skipped", exc_info=True)
+        return False
+
 
 
 def _typeset(doc) -> dict:
@@ -1924,6 +2015,48 @@ def build(out_path: str = OUT) -> str:
     _p(doc, "[Environmental license to be attached — upload scanned license for "
             "this provider.]", italic=True)
     _p(doc, "{%p endif %}", size=1, space_after=0)
+
+    # Close the document explicitly. A reader who reaches a blank final page
+    # cannot otherwise tell a finished report from a truncated one, which is
+    # the point of the convention in controlled documents.
+    _p(doc, "", size=6, space_after=0)
+    endp = doc.add_paragraph()
+    endp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    endp.paragraph_format.space_before = Pt(10)
+    endp.paragraph_format.keep_with_next = False
+    er = endp.add_run("\u2014  END OF REPORT  \u2014")
+    er.bold = True
+    er.font.size = Pt(10)
+    er.font.color.rgb = NAVY
+
+    # End-of-report marker. A reader who receives a loose bundle needs to
+    # know they have the whole document; without it a report that ends on a
+    # scanned licence page is indistinguishable from one that is missing
+    # pages.
+    _p(doc, "", size=8)
+    end = doc.add_paragraph()
+    end.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    end.paragraph_format.space_before = Pt(10)
+    ePr = end._p.get_or_add_pPr()
+    eBdr = OxmlElement("w:pBdr")
+    for side in ("top", "bottom"):
+        e = OxmlElement("w:%s" % side)
+        e.set(qn("w:val"), "single")
+        e.set(qn("w:sz"), "6")
+        e.set(qn("w:color"), BLUE_FILL)
+        e.set(qn("w:space"), "6")
+        eBdr.append(e)
+    ePr.append(eBdr)
+    er = end.add_run("END OF REPORT")
+    er.bold = True
+    er.font.size = Pt(10)
+    er.font.color.rgb = NAVY
+    sub = doc.add_paragraph()
+    sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sr = sub.add_run("{{ report_number }}  \u00b7  Rev {{ revision }}  \u00b7  "
+                     "{{ project_name }}")
+    sr.font.size = Pt(8)
+    sr.font.color.rgb = MUTED_GREY
 
     stats = _typeset(doc)
     _update_fields_on_open(doc)
