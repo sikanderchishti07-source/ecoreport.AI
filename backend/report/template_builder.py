@@ -698,6 +698,12 @@ def _watermark(section, image_path: str, width_pt: float = 300.0) -> bool:
 
 
 
+# A page holds roughly this many short table rows. Above it a table cannot
+# be kept whole, so it is allowed to flow with its header repeating rather
+# than forced into a layout that will not fit.
+MAX_ROWS_KEPT_WHOLE = 24
+
+
 def _typeset(doc) -> dict:
     """Apply publication-grade pagination controls across the whole document.
 
@@ -714,7 +720,8 @@ def _typeset(doc) -> dict:
     Returns a count of what was set, for the build log.
     """
     stats = {"rows_unsplit": 0, "header_rows_repeated": 0,
-             "kept_with_table": 0, "figures_kept": 0, "widow_control": 0}
+             "kept_with_table": 0, "figures_kept": 0, "widow_control": 0,
+             "tables_kept_whole": 0}
 
     def _pPr(p):
         return p._p.get_or_add_pPr()
@@ -764,11 +771,46 @@ def _typeset(doc) -> dict:
                 trPr.append(OxmlElement("w:cantSplit"))
                 stats["rows_unsplit"] += 1
 
+        # Hold the whole table on one page by binding every row to the one
+        # after it. A table that will not fit on a page cannot be held
+        # together — Word has to break it somewhere — so tables above the
+        # threshold are left to flow with a repeating header instead of
+        # being forced into an impossible layout.
+        is_layout_grid = len(table.columns) >= 8
+        if not is_layout_grid and 1 < len(rows) <= MAX_ROWS_KEPT_WHOLE:
+            # Worked on the XML rather than through python-docx cells: a
+            # vertically merged cell is reported as part of every row it
+            # spans, and lxml creates element proxies on demand, so cells
+            # cannot be compared by identity. In the tree a merged cell's
+            # <w:tc> sits in the first row it covers and later rows carry
+            # only a vMerge continuation, which is exactly the distinction
+            # needed here.
+            def _keep_next(tr, on):
+                for tc in tr.findall(qn("w:tc")):
+                    for p_el in tc.findall(qn("w:p")):
+                        pPr = p_el.find(qn("w:pPr"))
+                        if pPr is None:
+                            if not on:
+                                continue
+                            pPr = OxmlElement("w:pPr")
+                            p_el.insert(0, pPr)
+                        existing = pPr.find(qn("w:keepNext"))
+                        if on and existing is None:
+                            pPr.append(OxmlElement("w:keepNext"))
+                        elif not on and existing is not None:
+                            pPr.remove(existing)
+
+            for row in rows[:-1]:
+                _keep_next(row._tr, True)
+            # release the final row, or the table drags whatever follows it
+            # onto its own page and leaves a gap behind
+            _keep_next(rows[-1]._tr, False)
+            stats["tables_kept_whole"] += 1
+
         # Repeat the header on continuation pages, but only for real data
         # tables. The cover is a twelve-column layout grid, not a data table:
         # marking its first row as a header made Word reprint the masthead at
         # the top of the following page.
-        is_layout_grid = len(table.columns) >= 8
         if len(rows) >= 4 and not is_layout_grid:
             trPr = rows[0]._tr.get_or_add_trPr()
             if trPr.find(qn("w:tblHeader")) is None:
