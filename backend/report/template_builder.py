@@ -116,15 +116,28 @@ def _table_borders(table, colour=RULE_GREY, size="4"):
 
 
 def _zebra(table, start_row=1, fill=ZEBRA_FILL):
-    """Tint alternate body rows so wide tables stay readable."""
+    """Separate alternate body rows so wide tables stay readable.
+
+    Originally this tinted every second row. Word shading is opaque, so those
+    150-odd shaded cells punched holes in the watermark and the mark appeared
+    to break up wherever a table sat. Alternate rows are now separated by a
+    hairline instead: the same job of guiding the eye across a wide row, done
+    without blocking anything behind it.
+    """
     for i, row in enumerate(table.rows[start_row:], start=start_row):
         if (i - start_row) % 2 == 1:
             for c in row.cells:
                 tcPr = c._tc.get_or_add_tcPr()
-                shd = OxmlElement("w:shd")
-                shd.set(qn("w:val"), "clear")
-                shd.set(qn("w:fill"), fill)
-                tcPr.append(shd)
+                borders = tcPr.find(qn("w:tcBorders"))
+                if borders is None:
+                    borders = OxmlElement("w:tcBorders")
+                    tcPr.append(borders)
+                for side in ("top", "bottom"):
+                    e = OxmlElement("w:%s" % side)
+                    e.set(qn("w:val"), "single")
+                    e.set(qn("w:sz"), "4")
+                    e.set(qn("w:color"), "E3EAF1")
+                    borders.append(e)
 
 
 def _cell_pad(table, top=0.10, bottom=0.10, left=0.16, right=0.16):
