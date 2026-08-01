@@ -582,6 +582,57 @@ def _hairline(cell, colour="DCE5EE"):
         borders.append(e)
 
 
+GREEN_RULE = "2F9E63"
+
+
+def _cell_rules(cell, sides):
+    """Draw rules on named edges only.
+
+    _hairline boxes a cell on all four sides, which on the cover produced a
+    grid of little boxes rather than a document table. sides is a mapping of
+    edge name to (colour, size), e.g. {"bottom": ("D9E1E8", 4)}. Edges are
+    written in the order OOXML expects.
+    """
+    tcPr = cell._tc.get_or_add_tcPr()
+    for old in tcPr.findall(qn("w:tcBorders")):
+        tcPr.remove(old)
+    b = OxmlElement("w:tcBorders")
+    for side in ("top", "left", "bottom", "right"):
+        if side not in sides:
+            continue
+        colour, size = sides[side]
+        e = OxmlElement(f"w:{side}")
+        e.set(qn("w:val"), "single")
+        e.set(qn("w:sz"), str(size))
+        e.set(qn("w:color"), colour)
+        b.append(e)
+    tcPr.append(b)
+
+
+def _vcenter(cell):
+    """Centre a cell's content vertically.
+
+    Cells default to top alignment, so the logo and the accreditation strip
+    sat on the same top edge despite being different heights, and read as
+    two unrelated objects rather than one masthead.
+    """
+    tcPr = cell._tc.get_or_add_tcPr()
+    for old in tcPr.findall(qn("w:vAlign")):
+        tcPr.remove(old)
+    va = OxmlElement("w:vAlign")
+    va.set(qn("w:val"), "center")
+    tcPr.append(va)
+
+
+def _row_height(row, cm, rule="atLeast"):
+    """Give a row a floor height so a block of rows keeps an even rhythm."""
+    trPr = row._tr.get_or_add_trPr()
+    h = OxmlElement("w:trHeight")
+    h.set(qn("w:val"), str(int(cm * 567)))
+    h.set(qn("w:hRule"), rule)
+    trPr.append(h)
+
+
 
 def _fit_picture(paragraph, path, max_w_cm, max_h_cm, trim=True):
     """Insert a picture scaled to fit inside a box, trimming blank edges.
@@ -973,21 +1024,31 @@ def build(out_path: str = OUT) -> str:
 
     # --- row 0: masthead — BSA mark, then the accreditation marks ----------
     # A single strip image wins if present: certification bodies supply one
-    # artwork with the marks and captions already set, so there is no reason
-    # to make the operator cut it into pieces. The individual slots remain
-    # for anyone who holds the marks separately, and a badge with no file is
-    # skipped — the row never claims an accreditation the lab does not hold.
+    # artwork with the marks and captions already set. The individual slots
+    # remain for anyone who holds the marks separately, and a badge with no
+    # file is skipped — the row never claims an accreditation the lab does
+    # not hold.
+    #
+    # Both sides are vertically centred against each other, inset to the same
+    # 1.25 cm axis the project card and the footer use, and the mark is given
+    # more height than the accreditation strip so the masthead has an owner.
+    # A green hairline closes the band, giving the page a top edge instead of
+    # letting white run straight into the photograph.
     strip = os.path.join(ASSETS, "badges.png")
     badges = [] if os.path.exists(strip) else [
         (f, cap) for f, cap in ACCREDITATION_BADGES
         if os.path.exists(os.path.join(ASSETS, f))]
 
+    INSET = 1.25
+    BAND_PAD = 0.46
+
     logo_span = 4 if (badges or os.path.exists(strip)) else C1
     hl = _span(ROW_MASTHEAD, 0, logo_span)
-    _pad(hl, 0.55, 0.4, 1.4, 0.2)
+    _pad(hl, BAND_PAD, BAND_PAD, INSET, 0.2)
+    _vcenter(hl)
     try:
         _fit_picture(hl.paragraphs[0], os.path.join(ASSETS, "logo_left.png"),
-                     max_w_cm=5.6, max_h_cm=2.05)
+                     max_w_cm=5.2, max_h_cm=1.85)
     except Exception:
         r = hl.paragraphs[0].add_run("BSA.lab")
         r.bold = True
@@ -996,12 +1057,13 @@ def build(out_path: str = OUT) -> str:
 
     if os.path.exists(strip):
         sc = _span(ROW_MASTHEAD, logo_span + 1, COLS - 1)
-        _pad(sc, 0.60, 0.4, 0.2, 1.2)
+        _pad(sc, BAND_PAD, BAND_PAD, 0.2, INSET)
+        _vcenter(sc)
         sp = sc.paragraphs[0]
         sp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        # fit to a box rather than a fixed width, so a near-square source
-        # file cannot inflate the masthead
-        _fit_picture(sp, strip, max_w_cm=13.2, max_h_cm=2.3)
+        # held below the logo's height so the accreditation artwork supports
+        # the mark rather than competing with it
+        _fit_picture(sp, strip, max_w_cm=11.4, max_h_cm=1.5)
     elif badges:
         first = logo_span + 1
         each = max((COLS - first) // len(badges), 1)
@@ -1011,12 +1073,15 @@ def build(out_path: str = OUT) -> str:
             if a > COLS - 1:
                 break
             cell = _span(ROW_MASTHEAD, a, b)
-            _pad(cell, 0.62, 0.35, 0.10, 0.10)
+            # equal padding on every badge: unequal insets were what made
+            # four marks of different proportions look scattered
+            _pad(cell, BAND_PAD, BAND_PAD, 0.10, 0.10)
+            _vcenter(cell)
             ip = cell.paragraphs[0]
             ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
             ip.paragraph_format.space_after = Pt(2)
             _fit_picture(ip, os.path.join(ASSETS, fname),
-                         max_w_cm=3.2, max_h_cm=1.15)
+                         max_w_cm=2.8, max_h_cm=1.05)
             for i, line in enumerate(caption):
                 cp = cell.add_paragraph()
                 cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1026,6 +1091,11 @@ def build(out_path: str = OUT) -> str:
                 rr.font.size = Pt(5.5)
                 rr.bold = (i == 0)
                 rr.font.color.rgb = NAVY
+
+    # one continuous rule across the full page width, including the margin
+    # columns, so the band closes cleanly against the hero below it
+    for c in cov.rows[ROW_MASTHEAD].cells:
+        _cell_rules(c, {"bottom": (GREEN_RULE, 8)})
 
     # --- row 1: hero band, full bleed --------------------------------------
     hero_c = _span(ROW_HERO, 0, COLS - 1)
@@ -1074,22 +1144,36 @@ def build(out_path: str = OUT) -> str:
         for line in blurb.split("\n"):
             _txt(bot, line, 8, colour=DARK, align="center", after=0)
 
-    # --- rows 4-8: project details card ------------------------------------
-    rows_ = [("CLIENT", "{{ client }}"),
-             ("SITE", "{{ site_name }}"),
-             ("MONITORING PERIOD", "{{ monitoring_window_text }}"),
-             ("REPORT NUMBER", "{{ report_number }}"),
-             ("REVISION / DATE", "{{ revision }}   |   {{ reporting_date }}")]
+    # --- rows 4-8: document control block -----------------------------------
+    # Rebuilt as a document table rather than a card. The grey label fill was
+    # opaque, so it punched holes in the watermark exactly as the zebra
+    # striping did, and boxing every cell on four sides produced a grid of
+    # small rectangles. Rules now run horizontally only, the labels sit on the
+    # same 1.25 cm left axis as the footer, and a fixed row height gives the
+    # block an even rhythm regardless of how long a value runs.
+    rows_ = [("Client", "{{ client }}"),
+             ("Monitoring station", "{{ site_name }}"),
+             ("Survey period", "{{ monitoring_window_text }}"),
+             ("Report number", "{{ report_number }}"),
+             ("Revision and issue date",
+              "{{ revision }}     \u00b7     {{ reporting_date }}")]
     for i, (k, v) in enumerate(rows_):
         r = ROW_CARD + i
-        kc = _span(r, C0, C0 + 3)     # four columns: fits MONITORING PERIOD
-        vc = _span(r, C0 + 4, C1)
-        _pad(kc, 0.16, 0.16, 0.35, 0.2)
-        _pad(vc, 0.16, 0.16, 0.4, 0.3)
-        _fill(kc, ZEBRA_FILL)
-        _hairline(kc)
-        _hairline(vc)
-        _txt(kc, k, 9.5, bold=True, colour=NAVY, first=True)
+        kc = _span(r, C0, C0 + 2)          # three columns — 4.8 cm
+        vc = _span(r, C0 + 3, C1)          # nine columns — 14.4 cm
+        _pad(kc, 0.16, 0.16, 0.35, 0.25)
+        _pad(vc, 0.16, 0.16, 0.0, 0.35)
+        _vcenter(kc)
+        _vcenter(vc)
+        _row_height(cov.rows[r], 0.76)
+        rules = {"bottom": (RULE_GREY, 4)}
+        if i == 0:
+            rules["top"] = (GREEN_RULE, 8)
+        _cell_rules(kc, rules)
+        _cell_rules(vc, rules)
+        # label quiet and small, value dark and larger: the weight difference
+        # carries the hierarchy, so the labels no longer need to shout in caps
+        _txt(kc, k, 8.5, colour=MUTED_GREY, first=True)
         _txt(vc, v, 10, colour=DARK, first=True)
 
     # The approved concept carries no prepared-by block on the cover, and
