@@ -806,10 +806,22 @@ def _typeset(doc) -> dict:
             para.paragraph_format.keep_with_next = True
             stats["figures_kept"] += 1
             continue
-
-        # a lead-in line or caption immediately above a table stays with it
+# A lead-in line above a table stays with it. The look-ahead skips a
+        # caption paragraph, because a table is nearly always introduced as
+        # "...are summarized in Table 5.", then the caption, then the table.
+        # Checking only the immediately following element meant the chain
+        # broke at the lead-in: the caption and table moved to the next page
+        # together while the sentence — and the section heading bound to it —
+        # were left stranded at the foot of the previous one.
         nxt = body[i + 1] if i + 1 < len(body) else None
-        if nxt is not None and nxt.tag.endswith("}tbl") and text:
+        after = body[i + 2] if i + 2 < len(body) else None
+        leads_to_table = nxt is not None and nxt.tag.endswith("}tbl")
+        if not leads_to_table and nxt is not None and nxt.tag.endswith("}p") \
+                and after is not None and after.tag.endswith("}tbl"):
+            nxt_style = Paragraph(nxt, doc).style
+            leads_to_table = (nxt_style is not None
+                              and (nxt_style.name or "") == "Caption")
+        if leads_to_table and text:
             para.paragraph_format.keep_with_next = True
             stats["kept_with_table"] += 1
 
