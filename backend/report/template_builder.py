@@ -1425,10 +1425,16 @@ def build(out_path: str = OUT) -> str:
     _cell_text(loc.cell(1, 0), "{{ site_name }}", size=10, align="center")
     _cell_text(loc.cell(1, 1), "N {{ latitude }}   E {{ longitude }}", size=10,
                align="center")
+
+    # Each caption sits inside its figure's own condition. Left outside, the
+    # caption printed whether or not the figure did — a report with no site
+    # map carried "Figure 1 — Location of the Ambient Air quality monitor"
+    # above empty space, and the SEQ field still consumed a figure number, so
+    # the List of Figures described a figure the reader could not find.
     _p(doc, "{%p if fig_site_map %}", size=1, space_after=0)
     _p(doc, "{{ fig_site_map }}", align="center")
-    _p(doc, "{%p endif %}", size=1, space_after=0)
     _caption(doc, "Figure", "Location of the Ambient Air quality monitor")
+    _p(doc, "{%p endif %}", size=1, space_after=0)
     grid = doc.add_table(rows=3, cols=2)
     grid.alignment = WD_TABLE_ALIGNMENT.CENTER
     _tr_tag_row(grid, 0, "{%tr for row in site_photo_rows %}")
@@ -1440,10 +1446,9 @@ def build(out_path: str = OUT) -> str:
     _tr_tag_row(grid, 2, "{%tr endfor %}")
     _p(doc, "{%p if fig_site_photo %}", size=1, space_after=0)
     _p(doc, "{{ fig_site_photo }}", align="center")
-    _p(doc, "{%p endif %}", size=1, space_after=0)
     _caption(doc, "Figure",
              "Location of the Ambient Air quality monitoring stations in the site")
-
+    _p(doc, "{%p endif %}", size=1, space_after=0)
     _heading(doc, "2.2 Monitoring Methodology", 2)
     _p(doc, "Monitoring methodology and Reference Measurement Principle and "
             "Calibration Procedures for the Measurement of Ambient Air Quality "
