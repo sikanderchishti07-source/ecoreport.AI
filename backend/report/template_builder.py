@@ -330,6 +330,30 @@ def _caption(doc, kind: str, text: str):
     return p
 
 
+def _figure(doc, key: str, caption_text: str, explain: bool = True):
+    """A figure and its caption, both conditional on the figure existing.
+
+    A chart is only produced when the parameter has valid readings, so the
+    context value is empty when it has none. Printing the image placeholder
+    and its caption regardless gave the reader a caption above blank space,
+    consumed a figure number, and listed a figure that is not in the report.
+
+    ``explain`` prints one line in place of the figure. Silence would leave a
+    client wondering whether a page had been lost in production; the line
+    says the omission was deliberate and agrees with the N/R entry the
+    summary table already carries for the same parameter.
+    """
+    _p(doc, "{%%p if %s %%}" % key, size=1, space_after=0)
+    _p(doc, "{{ %s }}" % key, align="center")
+    _caption(doc, "Figure", caption_text)
+    if explain:
+        _p(doc, "{%p else %}", size=1, space_after=0)
+        _p(doc, "No chart is presented for this parameter: no valid readings "
+                "were recorded during the survey period.", size=9,
+           italic=True, color=MUTED_GREY)
+    _p(doc, "{%p endif %}", size=1, space_after=0)
+
+
 def _summary_table(doc, rows, ncec_cols):
     """Gold-standard pollutant summary table.
     rows: list of (label, value_placeholder) tuples.
@@ -806,7 +830,8 @@ def _typeset(doc) -> dict:
             para.paragraph_format.keep_with_next = True
             stats["figures_kept"] += 1
             continue
-# A lead-in line above a table stays with it. The look-ahead skips a
+
+        # A lead-in line above a table stays with it. The look-ahead skips a
         # caption paragraph, because a table is nearly always introduced as
         # "...are summarized in Table 5.", then the caption, then the table.
         # Checking only the immediately following element meant the chain
@@ -1437,7 +1462,6 @@ def build(out_path: str = OUT) -> str:
     _cell_text(loc.cell(1, 0), "{{ site_name }}", size=10, align="center")
     _cell_text(loc.cell(1, 1), "N {{ latitude }}   E {{ longitude }}", size=10,
                align="center")
-
     # Each caption sits inside its figure's own condition. Left outside, the
     # caption printed whether or not the figure did — a report with no site
     # map carried "Figure 1 — Location of the Ambient Air quality monitor"
@@ -1461,6 +1485,7 @@ def build(out_path: str = OUT) -> str:
     _caption(doc, "Figure",
              "Location of the Ambient Air quality monitoring stations in the site")
     _p(doc, "{%p endif %}", size=1, space_after=0)
+
     _heading(doc, "2.2 Monitoring Methodology", 2)
     _p(doc, "Monitoring methodology and Reference Measurement Principle and "
             "Calibration Procedures for the Measurement of Ambient Air Quality "
@@ -1722,8 +1747,7 @@ def build(out_path: str = OUT) -> str:
     ], [("1 Hour", "{{ so2.limit_1h }}"), ("24 Hour", "{{ so2.limit_24h }}")])
     _p(doc, "{{ so2.footnote }}", size=9, italic=True)
     _verdict_box(doc, "{{ so2.verdict_line }}")
-    _p(doc, "{{ fig_so2 }}", align="center")
-    _caption(doc, "Figure", "SO2 Hourly Concentration at the location.")
+    _figure(doc, "fig_so2", "SO2 Hourly Concentration at the location.")
 
     # 5.1.2 NO/NO2/NOx
     _heading(doc, "5.1.2 Oxides of Nitrogen (NO, NO2, NOx)", 3)
@@ -1797,12 +1821,9 @@ def build(out_path: str = OUT) -> str:
     _cell_text(na2, "NA", size=10, align="center")
     _p(doc, "{{ nox_group.footnote }}", size=9, italic=True)
     _verdict_box(doc, "{{ nox_group.verdict_line }}")
-    _p(doc, "{{ fig_no }}", align="center")
-    _caption(doc, "Figure", "NO Hourly Concentration at the location.")
-    _p(doc, "{{ fig_no2 }}", align="center")
-    _caption(doc, "Figure", "NO2 Hourly Concentration at the location.")
-    _p(doc, "{{ fig_nox }}", align="center")
-    _caption(doc, "Figure", "NOX Hourly Concentration at the location.")
+    _figure(doc, "fig_no", "NO Hourly Concentration at the location.")
+    _figure(doc, "fig_no2", "NO2 Hourly Concentration at the location.")
+    _figure(doc, "fig_nox", "NOX Hourly Concentration at the location.")
 
     # 5.1.3 CO
     _heading(doc, "5.1.3 Carbon Monoxide (CO)", 3)
@@ -1827,10 +1848,8 @@ def build(out_path: str = OUT) -> str:
     ], [("1 Hour", "{{ co.limit_1h }}"), ("8 Hour", "{{ co.limit_8h }}")])
     _p(doc, "{{ co.footnote }}", size=9, italic=True)
     _verdict_box(doc, "{{ co.verdict_line }}")
-    _p(doc, "{{ fig_co }}", align="center")
-    _caption(doc, "Figure", "CO Hourly Concentration at the location.")
-    _p(doc, "{{ fig_co8h }}", align="center")
-    _caption(doc, "Figure", "CO 8 Hour Rolling Average Concentrations at the location.")
+    _figure(doc, "fig_co", "CO Hourly Concentration at the location.")
+    _figure(doc, "fig_co8h", "CO 8 Hour Rolling Average Concentrations at the location.")
 
     # 5.1.4 H2S
     _heading(doc, "5.1.4 Hydrogen sulfide (H2S)", 3)
@@ -1849,8 +1868,7 @@ def build(out_path: str = OUT) -> str:
     ], [("1 Hour", "{{ h2s.limit_1h }}"), ("24 Hour", "{{ h2s.limit_24h }}")])
     _p(doc, "{{ h2s.footnote }}", size=9, italic=True)
     _verdict_box(doc, "{{ h2s.verdict_line }}")
-    _p(doc, "{{ fig_h2s }}", align="center")
-    _caption(doc, "Figure", "H2S Hourly Concentration at the location.")
+    _figure(doc, "fig_h2s", "H2S Hourly Concentration at the location.")
 
     # 5.1.5 O3
     _heading(doc, "5.1.5 Ozone (O3)", 3)
@@ -1875,12 +1893,9 @@ def build(out_path: str = OUT) -> str:
     ], [("8 Hour", "{{ o3.limit_8h }}")])
     _p(doc, "{{ o3.footnote }}", size=9, italic=True)
     _verdict_box(doc, "{{ o3.verdict_line }}")
-    _p(doc, "{{ fig_o3 }}", align="center")
-    _caption(doc, "Figure", "O3 Hourly Concentration at the location.")
-    _p(doc, "{{ fig_o38h }}", align="center")
-    _caption(doc, "Figure", "O3 8 Hour Rolling Average Concentrations at the location.")
-    _p(doc, "{{ fig_no2_o3 }}", align="center")
-    _caption(doc, "Figure", "NO2 vs. O3 Hourly Concentrations at the location.")
+    _figure(doc, "fig_o3", "O3 Hourly Concentration at the location.")
+    _figure(doc, "fig_o38h", "O3 8 Hour Rolling Average Concentrations at the location.")
+    _figure(doc, "fig_no2_o3", "NO2 vs. O3 Hourly Concentrations at the location.")
 
     # 5.1.6 PM
     _heading(doc, "5.1.6 Particulate Matter (PM10 & PM2.5)", 3)
@@ -1917,10 +1932,8 @@ def build(out_path: str = OUT) -> str:
     ], [("24 Hour", "{{ pm25.limit_24h }}")])
     _p(doc, "{{ pm25.footnote }}", size=9, italic=True)
     _verdict_box(doc, "{{ pm25.verdict_line }}")
-    _p(doc, "{{ fig_pm10 }}", align="center")
-    _caption(doc, "Figure", "PM10 Hourly Concentrations at the location.")
-    _p(doc, "{{ fig_pm25 }}", align="center")
-    _caption(doc, "Figure", "PM2.5 Hourly Concentrations at the location.")
+    _figure(doc, "fig_pm10", "PM10 Hourly Concentrations at the location.")
+    _figure(doc, "fig_pm25", "PM2.5 Hourly Concentrations at the location.")
 
     # Meteorology
     _p(doc, "- Meteorological Parameters Monitored result:", bold=True)
@@ -2000,8 +2013,7 @@ def build(out_path: str = OUT) -> str:
         ("fig_windrose", "Wind Rose at the location."),
         ("fig_windclassfreq", "Wind class frequency distribution graph at the location."),
     ]:
-        _p(doc, "{{ %s }}" % key, align="center")
-        _caption(doc, "Figure", cap_text)
+        _figure(doc, key, cap_text)
 
     # Wind rose over the satellite tile. Wrapped in a condition because the
     # site map can be absent — no coordinates, no API key, a failed fetch —
@@ -2172,13 +2184,14 @@ def build(out_path: str = OUT) -> str:
             "this provider.]", italic=True)
     _p(doc, "{%p endif %}", size=1, space_after=0)
 
-    
-    
-
     # End-of-report marker. A reader who receives a loose bundle needs to
     # know they have the whole document; without it a report that ends on a
     # scanned licence page is indistinguishable from one that is missing
     # pages.
+    #
+    # One marker only. A second, unbordered version of this block was added
+    # here at some point and the original was never removed, so every report
+    # closed with the words twice, six millimetres apart.
     _p(doc, "", size=8)
     end = doc.add_paragraph()
     end.alignment = WD_ALIGN_PARAGRAPH.CENTER
