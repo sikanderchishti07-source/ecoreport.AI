@@ -37,6 +37,19 @@ def _xy(readings: List[Reading], field: str) -> Tuple[List[datetime], List[Optio
     ys = [_effective(r, field) for r in readings]
     return xs, ys
 
+def _has_valid(readings, field=None, values=None) -> bool:
+    """True when at least one usable number exists for this series.
+
+    A parameter that recorded nothing still produced a full-size chart with
+    empty axes and a "RECORDS 0" chip, which reads as a rendering failure and
+    contradicts the N/R the summary table prints for the same parameter.
+    A measured zero is real data and must not be treated as missing.
+    """
+    vals = list(values) if values is not None else [
+        _effective(r, field) for r in readings]
+    return any(v is not None and not (isinstance(v, float) and math.isnan(v))
+               for v in vals)
+
 
 def _fmt_axes(ax, ylabel: str):
     ax.set_ylabel(ylabel, fontsize=9)
@@ -409,91 +422,92 @@ def wind_class_frequency_chart(
 # ---------------------------------------------------------------------------
 # Full chart set for one campaign
 # ---------------------------------------------------------------------------
-def generate_all_charts(
-    readings: List[Reading],
-    bins: List[WindClassBin],
-    limits: Dict[Tuple[str, str], float],
-    out_dir: str,
-    window_start=None,
-    class_frequency_pct: Optional[Dict[str, float]] = None,
-    window_end=None,
-    project_name: str = "",
-    window_text: str = "",
-) -> Dict[str, str]:
-    """Generate every figure of the gold-standard report. Returns
-    {figure_key: file_path}. `limits` maps (pollutant, period) -> µg/m³."""
-    os.makedirs(out_dir, exist_ok=True)
+os.makedirs(out_dir, exist_ok=True)
     p = lambda name: os.path.join(out_dir, name)
     figs: Dict[str, str] = {}
+    skipped: List[str] = []
 
     def L(pol, per):
         return limits.get((pol, per))
 
-    figs["so2_hourly"] = timeseries_chart(
-        readings, "SO2", p("fig_so2.png"),
+    def _ts(key, field, fname, ylabel, series_label, **kw):
+        """Draw one time series, unless the parameter recorded nothing.
+
+        Omitting the key here is all that is needed: generate.py already maps
+        a missing chart to an empty context value, and the template prints
+        neither the figure nor its caption when that value is empty.
+        """
+        if not _has_valid(readings, field, kw.get("values")):
+            skipped.append(key)
+            return
+        figs[key] = timeseries_chart(readings, field, p(fname), ylabel,
+                                     series_label, **kw)
+
+    _ts("so2_hourly", "SO2", "fig_so2.png",
         "Hourly Concentration of SO2 (ug/m3)", "SO2",
         limit=L("SO2", "1 Hour"), limit_label="SO2 NCEC hr")
-    figs["no_hourly"] = timeseries_chart(
-        readings, "NO", p("fig_no.png"),
+    _ts("no_hourly", "NO", "fig_no.png",
         "Hourly Concentration of NO (ug/m3)", "NO")
-    figs["no2_hourly"] = timeseries_chart(
-        readings, "NO2", p("fig_no2.png"),
+    _ts("no2_hourly", "NO2", "fig_no2.png",
         "Hourly Concentration of NO2 (ug/m3)", "NO2",
         limit=L("NO2", "1 Hour"), limit_label="NCEC limit for NO2")
-    figs["nox_hourly"] = timeseries_chart(
-        readings, "NOx", p("fig_nox.png"),
+    _ts("nox_hourly", "NOx", "fig_nox.png",
         "Hourly Concentration of NOX (ug/m3)", "NOX")
-    figs["co_hourly"] = timeseries_chart(
-        readings, "CO", p("fig_co.png"),
+    _ts("co_hourly", "CO", "fig_co.png",
         "Hourly Concentration of CO (ug/m3)", "CO",
         limit=L("CO", "1 Hour"), limit_label="NCEC limit for CO", log=True)
-    co_roll = rolling_8h(readings, "CO", window_start=window_start)
-    figs["co_8h"] = timeseries_chart(
-        readings, "CO", p("fig_co8h.png"),
+    _ts("co_8h", "CO", "fig_co8h.png",
         "Hourly concentration (ug/m3)", "CO (8 Hour rolling average)",
         limit=L("CO", "8 Hour (rolling)"), limit_label="CO (8 Hour NCEC)",
-        log=True, values=co_roll)
-    figs["h2s_hourly"] = timeseries_chart(
-        readings, "H2S", p("fig_h2s.png"),
+        log=True, values=rolling_8h(readings, "CO", window_start=window_start))
+    _ts("h2s_hourly", "H2S", "fig_h2s.png",
         "Hourly Concentration of H2S (ug/m3)", "H2S",
         limit=L("H2S", "1 Hour"), limit_label="H2S NCEC Hr")
-    figs["o3_hourly"] = timeseries_chart(
-        readings, "O3", p("fig_o3.png"),
+    _ts("o3_hourly", "O3", "fig_o3.png",
         "Hourly Concentration of O3 (ug/m3)", "Ozone")
-    o3_roll = rolling_8h(readings, "O3", window_start=window_start)
-    figs["o3_8h"] = timeseries_chart(
-        readings, "O3", p("fig_o38h.png"),
+    _ts("o3_8h", "O3", "fig_o38h.png",
         "Hourly concentration (ug/m3)", "O3 (8 Hour rolling average)",
         limit=L("O3", "8 Hour (rolling)"), limit_label="O3 (8 Hour NCEC)",
-        values=o3_roll)
-    figs["no2_vs_o3"] = dual_series_chart(
-        readings, "NO2", "NO2", "O3", "O3", p("fig_no2_o3.png"),
-        "Hourly concentration (ug/m3)")
-    figs["pm10_hourly"] = timeseries_chart(
-        readings, "PM10", p("fig_pm10.png"),
+        values=rolling_8h(readings, "O3", window_start=window_start))
+
+    # The correlation figure needs both series; one alone says nothing about
+    # the relationship it exists to show.
+    if _has_valid(readings, "NO2") and _has_valid(readings, "O3"):
+        figs["no2_vs_o3"] = dual_series_chart(
+            readings, "NO2", "NO2", "O3", "O3", p("fig_no2_o3.png"),
+            "Hourly concentration (ug/m3)")
+    else:
+        skipped.append("no2_vs_o3")
+
+    _ts("pm10_hourly", "PM10", "fig_pm10.png",
         "Hourly concentration of PM10 (ug/m3)", "PM10",
         limit=L("PM10", "24 Hour"), limit_label="NCEC Limit for PM10")
-    figs["pm25_hourly"] = timeseries_chart(
-        readings, "PM25", p("fig_pm25.png"),
+    _ts("pm25_hourly", "PM25", "fig_pm25.png",
         "Hourly concentration of PM2.5 (ug/m3)", "PM 2.5",
         limit=L("PM25", "24 Hour"), limit_label="NCEC Limit for PM2.5")
-    figs["temp"] = timeseries_chart(
-        readings, "Temp", p("fig_temp.png"),
+    _ts("temp", "Temp", "fig_temp.png",
         "Hourly temperature (0C)", "Temperature")
-    figs["rh"] = timeseries_chart(
-        readings, "RH", p("fig_rh.png"),
+    _ts("rh", "RH", "fig_rh.png",
         "Hourly Relative Humidity (%)", "Humidity")
-    figs["pressure"] = timeseries_chart(
-        readings, "Pressure", p("fig_pressure.png"),
+    _ts("pressure", "Pressure", "fig_pressure.png",
         "Hourly Pressure (hPa)", "Pressure")
-    figs["ws"] = timeseries_chart(
-        readings, "WindSpeed", p("fig_ws.png"),
+    _ts("ws", "WindSpeed", "fig_ws.png",
         "Hourly Wind Speed (m/s)", "Wind Speed")
-    figs["wind_rose"] = wind_rose_chart(
-        readings, bins, p("fig_windrose.png"),
-        project_name=project_name, window_start=window_start,
-        window_end=window_end, window_text=window_text)
-    if class_frequency_pct is not None:
-        figs["wind_class_freq"] = wind_class_frequency_chart(
-            class_frequency_pct, p("fig_windclassfreq.png"))
+
+    # The rose plots direction against speed, so it needs both.
+    if _has_valid(readings, "WindSpeed") and _has_valid(readings, "WindDirection"):
+        figs["wind_rose"] = wind_rose_chart(
+            readings, bins, p("fig_windrose.png"),
+            project_name=project_name, window_start=window_start,
+            window_end=window_end, window_text=window_text)
+        if class_frequency_pct and any(v for v in class_frequency_pct.values()):
+            figs["wind_class_freq"] = wind_class_frequency_chart(
+                class_frequency_pct, p("fig_windclassfreq.png"))
+    else:
+        skipped += ["wind_rose", "wind_class_freq"]
+
+    if skipped:
+        import logging
+        logging.getLogger(__name__).info(
+            "charts omitted (no valid readings): %s", ", ".join(skipped))
     return figs
