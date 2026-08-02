@@ -37,6 +37,7 @@ def _xy(readings: List[Reading], field: str) -> Tuple[List[datetime], List[Optio
     ys = [_effective(r, field) for r in readings]
     return xs, ys
 
+
 def _has_valid(readings, field=None, values=None) -> bool:
     """True when at least one usable number exists for this series.
 
@@ -422,7 +423,25 @@ def wind_class_frequency_chart(
 # ---------------------------------------------------------------------------
 # Full chart set for one campaign
 # ---------------------------------------------------------------------------
-os.makedirs(out_dir, exist_ok=True)
+def generate_all_charts(
+    readings: List[Reading],
+    bins: List[WindClassBin],
+    limits: Dict[Tuple[str, str], float],
+    out_dir: str,
+    window_start=None,
+    class_frequency_pct: Optional[Dict[str, float]] = None,
+    window_end=None,
+    project_name: str = "",
+    window_text: str = "",
+) -> Dict[str, str]:
+    """Generate every figure of the gold-standard report. Returns
+    {figure_key: file_path}. `limits` maps (pollutant, period) -> µg/m³.
+
+    A parameter with no valid readings produces no chart at all: its key is
+    left out, generate.py maps the missing key to an empty context value, and
+    the template prints neither the figure nor its caption.
+    """
+    os.makedirs(out_dir, exist_ok=True)
     p = lambda name: os.path.join(out_dir, name)
     figs: Dict[str, str] = {}
     skipped: List[str] = []
@@ -431,12 +450,7 @@ os.makedirs(out_dir, exist_ok=True)
         return limits.get((pol, per))
 
     def _ts(key, field, fname, ylabel, series_label, **kw):
-        """Draw one time series, unless the parameter recorded nothing.
-
-        Omitting the key here is all that is needed: generate.py already maps
-        a missing chart to an empty context value, and the template prints
-        neither the figure nor its caption when that value is empty.
-        """
+        """Draw one time series, unless the parameter recorded nothing."""
         if not _has_valid(readings, field, kw.get("values")):
             skipped.append(key)
             return
