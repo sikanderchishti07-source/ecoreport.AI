@@ -724,12 +724,18 @@ VML_NS = (
 )
 
 
-def _watermark(section, image_path: str, width_pt: float = 300.0) -> bool:
+def _watermark(section, image_path: str, width_pt: float = 230.0) -> bool:
     """Place a faded mark behind the text on every page of this section.
 
     A watermark is a VML shape anchored in the header with a negative
     z-index, which is what puts it behind the body text rather than over it.
     python-docx has no API for this, so the shape is built as raw XML.
+
+    ``stroked="f"`` is not decoration. A #_x0000_t75 picture frame carries a
+    default outline: Word does not draw it, LibreOffice does — so the DOCX
+    looked clean while every page of the PDF carried a black rotated square
+    around the mark. ``filled="f"`` suppresses the shape's own background for
+    the same reason, leaving only the image itself.
     """
     try:
         from PIL import Image
@@ -747,7 +753,7 @@ def _watermark(section, image_path: str, width_pt: float = 300.0) -> bool:
             '<w:r %s>'
             '<w:pict>'
             '<v:shape id="ecoreport_watermark" o:spid="_x0000_s2051" '
-            'type="#_x0000_t75" '
+            'type="#_x0000_t75" stroked="f" filled="f" '
             'style="position:absolute;margin-left:0;margin-top:0;'
             'width:%.1fpt;height:%.1fpt;z-index:-251654144;'
             'mso-position-horizontal:center;'
