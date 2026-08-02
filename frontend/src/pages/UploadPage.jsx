@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, UploadCloud, FileSpreadsheet, CheckCircle2, AlertTriangle } from "lucide-react";
+import { ArrowLeft, UploadCloud, FileSpreadsheet, CheckCircle2, AlertTriangle, ShieldAlert } from "lucide-react";
 
 import { getCampaign, uploadReadings } from "@/lib/api";
 import { UPLOAD } from "@/constants/testIds";
@@ -54,7 +54,12 @@ export default function UploadPage() {
     try {
       const res = await uploadReadings(id, file);
       setResult(res);
-      if (res.upload_log.rows_ingested > 0) {
+      const warnings = res.upload_log.units_warnings || [];
+      if (warnings.length > 0) {
+        // A units mistake produces plausible-looking numbers, so it has to
+        // interrupt rather than sit in a log nobody opens.
+        toast.error("Check the gas units before generating a report");
+      } else if (res.upload_log.rows_ingested > 0) {
         toast.success(`${res.upload_log.rows_ingested} rows ingested`);
       } else {
         toast.warning("No rows ingested — see errors");
@@ -65,6 +70,9 @@ export default function UploadPage() {
       setUploading(false);
     }
   };
+
+  const unitsWarnings = result?.upload_log?.units_warnings || [];
+  const unitsApplied = result?.upload_log?.units_applied || {};
 
   return (
     <div data-testid={UPLOAD.root} className="space-y-6 max-w-4xl">
@@ -101,7 +109,8 @@ export default function UploadPage() {
           ))}
         </div>
         <div className="px-4 pb-4 text-[11px] text-muted-foreground space-y-0.5">
-          <div>• Pollutants: µg/m³ · Temp: °C · RH: % · Pressure: hPa · Wind speed: m/s · Wind direction: ° (0–360)</div>
+          <div>• Gas units come from the campaign's per-gas settings, or from a units row inside the file. PM10 / PM2.5: µg/m³</div>
+          <div>• Temp: °C · RH: % · Pressure: hPa · Wind speed: m/s · Wind direction: ° (0–360)</div>
           <div>• Cadence: 1 row per hour · Timestamps: ISO-8601 (YYYY-MM-DD HH:MM:SS)</div>
           <div>• QA flag is not read from the file — mark rows as invalid via the Readings tab after upload.</div>
         </div>
@@ -157,6 +166,44 @@ export default function UploadPage() {
         </Button>
       </div>
 
+      {/* Units problems are shown above the result panel, not inside it.
+          A wrong unit yields numbers that look entirely normal, so this is
+          the one message that must not be scrolled past. */}
+      {unitsWarnings.length > 0 && (
+        <section
+          data-testid="upload-units-warning"
+          className="border-2 border-red-600 bg-red-950/30 rounded-sm"
+        >
+          <header className="px-4 py-2 border-b border-red-800 text-[11px] uppercase tracking-wider text-red-300 flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4" />
+            Check the gas units before generating a report
+          </header>
+          <div className="p-4 space-y-3">
+            <ul className="space-y-2">
+              {unitsWarnings.map((w, i) => (
+                <li key={i} className="text-sm text-red-200 leading-relaxed">
+                  {w}
+                </li>
+              ))}
+            </ul>
+            <p className="text-[11px] text-red-300/80">
+              The data has been ingested. Nothing is blocked — but a wrong unit
+              produces figures that look plausible and are wrong by a factor of
+              between 1.4 and 1000. Correct the units, upload the file again,
+              and the readings will be replaced.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="rounded-sm border-red-700 text-red-200 hover:bg-red-900/40"
+              onClick={() => nav(`/campaigns/${id}/edit`)}
+            >
+              Edit campaign gas units →
+            </Button>
+          </div>
+        </section>
+      )}
+
       {result && (
         <section
           data-testid={result.upload_log.rows_ingested > 0 ? UPLOAD.resultOk : UPLOAD.resultErrors}
@@ -180,6 +227,25 @@ export default function UploadPage() {
                 >
                   View readings →
                 </Button>
+              </div>
+            )}
+
+            {Object.keys(unitsApplied).length > 0 && (
+              <div data-testid="upload-units-applied">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">
+                  Units applied to each gas
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(unitsApplied).map(([gas, applied]) => (
+                    <span
+                      key={gas}
+                      className="text-[11px] font-mono border border-border text-muted-foreground rounded-sm px-1.5 py-0.5"
+                      title="Unit read from the file's units row, the campaign's per-gas setting, or the older campaign-wide setting"
+                    >
+                      {gas} <span className="text-foreground">{applied}</span>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -257,7 +323,7 @@ export default function UploadPage() {
               <div>
                 <div className="flex items-center gap-2 text-amber-400 text-sm mb-2">
                   <AlertTriangle className="w-4 h-4" />
-                  {result.upload_log.errors.length} row error(s) — first 20 shown:
+                  {result.upload_log.errors.length} note(s) and row error(s) — first 20 shown:
                 </div>
                 <ul className="text-xs font-mono space-y-0.5 max-h-60 overflow-auto border border-border rounded-sm p-2 bg-background/50">
                   {result.upload_log.errors.map((e, i) => (
