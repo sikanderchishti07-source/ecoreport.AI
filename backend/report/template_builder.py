@@ -2155,18 +2155,8 @@ def build(out_path: str = OUT) -> str:
             "this provider.]", italic=True)
     _p(doc, "{%p endif %}", size=1, space_after=0)
 
-    # Close the document explicitly. A reader who reaches a blank final page
-    # cannot otherwise tell a finished report from a truncated one, which is
-    # the point of the convention in controlled documents.
-    _p(doc, "", size=6, space_after=0)
-    endp = doc.add_paragraph()
-    endp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    endp.paragraph_format.space_before = Pt(10)
-    endp.paragraph_format.keep_with_next = False
-    er = endp.add_run("\u2014  END OF REPORT  \u2014")
-    er.bold = True
-    er.font.size = Pt(10)
-    er.font.color.rgb = NAVY
+    
+    
 
     # End-of-report marker. A reader who receives a loose bundle needs to
     # know they have the whole document; without it a report that ends on a
