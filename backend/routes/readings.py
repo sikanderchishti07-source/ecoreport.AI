@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 from audit import audit
-from units_mdl import GAS_FIELDS, check_units_plausible, to_ugm3
+from units_mdl import GAS_FIELDS, SUPPORTED_UNITS, check_units_plausible, to_ugm3
 from auth import current_username
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status, Header, Depends
 
@@ -80,18 +80,21 @@ _KNOWN_IGNORED_TOKENS = {
 
 
 # ---------------------------------------------------------------------------
-# Units carried in the file itself
+# Units
 #
 # Analyser exports commonly put a units row directly under the parameter
 # names, and the units are not always the same across the row: CO in ppm
-# while every other gas is in ppb is a normal vendor layout. A single
-# campaign-level setting cannot describe that — declaring the file "ppb"
-# would divide CO by a thousand, and "ppm" would multiply everything else by
-# a thousand, in both cases silently and plausibly.
+# while every other gas is in ppb is a normal vendor layout.
 #
-# So the units row, where present, is read and applied per column. The
-# campaign setting remains the fallback for columns the file says nothing
-# about, and for files with no units row at all.
+# Many exports carry no units row at all — the BSA fleet's own files do not.
+# For those, the campaign's per-gas settings decide. Resolution order:
+#
+#   1. the file's units row, column by column   (locked rule: the file wins)
+#   2. the campaign's per-gas map               (gas_units_map)
+#   3. the campaign-wide legacy setting          (gas_units)
+#
+# Whatever is chosen is recorded on the upload log alongside where it came
+# from, so any figure in a stamped report can be traced to its conversion.
 # ---------------------------------------------------------------------------
 _GAS_UNIT_TOKENS = {
     "ppb": "ppb",
@@ -110,6 +113,8 @@ _OTHER_UNIT_TOKENS = {
     "m/s", "ms-1", "knots", "kt",
     "mm", "w/m2", "w/m²",
 }
+
+_UNIT_DISPLAY = {"ugm3": "µg/m³", "ppb": "ppb", "ppm": "ppm", "mgm3": "mg/m³"}
 
 
 def _norm_unit(value) -> str:
@@ -191,6 +196,25 @@ def _row_looks_like_sublabel(row: pd.Series) -> bool:
     return _norm_key(non_null[0]) in {"date", "time", "timestamp", "datetime"}
 
 
+def _take_units_row(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+    """If the first row of `df` is a units banner, lift it out and return it.
+
+    Kept separate from header promotion so a file with ordinary headers and a
+    units row underneath is read correctly too — previously the units row was
+    only ever looked for on the messy-vendor-export path.
+    """
+    units: Dict[str, str] = {}
+    if df.empty:
+        return df, units
+    first = df.iloc[0]
+    if not _row_looks_like_units(first):
+        return df, units
+    units = {str(col): str(val).strip()
+             for col, val in zip(df.columns, first) if not pd.isna(val)}
+    df = df.iloc[1:].reset_index(drop=True)
+    return df, units
+
+
 def _promote_header_if_needed(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
     """Vendor exports often merge the top row across all columns (yielding
     'Unnamed: 0' / 'AQMS' repeated headers). In that case the real headers
@@ -202,7 +226,8 @@ def _promote_header_if_needed(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str,
     """
     units: Dict[str, str] = {}
     if not _looks_like_generic_headers(list(df.columns)):
-        return df, units
+        # Ordinary headers. A units row may still sit directly beneath them.
+        return _take_units_row(df)
     if df.empty:
         return df, units
     first = df.iloc[0]
@@ -371,13 +396,23 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
 
     ingested: List[Reading] = []
     errors: List[str] = []
+    units_warnings: List[str] = []
     skipped = 0
     auto_flagged_readings = 0
     auto_flagged_field_counts: dict[str, int] = {}
     to_insert = []
 
-    gas_units = (campaign.get("gas_units") if isinstance(campaign, dict)
-                 else getattr(campaign, "gas_units", None)) or "ugm3"
+    def _campaign_get(key, default=None):
+        if isinstance(campaign, dict):
+            return campaign.get(key, default)
+        return getattr(campaign, key, default)
+
+    gas_units = _campaign_get("gas_units") or "ugm3"
+    raw_map = _campaign_get("gas_units_map") or {}
+    # Ignore anything unrecognised rather than guessing at it.
+    gas_units_map = {k: v for k, v in raw_map.items()
+                     if isinstance(v, str) and v in SUPPORTED_UNITS}
+
     used_dayfirst = False
     if "timestamp" in df.columns:
         parsed_ts, used_dayfirst = _smart_parse_timestamps(df["timestamp"])
@@ -386,15 +421,25 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
             errors.append(
                 "Note: timestamps were read as day/month/year (DD/MM/YYYY).")
 
-    # Convert gases to µg/m³. The file's own units row wins column by column;
-    # the campaign setting covers anything the file did not label. Mixed rows
-    # (CO in ppm, the rest in ppb) are therefore handled correctly, which one
-    # campaign-wide setting cannot do.
+    # Convert gases to µg/m³, resolving the unit for each column separately.
     converted_notes: List[str] = []
+    units_applied: Dict[str, str] = {}
+    legacy_fallback_gases: List[str] = []
     for gas in GAS_FIELDS:
         if gas not in df.columns:
             continue
-        unit = _gas_unit(file_units.get(gas)) or gas_units
+        unit = _gas_unit(file_units.get(gas))
+        source = "file"
+        if unit is None:
+            unit = gas_units_map.get(gas)
+            source = "campaign"
+        if unit is None:
+            unit = gas_units
+            source = "campaign (legacy)"
+            legacy_fallback_gases.append(gas)
+
+        units_applied[gas] = f"{_UNIT_DISPLAY.get(unit, unit)} ({source})"
+
         if unit == "mgm3":
             df[gas] = pd.to_numeric(df[gas], errors="coerce") * 1000.0
             converted_notes.append(f"{gas} mg/m³→µg/m³")
@@ -403,11 +448,20 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
             continue
         df[gas] = pd.to_numeric(df[gas], errors="coerce").apply(
             lambda v, u=unit, g=gas: to_ugm3(v, g, u) if pd.notna(v) else v)
-        converted_notes.append(f"{gas} {unit}")
+        converted_notes.append(f"{gas} {unit}→µg/m³")
+
     if converted_notes:
-        src = "the file's units row" if file_units else "the campaign setting"
-        errors.append(f"Gas values converted to µg/m³ (25 °C, 101.3 kPa) using "
-                      f"{src}: " + ", ".join(converted_notes) + ".")
+        errors.append("Gas values converted to µg/m³ (25 °C, 101.3 kPa): "
+                      + ", ".join(converted_notes) + ".")
+
+    # A campaign that predates per-gas units falls back to one setting for
+    # every column. That cannot describe a mixed-unit export, so say so.
+    if legacy_fallback_gases and not gas_units_map:
+        units_warnings.append(
+            "This campaign has no per-gas units set, so all gas columns were "
+            f"read as {_UNIT_DISPLAY.get(gas_units, gas_units)}. If the "
+            "analyser exports CO in ppm and the other gases in ppb, edit the "
+            "campaign, set the units for each gas, and upload the file again.")
 
     for idx, row in df.iterrows():
         try:
@@ -480,9 +534,9 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
             col = col[col > 0]
             if len(col):
                 medians[gas] = float(col.median())
-    warn = check_units_plausible(medians, "ugm3" if file_units else gas_units)
+    warn = check_units_plausible(medians, gas_units)
     if warn:
-        errors.insert(0, warn)
+        units_warnings.append(warn)
 
     upload_log = UploadLog(
         campaign_id=campaign_id,
@@ -495,6 +549,8 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
         ignored_columns=ignored,
         auto_flagged_readings=auto_flagged_readings,
         auto_flagged_field_counts=auto_flagged_field_counts,
+        units_applied=units_applied,
+        units_warnings=units_warnings,
     )
     await db.upload_logs.insert_one(to_mongo(upload_log.model_dump()))
 
@@ -502,6 +558,8 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
                 {"filename": upload_log.filename,
                  "rows_ingested": upload_log.rows_ingested,
                  "rows_skipped": upload_log.rows_skipped,
+                 "units_applied": units_applied,
+                 "units_warnings": len(units_warnings),
                  "auto_flagged_readings": upload_log.auto_flagged_readings})
 
     return UploadResult(upload_log=upload_log, preview=ingested[:10])
