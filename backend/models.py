@@ -50,6 +50,37 @@ DEFAULT_WIND_BINS: List[WindClassBin] = [
 
 
 # ---------------------------------------------------------------------------
+# Gas units, per gas
+#
+# An analyser export does not use one unit throughout. The BSA fleet reports
+# six gases in ppb and CO in ppm, in the same file, with no units row to say
+# so. A single campaign-wide setting cannot describe that: "ppb" leaves CO a
+# thousand times too small, "ppm" inflates the other six by the same factor,
+# and "ugm3" passes every raw number through unconverted. All three failures
+# are silent, and the resulting figures look plausible.
+#
+# So units are declared per gas. Resolution order on ingest is:
+#   1. a units row inside the uploaded file      (locked rule — file wins)
+#   2. this per-gas map
+#   3. the legacy campaign-wide `gas_units`      (older campaigns)
+#
+# Campaigns created before this field existed have an empty map and therefore
+# keep their previous behaviour exactly.
+# ---------------------------------------------------------------------------
+GAS_UNIT_FIELDS = ("SO2", "NO", "NO2", "NOx", "O3", "H2S", "CO")
+
+DEFAULT_GAS_UNITS_MAP: Dict[str, str] = {
+    "SO2": "ppb",
+    "NO": "ppb",
+    "NO2": "ppb",
+    "NOx": "ppb",
+    "O3": "ppb",
+    "H2S": "ppb",
+    "CO": "ppm",
+}
+
+
+# ---------------------------------------------------------------------------
 # Campaigns — one monitoring project (site + client + window + metadata).
 # ---------------------------------------------------------------------------
 class CampaignBase(BaseModel):
@@ -62,8 +93,12 @@ class CampaignBase(BaseModel):
     inlet_height_m: float = 5.0
     facility_latitude: Optional[float] = None   # optional: the plant/source,
     facility_longitude: Optional[float] = None  # used only to state geometry
-    gas_units: str = "ugm3"          # units of the UPLOADED gas data:
-                                     # "ugm3" | "ppb" | "ppm" (converted on ingest)
+    gas_units: str = "ugm3"          # LEGACY campaign-wide fallback:
+                                     # "ugm3" | "ppb" | "ppm". Retained so
+                                     # existing campaigns are untouched.
+    gas_units_map: Dict[str, str] = Field(default_factory=dict)
+                                     # per-gas units, e.g. {"CO": "ppm", ...}
+                                     # empty => fall back to gas_units
     monitoring_start: datetime
     monitoring_end: datetime
     prepared_by: Optional[str] = None
@@ -83,6 +118,7 @@ class CampaignCreate(CampaignBase):
 
 class CampaignUpdate(BaseModel):
     gas_units: Optional[str] = None
+    gas_units_map: Optional[Dict[str, str]] = None
     document_status: Optional[str] = None
     facility_latitude: Optional[float] = None
     facility_longitude: Optional[float] = None
@@ -214,6 +250,11 @@ class UploadLog(BaseModel):
     # instrument/calibration errors and their per-field values are nulled.
     auto_flagged_readings: int = 0
     auto_flagged_field_counts: Dict[str, int] = Field(default_factory=dict)
+    # Units actually applied to each gas column, and where each came from
+    # ("file" | "campaign" | "campaign (legacy)"). Recorded so a report can
+    # always be traced back to the conversion that produced its numbers.
+    units_applied: Dict[str, str] = Field(default_factory=dict)
+    units_warnings: List[str] = Field(default_factory=list)
     uploaded_at: datetime = Field(default_factory=utcnow)
 
 
