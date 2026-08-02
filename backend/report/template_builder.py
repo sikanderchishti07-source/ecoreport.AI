@@ -779,10 +779,53 @@ def _watermark(section, image_path: str, width_pt: float = 230.0) -> bool:
 
 
 
-# A page holds roughly this many short table rows. Above it a table cannot
-# be kept whole, so it is allowed to flow with its header repeating rather
-# than forced into a layout that will not fit.
-MAX_ROWS_KEPT_WHOLE = 24
+# A table is only held whole when it plausibly fits in the space a page can
+# offer. Row count was the old proxy and it is a poor one: the reference
+# method table has seven rows but each carries a paragraph of text, so it is
+# taller than a page, while the wind class table has twenty short rows and is
+# not. Marking an oversized table "hold whole" does not make it fit — the
+# renderer has to break it anyway, and in doing so it strands the caption on
+# the previous page or leaves a blank page behind.
+#
+# Values are in centimetres, measured against A4 with the body margins used
+# in this document (usable height ~24.5 cm).
+MAX_TABLE_CM_KEPT_WHOLE = 12.0
+_CHARS_FULL_WIDTH = 90        # characters across the full text column at 9-10 pt
+_LINE_CM = 0.46               # line height at that size
+_ROW_PAD_CM = 0.30            # cell padding, top and bottom
+
+
+def _estimate_table_cm(table) -> float:
+    """Rough printed height of a table, in centimetres.
+
+    Deliberately approximate: it only has to distinguish "comfortably fits"
+    from "will not fit", not predict layout. Errs high, because holding a
+    table whole when it does not fit is the failure being avoided.
+
+    Characters per line are divided by the column count. The reference method
+    table carries a two-hundred-character description in a cell one fifth of
+    the page wide — measuring it against the full text width made it look
+    half its real height.
+
+    Returns infinity for a table containing a {%tr %} loop: those rows are
+    duplicated once per record when the report is rendered, so the finished
+    height is not knowable here. A four-row template becomes a twenty-row
+    table; assuming it is short is exactly how an oversized table ends up
+    marked "hold whole".
+    """
+    ncols = max(len(table.columns), 1)
+    per_line = max(_CHARS_FULL_WIDTH // ncols, 10)
+    total = 0.0
+    for row in table.rows:
+        lines = 1
+        for cell in row.cells:
+            text = cell.text or ""
+            if "{%tr" in text or "{%tc" in text:
+                return float("inf")
+            if text:
+                lines = max(lines, -(-len(text) // per_line))
+        total += lines * _LINE_CM + _ROW_PAD_CM
+    return total
 
 
 def _typeset(doc) -> dict:
@@ -871,7 +914,9 @@ def _typeset(doc) -> dict:
         # threshold are left to flow with a repeating header instead of
         # being forced into an impossible layout.
         is_layout_grid = len(table.columns) >= 8
-        if not is_layout_grid and 1 < len(rows) <= MAX_ROWS_KEPT_WHOLE:
+        est_cm = _estimate_table_cm(table)
+        if not is_layout_grid and len(rows) > 1 \
+                and est_cm <= MAX_TABLE_CM_KEPT_WHOLE:
             # Worked on the XML rather than through python-docx cells: a
             # vertically merged cell is reported as part of every row it
             # spans, and lxml creates element proxies on demand, so cells
