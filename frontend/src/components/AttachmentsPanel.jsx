@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  ChevronLeft, ChevronRight, FileText, Image as ImageIcon, MapPin, Trash2, Upload,
+  Check, ChevronLeft, ChevronRight, FileText, Image as ImageIcon, ImageOff,
+  MapPin, Trash2, Upload,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -10,10 +12,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  deleteAttachment, listAttachments, updateAttachment, uploadAttachments,
+  clearCoverPhoto, deleteAttachment, listAttachments, listCoverPhotos,
+  selectCoverPhoto, updateAttachment, uploadAttachments,
 } from "@/lib/api";
 import AuthImage from "@/components/AuthImage";
 
+// cover_photo is absent here: it is chosen from the shared library below
+// rather than uploaded per campaign.
 const SECTIONS = [
   { kind: "site_photo", title: "Field photos", icon: ImageIcon, orderable: true,
     hint: "Four station photos taken on site — printed as a 2×2 grid (Figure 2).",
@@ -26,8 +31,6 @@ const SECTIONS = [
     orderHint: "Pages print in this order in Appendix 4." },
   { kind: "site_map", title: "Site map override", icon: MapPin, orderable: false,
     hint: "Optional. Upload your own satellite image to replace the automatic map (Figure 1)." },
-  { kind: "cover_photo", title: "Cover photo", icon: ImageIcon, orderable: false,
-    hint: "Optional image for the report cover." },
 ];
 
 function Section({ campaignId, section, items, instruments, onChange }) {
@@ -150,7 +153,7 @@ function Section({ campaignId, section, items, instruments, onChange }) {
         <input
           ref={inputRef}
           type="file"
-          multiple={section.kind !== "site_map" && section.kind !== "cover_photo"}
+          multiple={section.kind !== "site_map"}
           accept="image/*,application/pdf"
           className="hidden"
           onChange={(e) => pick(e.target.files)}
@@ -258,6 +261,122 @@ function Section({ campaignId, section, items, instruments, onChange }) {
   );
 }
 
+/**
+ * Choose which library photograph this report's cover uses.
+ *
+ * The photographs themselves are held once under Cover Photos; a campaign
+ * only records which one it wants. Nothing selected means the standard cover,
+ * which is what every campaign did before this existed.
+ */
+function CoverPicker({ campaignId, selectedSourceId, onChange }) {
+  const [library, setLibrary] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    listCoverPhotos()
+      .then(setLibrary)
+      .catch(() => toast.error("Could not load the cover photo library"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const choose = async (photo) => {
+    setSaving(true);
+    try {
+      if (selectedSourceId === photo.id) {
+        await clearCoverPhoto(campaignId);
+        toast.success("Back to the standard cover");
+      } else {
+        await selectCoverPhoto(campaignId, photo.id);
+        toast.success(`Cover set to "${photo.caption || photo.filename}"`);
+      }
+      onChange();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not set the cover");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="border border-border rounded-sm p-4">
+      <div className="flex items-start gap-2">
+        <ImageIcon className="w-4 h-4 text-primary mt-0.5" />
+        <div className="flex-1">
+          <h3 className="text-sm font-semibold">Report cover</h3>
+          <p className="text-xs text-muted-foreground mt-1">
+            Click a photo to use it on this report's cover. Click it again to
+            go back to the standard cover.
+          </p>
+        </div>
+      </div>
+
+      {loading ? (
+        <p className="text-xs text-muted-foreground mt-3">Loading…</p>
+      ) : library.length === 0 ? (
+        <div className="mt-3 border border-dashed border-border rounded-sm p-6 text-center">
+          <ImageOff className="w-5 h-5 mx-auto text-muted-foreground mb-2" />
+          <p className="text-xs text-muted-foreground">
+            The library is empty. Add photographs under{" "}
+            <Link to="/cover-photos" className="text-primary underline decoration-dotted">
+              Cover Photos
+            </Link>{" "}
+            and they will appear here for every campaign.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+            {library.map((p) => {
+              const active = selectedSourceId === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  disabled={saving}
+                  onClick={() => choose(p)}
+                  data-testid={`cover-pick-${p.id}`}
+                  aria-pressed={active}
+                  className={`relative text-left rounded-sm overflow-hidden border transition-colors ${
+                    active
+                      ? "border-2 border-emerald-500"
+                      : "border-border hover:border-primary/50"
+                  }`}
+                >
+                  <div className="aspect-[4/3] bg-secondary/50 flex items-center justify-center">
+                    <AuthImage
+                      attachmentId={p.id}
+                      alt={p.caption || p.filename}
+                      className="object-cover w-full h-full"
+                    />
+                  </div>
+                  {active && (
+                    <span className="absolute top-1.5 right-1.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500">
+                      <Check className="w-3 h-3 text-white" />
+                    </span>
+                  )}
+                  <span
+                    className={`block px-2 py-1.5 text-[11px] truncate ${
+                      active ? "font-medium" : "text-muted-foreground"
+                    }`}
+                  >
+                    {p.caption || p.filename}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-2.5">
+            {selectedSourceId
+              ? "This report will use the ticked photo."
+              : "Nothing selected — this report uses the standard cover image."}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function AttachmentsPanel({ campaign }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -273,9 +392,18 @@ export default function AttachmentsPanel({ campaign }) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  const cover = items.find((i) => i.kind === "cover_photo");
+
   return (
     <div className="space-y-4">
       {loading && <p className="text-xs text-muted-foreground">Loading…</p>}
+
+      <CoverPicker
+        campaignId={campaign.id}
+        selectedSourceId={cover?.source_id || null}
+        onChange={refresh}
+      />
+
       {SECTIONS.map((s) => (
         <Section
           key={s.kind}
