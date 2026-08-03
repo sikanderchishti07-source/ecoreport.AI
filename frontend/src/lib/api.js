@@ -44,15 +44,27 @@ api.interceptors.response.use(
 );
 
 export const authStatus = () => api.get("/auth/status").then((r) => r.data);
+// Both of these now return a CHALLENGE, not a session: the password is only
+// the first of two steps. Pass the challenge to authVerify with the code.
 export const authSetup = (payload) =>
   api.post("/auth/setup", payload).then((r) => r.data);
 export const authLogin = (payload) =>
   api.post("/auth/login", payload).then((r) => r.data);
+export const authVerify = (payload) =>
+  api.post("/auth/login/verify", payload).then((r) => r.data);
+
 export const listUsers = () => api.get("/auth/users").then((r) => r.data);
 export const createUser = (payload) =>
   api.post("/auth/users", payload).then((r) => r.data);
 export const updateUser = (id, payload) =>
   api.patch(`/auth/users/${id}`, payload).then((r) => r.data);
+// Lost phone: clears the authenticator setup so their next sign-in shows a
+// fresh QR code and issues new recovery codes.
+export const resetUserTwoFactor = (id) =>
+  api.post(`/auth/users/${id}/reset-2fa`).then((r) => r.data);
+// Frees someone locked out by failed attempts, without waiting out the timer.
+export const unlockUser = (id) =>
+  api.post(`/auth/users/${id}/unlock`).then((r) => r.data);
 
 // Campaigns
 export const listCampaigns = () => api.get("/campaigns").then((r) => r.data);
