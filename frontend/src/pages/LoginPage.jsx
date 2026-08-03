@@ -17,6 +17,14 @@ const NAVY = "#0F3D6E";
 // and needs no bundler import.
 const BG = "/login-bg.jpg";
 
+// Three stacked shadows rather than one. A single blurred shadow reads as a
+// sticker; a contact shadow at the edge, a mid shadow and a wide soft one is
+// how an object actually sits on a surface. All tinted navy rather than black,
+// so the card lifts within the page's own colour instead of dirtying it.
+const CARD_SHADOW =
+  "0 1px 2px rgba(15,61,110,0.05), 0 8px 20px rgba(15,61,110,0.09), 0 24px 48px rgba(15,61,110,0.10)";
+const BUTTON_SHADOW = "0 4px 12px rgba(15,61,110,0.28)";
+
 const FEATURES = [
   {
     icon: ShieldCheck,
@@ -64,7 +72,7 @@ function BackdropPattern() {
         </pattern>
       </defs>
       <rect width="900" height="700" fill="url(#ecoreport-login-dots)" />
-      <g fill="none" stroke="#2F9E63" strokeOpacity="0.16" strokeWidth="1.1">
+      <g fill="none" stroke="#2F9E63" strokeOpacity="0.15" strokeWidth="1.1">
         <path d="M900 60 C 790 130, 770 220, 850 300 C 925 375, 875 490, 735 595" />
         <path d="M900 118 C 808 182, 790 252, 866 322 C 936 388, 898 498, 782 600" />
         <path d="M900 176 C 828 234, 812 288, 882 344 C 944 396, 922 508, 830 610" />
@@ -189,11 +197,14 @@ export default function LoginPage() {
       </aside>
 
       {/* ---------------- sign-in card ---------------- */}
-      <main className="relative flex items-center justify-center px-4 py-10 lg:py-14">
+      <main className="relative flex items-center justify-center px-4 py-12 lg:py-16">
         <BackdropPattern />
 
-        <div className="relative w-full max-w-[380px]">
-          <div className="border border-border rounded-xl bg-card px-7 py-8">
+        <div className="relative w-full max-w-[420px]">
+          <div
+            className="border border-border rounded-2xl bg-card px-8 py-9"
+            style={{ boxShadow: CARD_SHADOW }}
+          >
 
             {/* the panel above already carries the mark on a wide screen */}
             <div className="flex items-center gap-2.5 lg:hidden mb-7">
@@ -209,25 +220,25 @@ export default function LoginPage() {
             </div>
 
             {setupRequired === null ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground py-8">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-10">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Loading…
               </div>
             ) : (
               <>
-                <h1 className="text-[22px] font-semibold tracking-tight">
+                <h1 className="text-[25px] font-semibold tracking-tight">
                   {setupRequired ? "Create the admin account" : "Welcome back"}
                 </h1>
-                <p className="text-[13px] text-muted-foreground mt-1.5 leading-relaxed">
+                <p className="text-[13.5px] text-muted-foreground mt-2 leading-relaxed">
                   {setupRequired
                     ? "First-time setup — this account manages all other users."
                     : "Sign in to access your dashboard."}
                 </p>
 
-                <form onSubmit={submit} className="mt-7 space-y-4">
+                <form onSubmit={submit} className="mt-8 space-y-[18px]">
                   {setupRequired && (
-                    <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">
+                    <div className="space-y-2">
+                      <Label className="text-[12.5px] text-muted-foreground">
                         Full name
                       </Label>
                       <Input
@@ -235,31 +246,31 @@ export default function LoginPage() {
                         onChange={set("name")}
                         required
                         placeholder="Eng. Aida Galal"
-                        className="rounded-md h-10"
+                        className="rounded-[10px] h-11 text-sm bg-card"
                         data-testid="setup-name-input"
                       />
                     </div>
                   )}
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">
+                  <div className="space-y-2">
+                    <Label className="text-[12.5px] text-muted-foreground">
                       Username
                     </Label>
                     <div className="relative">
-                      <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                      <User className="w-[17px] h-[17px] absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                       <Input
                         value={form.username}
                         onChange={set("username")}
                         required
                         autoComplete="username"
-                        className="rounded-md h-10 pl-9"
+                        className="rounded-[10px] h-11 pl-11 text-sm bg-card"
                         data-testid="login-username-input"
                       />
                     </div>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">
+                  <div className="space-y-2">
+                    <Label className="text-[12.5px] text-muted-foreground">
                       Password{" "}
                       {setupRequired && (
                         <span className="text-muted-foreground">
@@ -268,7 +279,7 @@ export default function LoginPage() {
                       )}
                     </Label>
                     <div className="relative">
-                      <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                      <Lock className="w-[17px] h-[17px] absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                       <Input
                         type={showPassword ? "text" : "password"}
                         value={form.password}
@@ -278,7 +289,7 @@ export default function LoginPage() {
                         autoComplete={
                           setupRequired ? "new-password" : "current-password"
                         }
-                        className="rounded-md h-10 pl-9 pr-10"
+                        className="rounded-[10px] h-11 pl-11 pr-11 text-sm bg-card"
                         data-testid="login-password-input"
                       />
                       {/* a typo in a masked field is the commonest reason a
@@ -289,13 +300,13 @@ export default function LoginPage() {
                         aria-label={
                           showPassword ? "Hide password" : "Show password"
                         }
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         data-testid="login-password-toggle"
                       >
                         {showPassword ? (
-                          <EyeOff className="w-4 h-4" />
+                          <EyeOff className="w-[17px] h-[17px]" />
                         ) : (
-                          <Eye className="w-4 h-4" />
+                          <Eye className="w-[17px] h-[17px]" />
                         )}
                       </button>
                     </div>
@@ -304,8 +315,8 @@ export default function LoginPage() {
                   <Button
                     type="submit"
                     disabled={busy}
-                    className="w-full rounded-md h-11 text-[13.5px] text-white hover:opacity-90"
-                    style={{ backgroundColor: NAVY }}
+                    className="w-full rounded-[10px] h-12 text-[14.5px] text-white hover:opacity-90 !mt-7"
+                    style={{ backgroundColor: NAVY, boxShadow: BUTTON_SHADOW }}
                     data-testid="login-submit-btn"
                   >
                     {busy ? (
@@ -315,13 +326,13 @@ export default function LoginPage() {
                       </>
                     ) : setupRequired ? (
                       <>
-                        <ShieldCheck className="w-4 h-4 mr-2" />
+                        <ShieldCheck className="w-[18px] h-[18px] mr-2" />
                         Create admin account
                       </>
                     ) : (
                       <>
                         Sign in
-                        <ArrowRight className="w-4 h-4 ml-2" />
+                        <ArrowRight className="w-[18px] h-[18px] ml-2" />
                       </>
                     )}
                   </Button>
@@ -330,7 +341,7 @@ export default function LoginPage() {
             )}
           </div>
 
-          <p className="text-[11px] text-muted-foreground text-center mt-4 leading-relaxed">
+          <p className="text-[11px] text-muted-foreground text-center mt-5 leading-relaxed">
             Bander Said Allehiany for Environmental Consultancy
             <br />
             <span className="opacity-75">KSA NCEC 2020 · v0.1.0</span>
