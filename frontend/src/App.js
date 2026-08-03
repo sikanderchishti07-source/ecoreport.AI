@@ -1,6 +1,5 @@
 import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import "@/App.css";
-
 import AppShell from "@/components/layout/AppShell";
 import CampaignsList from "@/pages/CampaignsList";
 import CampaignForm from "@/pages/CampaignForm";
@@ -12,6 +11,7 @@ import HomeDashboard from "@/pages/HomeDashboard";
 import PortalPage from "@/pages/PortalPage";
 import UsersPage from "@/pages/UsersPage";
 import StationsPage from "@/pages/StationsPage";
+import CoverPhotosPage from "@/pages/CoverPhotosPage";
 import { getToken } from "@/lib/api";
 
 function RequireAuth({ children }) {
@@ -41,6 +41,7 @@ export default function App() {
             <Route path="/campaigns/:id/upload" element={<UploadPage />} />
             <Route path="/limits" element={<LimitsPage />} />
             <Route path="/labs" element={<StationsPage />} />
+            <Route path="/cover-photos" element={<CoverPhotosPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="*" element={<Navigate to="/campaigns" replace />} />
           </Route>
