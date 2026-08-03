@@ -1,4 +1,4 @@
-"""Mobile-lab (station) library and campaign attachments.
+"""Mobile-lab (station) library, campaign attachments, and cover photos.
 
 Stations
 --------
@@ -10,8 +10,15 @@ Attachments
 -----------
 Field photos (Figure 2), calibration certificates (Appendix 3, each linked to
 an instrument serial number), the environmental licence (Appendix 4), an
-optional site-map override (Figure 1) and an optional cover photo. PDFs are
-converted to images on upload so they can be placed in the DOCX.
+optional site-map override (Figure 1) and the cover photo. PDFs are converted
+to images on upload so they can be placed in the DOCX.
+
+Cover photos
+------------
+Held once in a shared library rather than uploaded per campaign — the same
+handful of photographs is used across every job. A campaign selects one, which
+writes an ordinary `cover_photo` attachment pointing at the library file, so
+the report pipeline needs no knowledge of any of this.
 """
 from __future__ import annotations
 
@@ -39,6 +46,10 @@ router = APIRouter(tags=["stations", "attachments"])
 MEDIA_DIR = os.environ.get("MEDIA_DIR", "/data/attachments")
 MAX_MB = 25
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+
+# A library record is the one with no owner: no campaign, no station.
+LIBRARY_QUERY = {"kind": "cover_photo", "campaign_id": "",
+                 "station_id": None}
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +270,11 @@ async def delete_attachment(attachment_id: str,
         raise HTTPException(status_code=404, detail="Attachment not found")
     await db.attachments.delete_one({"id": attachment_id})
     try:
-        if doc.get("path") and os.path.exists(doc["path"]):
+        # A campaign's cover selection shares its file with the library
+        # record it points at. Removing the selection must not delete the
+        # photograph out from under every other campaign using it.
+        shared = bool(doc.get("source_id"))
+        if not shared and doc.get("path") and os.path.exists(doc["path"]):
             os.remove(doc["path"])
     except OSError:
         pass
@@ -281,6 +296,128 @@ async def get_attachment_file(attachment_id: str):
     if not path:
         raise HTTPException(status_code=410, detail="File no longer available")
     return FileResponse(path, filename=doc["filename"])
+
+
+# ---------------------------------------------------------------------------
+# Cover-photo library
+#
+# The same few photographs are used across every campaign, so they are held
+# once here rather than re-uploaded per job. Choosing one for a campaign
+# writes an ordinary `cover_photo` attachment pointing at the library file —
+# which means report generation, which already looks for exactly that, needs
+# no change at all.
+# ---------------------------------------------------------------------------
+@router.get("/cover-photos", response_model=List[Attachment])
+async def list_cover_photos():
+    docs = await db.attachments.find(LIBRARY_QUERY, {"_id": 0}) \
+        .sort([("order", 1), ("uploaded_at", 1)]).to_list(length=200)
+    return [Attachment(**d) for d in docs]
+
+
+@router.post("/cover-photos", status_code=status.HTTP_201_CREATED)
+async def upload_cover_photos(
+    caption: Optional[str] = Form(None),
+    files: List[UploadFile] = File(...),
+    user: str = Depends(current_username),
+):
+    dest_dir = os.path.join(MEDIA_DIR, "library", "cover_photo")
+    os.makedirs(dest_dir, exist_ok=True)
+    start_order = await db.attachments.count_documents(LIBRARY_QUERY)
+    created: List[Attachment] = []
+
+    for n, up in enumerate(files):
+        raw = await up.read()
+        if len(raw) > MAX_MB * 1024 * 1024:
+            raise HTTPException(status_code=413,
+                                detail=f"{up.filename} exceeds {MAX_MB} MB")
+        ext = os.path.splitext(up.filename or "")[1].lower()
+        if ext not in IMAGE_EXT:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{up.filename}: cover photos must be images")
+        path = os.path.join(dest_dir, f"{uuid.uuid4().hex}{ext}")
+        with open(path, "wb") as fh:
+            fh.write(raw)
+        meta = storage.store_report(path, "library",
+                                    f"cover_photo/{os.path.basename(path)}")
+        att = Attachment(
+            campaign_id="", station_id=None, kind="cover_photo",
+            filename=up.filename or "photo", path=path,
+            caption=caption or os.path.splitext(up.filename or "")[0],
+            order=start_order + n, size_bytes=os.path.getsize(path),
+            storage=meta["storage"], s3_key=meta["s3_key"], uploaded_by=user)
+        await db.attachments.insert_one(to_mongo(att.model_dump()))
+        created.append(att)
+
+    await audit("cover_photo.upload", "library", "cover_photo", user,
+                {"files": len(created)})
+    return created
+
+
+@router.delete("/cover-photos/{photo_id}", status_code=204)
+async def delete_cover_photo(photo_id: str,
+                             user: str = Depends(current_username)) -> Response:
+    """Remove a photograph from the library.
+
+    Every campaign currently using it is cleared first, so no report is left
+    pointing at a file that no longer exists — it falls back to the standard
+    cover instead.
+    """
+    doc = await db.attachments.find_one(
+        dict(LIBRARY_QUERY, id=photo_id), {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Cover photo not found")
+
+    used_by = await db.attachments.count_documents({"source_id": photo_id})
+    await db.attachments.delete_many({"source_id": photo_id})
+    await db.attachments.delete_one({"id": photo_id})
+    try:
+        if doc.get("path") and os.path.exists(doc["path"]):
+            os.remove(doc["path"])
+    except OSError:
+        pass
+    await audit("cover_photo.delete", "library", photo_id, user,
+                {"filename": doc.get("filename"), "campaigns_cleared": used_by})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/campaigns/{campaign_id}/cover-photo/{photo_id}")
+async def select_cover_photo(campaign_id: str, photo_id: str,
+                             user: str = Depends(current_username)):
+    """Use a library photograph on this campaign's report cover."""
+    if not await db.campaigns.find_one({"id": campaign_id}, {"_id": 0}):
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    photo = await db.attachments.find_one(
+        dict(LIBRARY_QUERY, id=photo_id), {"_id": 0})
+    if not photo:
+        raise HTTPException(status_code=404, detail="Cover photo not found")
+
+    # One cover per campaign: clear whatever was chosen before. The file is
+    # left alone — it belongs to the library, not to this campaign.
+    await db.attachments.delete_many({"campaign_id": campaign_id,
+                                      "kind": "cover_photo"})
+    att = Attachment(
+        campaign_id=campaign_id, kind="cover_photo", source_id=photo_id,
+        filename=photo.get("filename", "cover"), path=photo.get("path", ""),
+        caption=photo.get("caption"), order=0,
+        size_bytes=int(photo.get("size_bytes", 0) or 0),
+        storage=photo.get("storage", "local"), s3_key=photo.get("s3_key"),
+        uploaded_by=user)
+    await db.attachments.insert_one(to_mongo(att.model_dump()))
+    await audit("campaign.cover_photo", "campaign", campaign_id, user,
+                {"photo": photo.get("caption") or photo.get("filename")})
+    return att
+
+
+@router.delete("/campaigns/{campaign_id}/cover-photo", status_code=204)
+async def clear_cover_photo(campaign_id: str,
+                            user: str = Depends(current_username)) -> Response:
+    """Go back to the standard cover image for this campaign."""
+    await db.attachments.delete_many({"campaign_id": campaign_id,
+                                      "kind": "cover_photo"})
+    await audit("campaign.cover_photo", "campaign", campaign_id, user,
+                {"photo": None})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------
