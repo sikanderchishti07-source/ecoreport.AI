@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { FileText, Image as ImageIcon, MapPin, Trash2, Upload } from "lucide-react";
+import {
+  ChevronLeft, ChevronRight, FileText, Image as ImageIcon, MapPin, Trash2, Upload,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -13,15 +15,18 @@ import {
 import AuthImage from "@/components/AuthImage";
 
 const SECTIONS = [
-  { kind: "site_photo", title: "Field photos", icon: ImageIcon,
-    hint: "Four station photos taken on site — printed as a 2×2 grid (Figure 2)." },
-  { kind: "calibration", title: "Calibration certificates", icon: FileText,
-    hint: "Images or PDFs. Link each one to its analyser so Appendix 3 states the serial number." },
-  { kind: "license", title: "Environmental licence", icon: FileText,
-    hint: "The provider's licence — printed in Appendix 4." },
-  { kind: "site_map", title: "Site map override", icon: MapPin,
+  { kind: "site_photo", title: "Field photos", icon: ImageIcon, orderable: true,
+    hint: "Four station photos taken on site — printed as a 2×2 grid (Figure 2).",
+    orderHint: "Position 1 prints top-left, 2 top-right, 3 bottom-left, 4 bottom-right." },
+  { kind: "calibration", title: "Calibration certificates", icon: FileText, orderable: true,
+    hint: "Images or PDFs. Link each one to its analyser so Appendix 3 states the serial number.",
+    orderHint: "Certificates print in this order in Appendix 3." },
+  { kind: "license", title: "Environmental licence", icon: FileText, orderable: true,
+    hint: "The provider's licence — printed in Appendix 4.",
+    orderHint: "Pages print in this order in Appendix 4." },
+  { kind: "site_map", title: "Site map override", icon: MapPin, orderable: false,
     hint: "Optional. Upload your own satellite image to replace the automatic map (Figure 1)." },
-  { kind: "cover_photo", title: "Cover photo", icon: ImageIcon,
+  { kind: "cover_photo", title: "Cover photo", icon: ImageIcon, orderable: false,
     hint: "Optional image for the report cover." },
 ];
 
@@ -29,7 +34,13 @@ function Section({ campaignId, section, items, instruments, onChange }) {
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [sn, setSn] = useState("");
+  // Local copy so an arrow click moves the tile immediately rather than after
+  // a round trip. Re-synced whenever the parent refetches.
+  const [ordered, setOrdered] = useState(items);
+  const [reordering, setReordering] = useState(false);
   const Icon = section.icon;
+
+  useEffect(() => { setOrdered(items); }, [items]);
 
   const pick = async (files) => {
     if (!files?.length) return;
@@ -74,6 +85,33 @@ function Section({ campaignId, section, items, instruments, onChange }) {
     }
   };
 
+  /**
+   * Swap a tile with its neighbour and write every position back.
+   *
+   * Rewriting all of them rather than just the two that moved also repairs
+   * files uploaded before ordering existed, whose stored positions may be
+   * duplicated or absent.
+   */
+  const move = async (index, delta) => {
+    const target = index + delta;
+    if (target < 0 || target >= ordered.length) return;
+    const previous = ordered;
+    const next = [...ordered];
+    [next[index], next[target]] = [next[target], next[index]];
+    setOrdered(next);
+    setReordering(true);
+    try {
+      await Promise.all(next.map((a, i) => updateAttachment(a.id, { order: i })));
+    } catch {
+      toast.error("Could not save the new order");
+      setOrdered(previous);
+    } finally {
+      setReordering(false);
+    }
+  };
+
+  const canOrder = section.orderable && ordered.length > 1;
+
   return (
     <div className="border border-border rounded-sm p-4">
       <div className="flex items-start gap-2">
@@ -82,10 +120,15 @@ function Section({ campaignId, section, items, instruments, onChange }) {
           <h3 className="text-sm font-semibold">
             {section.title}{" "}
             <Badge variant="outline" className="rounded-sm font-mono ml-1">
-              {items.length}
+              {ordered.length}
             </Badge>
           </h3>
           <p className="text-xs text-muted-foreground mt-1">{section.hint}</p>
+          {canOrder && (
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              {section.orderHint} Use the arrows on each tile to change the order.
+            </p>
+          )}
         </div>
       </div>
 
@@ -123,11 +166,15 @@ function Section({ campaignId, section, items, instruments, onChange }) {
         </Button>
       </div>
 
-      {items.length > 0 && (
+      {ordered.length > 0 && (
         <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
-          {items.map((a) => (
-            <div key={a.id} className="border border-border rounded-sm p-2 space-y-1.5">
-              <div className="aspect-[4/3] bg-secondary/50 rounded-sm overflow-hidden flex items-center justify-center">
+          {ordered.map((a, idx) => (
+            <div
+              key={a.id}
+              data-testid={`attachment-${section.kind}-${idx}`}
+              className="border border-border rounded-sm p-2 space-y-1.5"
+            >
+              <div className="relative aspect-[4/3] bg-secondary/50 rounded-sm overflow-hidden flex items-center justify-center">
                 {/* the file route needs a Bearer token, which a plain <img>
                     cannot send — AuthImage fetches it and supplies a blob */}
                 <AuthImage
@@ -135,7 +182,45 @@ function Section({ campaignId, section, items, instruments, onChange }) {
                   alt={a.filename}
                   className="object-cover w-full h-full"
                 />
+                {canOrder && (
+                  <span className="absolute top-1 left-1 text-[10px] font-mono bg-background/85 border border-border rounded-sm px-1.5 py-0.5">
+                    {idx + 1}
+                  </span>
+                )}
               </div>
+
+              {canOrder && (
+                <div className="flex items-center justify-between">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="rounded-sm h-7 px-2"
+                    disabled={idx === 0 || reordering}
+                    onClick={() => move(idx, -1)}
+                    aria-label="Move earlier"
+                    data-testid={`attachment-move-back-${a.id}`}
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </Button>
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Position {idx + 1}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="rounded-sm h-7 px-2"
+                    disabled={idx === ordered.length - 1 || reordering}
+                    onClick={() => move(idx, 1)}
+                    aria-label="Move later"
+                    data-testid={`attachment-move-fwd-${a.id}`}
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              )}
+
               <Input
                 defaultValue={a.caption || ""}
                 placeholder="Caption…"
