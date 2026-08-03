@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  ArrowRight, BarChart3, Eye, EyeOff, Leaf, Loader2, Lock, ShieldCheck, User,
+  AlertCircle, ArrowRight, BarChart3, Clock, Eye, EyeOff, Leaf, Loader2,
+  Lock, ShieldCheck, User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -91,6 +92,9 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [form, setForm] = useState({ name: "", username: "", password: "" });
+  // { text, locked } — locked distinguishes a throttled name from a bad
+  // password, because the two need different wording and a different tone.
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     authStatus()
@@ -98,11 +102,17 @@ export default function LoginPage() {
       .catch(() => setSetupRequired(false));
   }, []);
 
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const set = (k) => (e) => {
+    setForm((f) => ({ ...f, [k]: e.target.value }));
+    // clear the message as soon as they start correcting it, so a stale
+    // failure is never sitting above a fresh attempt
+    if (error) setError(null);
+  };
 
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
+    setError(null);
     try {
       const data = setupRequired
         ? await authSetup(form)
@@ -111,7 +121,25 @@ export default function LoginPage() {
       toast.success(`Welcome, ${data.user.name}`);
       nav("/campaigns", { replace: true });
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Sign-in failed");
+      const statusCode = err?.response?.status;
+      const detail = err?.response?.data?.detail;
+      if (statusCode === 429) {
+        setError({
+          locked: true,
+          text: detail || "Too many failed sign-in attempts. Try again later.",
+        });
+      } else if (!statusCode) {
+        setError({
+          locked: false,
+          text: "Could not reach the server. Check your connection and try again.",
+        });
+      } else {
+        setError({
+          locked: false,
+          text: detail || "Sign-in failed. Please try again.",
+        });
+        setForm((f) => ({ ...f, password: "" }));
+      }
     } finally {
       setBusy(false);
     }
@@ -234,6 +262,30 @@ export default function LoginPage() {
                     ? "First-time setup — this account manages all other users."
                     : "Sign in to access your dashboard."}
                 </p>
+
+                {/* A failure belongs inside the card, next to the fields that
+                    caused it — a toast in the corner is missed, especially on
+                    a phone. */}
+                {error && (
+                  <div
+                    role="alert"
+                    data-testid="login-error"
+                    className={`mt-6 flex items-start gap-2.5 rounded-lg border px-3.5 py-3 ${
+                      error.locked
+                        ? "border-amber-500/40 bg-amber-500/10"
+                        : "border-destructive/40 bg-destructive/10"
+                    }`}
+                  >
+                    {error.locked ? (
+                      <Clock className="w-4 h-4 mt-[1px] shrink-0 text-amber-500" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 mt-[1px] shrink-0 text-destructive" />
+                    )}
+                    <span className="text-[12.5px] leading-relaxed">
+                      {error.text}
+                    </span>
+                  </div>
+                )}
 
                 <form onSubmit={submit} className="mt-8 space-y-[18px]">
                   {setupRequired && (
