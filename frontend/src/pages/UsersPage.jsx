@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Plus, ShieldCheck, UserRound } from "lucide-react";
+import {
+  Loader2, LockOpen, Plus, ShieldCheck, ShieldOff, Smartphone, UserRound,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -12,7 +14,14 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { createUser, getUser, listUsers, updateUser } from "@/lib/api";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  createUser, getUser, listUsers, resetUserTwoFactor, unlockUser, updateUser,
+} from "@/lib/api";
 
 export default function UsersPage() {
   const me = getUser();
@@ -68,6 +77,32 @@ export default function UsersPage() {
     patch(u.id, { password: pw }, "Password reset");
   };
 
+  // Lost phone. Wipes the authenticator setup and the old recovery codes;
+  // their next sign-in shows a fresh QR code.
+  const resetTwoFactor = async (u) => {
+    try {
+      await resetUserTwoFactor(u.id);
+      toast.success(
+        `Two-factor cleared for ${u.username} — they will set it up again at ` +
+        `their next sign-in`
+      );
+      load();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Could not reset two-factor");
+    }
+  };
+
+  // Frees someone shut out by five failed attempts, rather than making them
+  // wait out the fifteen minutes with an admin standing next to them.
+  const unlock = async (u) => {
+    try {
+      await unlockUser(u.id);
+      toast.success(`${u.username} can sign in again`);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Could not unlock");
+    }
+  };
+
   return (
     <div className="space-y-6">
       <header>
@@ -116,6 +151,12 @@ export default function UsersPage() {
         </Button>
       </form>
 
+      <p className="text-[11px] text-muted-foreground -mt-3">
+        A new account has no authenticator yet. The person sets one up at their
+        first sign-in — tell them to install Google Authenticator first, and to
+        keep the recovery codes it shows them.
+      </p>
+
       {/* Users table */}
       <div className="border border-border rounded-sm">
         {loading ? (
@@ -127,6 +168,7 @@ export default function UsersPage() {
                 <TableHead className="text-xs">User</TableHead>
                 <TableHead className="text-xs">Username</TableHead>
                 <TableHead className="text-xs">Role</TableHead>
+                <TableHead className="text-xs">Two-factor</TableHead>
                 <TableHead className="text-xs">Active</TableHead>
                 <TableHead className="text-xs text-right">Actions</TableHead>
               </TableRow>
@@ -163,6 +205,26 @@ export default function UsersPage() {
                     </Select>
                   </TableCell>
                   <TableCell>
+                    {u.totp_enabled ? (
+                      <span
+                        className="inline-flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400"
+                        data-testid={`user-2fa-on-${u.id}`}
+                      >
+                        <Smartphone className="w-3.5 h-3.5" />
+                        Set up
+                      </span>
+                    ) : (
+                      <span
+                        className="inline-flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400"
+                        data-testid={`user-2fa-off-${u.id}`}
+                        title="They will be asked to set it up at their next sign-in"
+                      >
+                        <ShieldOff className="w-3.5 h-3.5" />
+                        Not yet
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell>
                     <Switch
                       checked={u.active !== false}
                       onCheckedChange={(v) =>
@@ -172,14 +234,73 @@ export default function UsersPage() {
                     />
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="rounded-sm h-8 text-xs"
-                      onClick={() => resetPassword(u)}
-                    >
-                      Reset password
-                    </Button>
+                    <div className="inline-flex items-center gap-1.5">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-sm h-8 text-xs"
+                        onClick={() => unlock(u)}
+                        title="Clear a lockout from failed sign-in attempts"
+                      >
+                        <LockOpen className="w-3.5 h-3.5 mr-1" />
+                        Unlock
+                      </Button>
+
+                      {u.totp_enabled && (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="rounded-sm h-8 text-xs"
+                              data-testid={`user-reset-2fa-${u.id}`}
+                            >
+                              Reset 2FA
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent className="rounded-sm">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                Reset two-factor for {u.username}?
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Their authenticator setup and all their unused
+                                recovery codes stop working immediately. At
+                                their next sign-in they scan a new code and
+                                receive a new set. Do this when someone has
+                                lost their phone.
+                                {u.id === me?.id && (
+                                  <span className="block mt-2 text-amber-500">
+                                    This is your own account. Have your phone
+                                    with you before you confirm.
+                                  </span>
+                                )}
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel className="rounded-sm">
+                                Cancel
+                              </AlertDialogCancel>
+                              <AlertDialogAction
+                                className="rounded-sm"
+                                onClick={() => resetTwoFactor(u)}
+                              >
+                                Reset two-factor
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-sm h-8 text-xs"
+                        onClick={() => resetPassword(u)}
+                      >
+                        Reset password
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

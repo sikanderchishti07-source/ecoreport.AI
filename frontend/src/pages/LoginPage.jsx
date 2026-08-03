@@ -1,14 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  AlertCircle, ArrowRight, BarChart3, Clock, Eye, EyeOff, Leaf, Loader2,
-  Lock, ShieldCheck, User,
+  AlertCircle, ArrowLeft, ArrowRight, BarChart3, CheckCircle2, Clock, Copy,
+  Eye, EyeOff, KeyRound, Leaf, Loader2, Lock, Printer, ShieldCheck,
+  Smartphone, User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { authLogin, authSetup, authStatus, setSession } from "@/lib/api";
+import {
+  authLogin, authSetup, authStatus, authVerify, setSession,
+} from "@/lib/api";
 
 // Brand navy, stated inline rather than through the theme config so the panel
 // renders identically whichever mode the app is in.
@@ -44,16 +47,6 @@ const FEATURES = [
   },
 ];
 
-/**
- * The faint pattern behind the sign-in card.
- *
- * Drawn as SVG rather than shipped as an image: it is a handful of paths, it
- * scales to any window without a second asset to load, and its colours come
- * from the brand rather than from a texture file. Two layers, both nearly
- * invisible on purpose — a fine dot grid over the whole area, and contour
- * curves sweeping in from the right edge. Enough that the white half is not a
- * blank page, quiet enough that it never competes with the form.
- */
 function BackdropPattern() {
   return (
     <svg
@@ -86,15 +79,45 @@ function BackdropPattern() {
   );
 }
 
+function ErrorPanel({ error }) {
+  if (!error) return null;
+  return (
+    <div
+      role="alert"
+      data-testid="login-error"
+      className={`mt-6 flex items-start gap-2.5 rounded-lg border px-3.5 py-3 ${
+        error.locked
+          ? "border-amber-500/40 bg-amber-500/10"
+          : "border-destructive/40 bg-destructive/10"
+      }`}
+    >
+      {error.locked ? (
+        <Clock className="w-4 h-4 mt-[1px] shrink-0 text-amber-500" />
+      ) : (
+        <AlertCircle className="w-4 h-4 mt-[1px] shrink-0 text-destructive" />
+      )}
+      <span className="text-[12.5px] leading-relaxed">{error.text}</span>
+    </div>
+  );
+}
+
 export default function LoginPage() {
   const nav = useNavigate();
   const [setupRequired, setSetupRequired] = useState(null); // null = loading
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [form, setForm] = useState({ name: "", username: "", password: "" });
-  // { text, locked } — locked distinguishes a throttled name from a bad
-  // password, because the two need different wording and a different tone.
   const [error, setError] = useState(null);
+
+  // "credentials" -> "enroll" -> "codes"   (first time)
+  // "credentials" -> "totp"                (every time after)
+  const [step, setStep] = useState("credentials");
+  const [challenge, setChallenge] = useState(null);
+  const [enrol, setEnrol] = useState(null);   // { qr, secret, name }
+  const [code, setCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState(null);
+  const [pending, setPending] = useState(null); // session held until codes saved
+  const codeRef = useRef(null);
 
   useEffect(() => {
     authStatus()
@@ -102,58 +125,117 @@ export default function LoginPage() {
       .catch(() => setSetupRequired(false));
   }, []);
 
+  // the code field is the only thing on its screen — put the cursor in it
+  useEffect(() => {
+    if (step === "totp" || step === "enroll") codeRef.current?.focus();
+  }, [step]);
+
   const set = (k) => (e) => {
     setForm((f) => ({ ...f, [k]: e.target.value }));
-    // clear the message as soon as they start correcting it, so a stale
-    // failure is never sitting above a fresh attempt
     if (error) setError(null);
   };
 
-  const submit = async (e) => {
+  const describe = (err) => {
+    const statusCode = err?.response?.status;
+    const detail = err?.response?.data?.detail;
+    if (statusCode === 429) {
+      return { locked: true, text: detail || "Too many failed attempts." };
+    }
+    if (!statusCode) {
+      return {
+        locked: false,
+        text: "Could not reach the server. Check your connection and try again.",
+      };
+    }
+    return { locked: false, text: detail || "Sign-in failed. Please try again." };
+  };
+
+  const startOver = () => {
+    setStep("credentials");
+    setChallenge(null);
+    setEnrol(null);
+    setCode("");
+    setError(null);
+    setForm((f) => ({ ...f, password: "" }));
+  };
+
+  const submitCredentials = async (e) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const data = setupRequired
-        ? await authSetup(form)
-        : await authLogin({ username: form.username, password: form.password });
-      setSession(data.token, data.user);
-      toast.success(`Welcome, ${data.user.name}`);
-      nav("/campaigns", { replace: true });
-    } catch (err) {
-      const statusCode = err?.response?.status;
-      const detail = err?.response?.data?.detail;
-      if (statusCode === 429) {
-        setError({
-          locked: true,
-          text: detail || "Too many failed sign-in attempts. Try again later.",
-        });
-      } else if (!statusCode) {
-        setError({
-          locked: false,
-          text: "Could not reach the server. Check your connection and try again.",
-        });
+      const data = setupRequired ? await authSetup(form) : await authLogin({
+        username: form.username,
+        password: form.password,
+      });
+      setChallenge(data.challenge);
+      if (data.stage === "enroll") {
+        setEnrol({ qr: data.qr, secret: data.secret, name: data.name });
+        setStep("enroll");
       } else {
-        setError({
-          locked: false,
-          text: detail || "Sign-in failed. Please try again.",
-        });
-        setForm((f) => ({ ...f, password: "" }));
+        setStep("totp");
       }
+    } catch (err) {
+      const described = describe(err);
+      setError(described);
+      if (!described.locked) setForm((f) => ({ ...f, password: "" }));
     } finally {
       setBusy(false);
     }
   };
 
+  const submitCode = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await authVerify({ challenge, code });
+      if (data.recovery_codes) {
+        // Hold the session back until the codes have been acknowledged. If
+        // we signed them in here, the one and only copy of the recovery
+        // codes would vanish with the redirect.
+        setPending({ token: data.token, user: data.user });
+        setRecoveryCodes(data.recovery_codes);
+        setStep("codes");
+      } else {
+        setSession(data.token, data.user);
+        toast.success(`Welcome, ${data.user.name}`);
+        if (typeof data.recovery_codes_remaining === "number") {
+          toast.warning(
+            `Recovery code used — ${data.recovery_codes_remaining} left. ` +
+            `Ask an admin to reset your authenticator when convenient.`
+          );
+        }
+        nav("/campaigns", { replace: true });
+      }
+    } catch (err) {
+      setError(describe(err));
+      setCode("");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const finishEnrolment = () => {
+    if (!pending) return;
+    setSession(pending.token, pending.user);
+    toast.success(`Welcome, ${pending.user.name}`);
+    nav("/campaigns", { replace: true });
+  };
+
+  const copyCodes = async () => {
+    try {
+      await navigator.clipboard.writeText((recoveryCodes || []).join("\n"));
+      toast.success("Recovery codes copied");
+    } catch {
+      toast.error("Could not copy — please write them down instead");
+    }
+  };
+
   return (
-    // The panel is a fixed width rather than a fraction of the page: as a
-    // proportion it stretched to half a wide monitor, which is what made the
-    // photograph dominate.
     <div className="min-h-screen bg-background text-foreground lg:grid lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)]">
 
       {/* ---------------- brand panel ---------------- */}
-      {/* On a phone this collapses to a short band above the card rather than
-          a half-screen photograph, so the fields stay above the fold. */}
       <aside
         className="relative overflow-hidden px-8 py-10 lg:py-12 lg:px-9 lg:rounded-r-3xl"
         style={{ backgroundColor: NAVY }}
@@ -163,8 +245,6 @@ export default function LoginPage() {
           style={{ backgroundImage: `url(${BG})` }}
           aria-hidden="true"
         />
-        {/* darkest at the top-left where the wording sits, clearing toward the
-            bottom-right so the photograph still reads as a photograph */}
         <div
           className="absolute inset-0"
           style={{
@@ -224,7 +304,7 @@ export default function LoginPage() {
         </div>
       </aside>
 
-      {/* ---------------- sign-in card ---------------- */}
+      {/* ---------------- card ---------------- */}
       <main className="relative flex items-center justify-center px-4 py-12 lg:py-16">
         <BackdropPattern />
 
@@ -233,8 +313,6 @@ export default function LoginPage() {
             className="border border-border rounded-2xl bg-card px-8 py-9"
             style={{ boxShadow: CARD_SHADOW }}
           >
-
-            {/* the panel above already carries the mark on a wide screen */}
             <div className="flex items-center gap-2.5 lg:hidden mb-7">
               <span
                 className="inline-flex items-center justify-center w-8 h-8 rounded-md"
@@ -252,7 +330,8 @@ export default function LoginPage() {
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Loading…
               </div>
-            ) : (
+            ) : step === "credentials" ? (
+              /* ---------------- step 1: password ---------------- */
               <>
                 <h1 className="text-[25px] font-semibold tracking-tight">
                   {setupRequired ? "Create the admin account" : "Welcome back"}
@@ -263,31 +342,9 @@ export default function LoginPage() {
                     : "Sign in to access your dashboard."}
                 </p>
 
-                {/* A failure belongs inside the card, next to the fields that
-                    caused it — a toast in the corner is missed, especially on
-                    a phone. */}
-                {error && (
-                  <div
-                    role="alert"
-                    data-testid="login-error"
-                    className={`mt-6 flex items-start gap-2.5 rounded-lg border px-3.5 py-3 ${
-                      error.locked
-                        ? "border-amber-500/40 bg-amber-500/10"
-                        : "border-destructive/40 bg-destructive/10"
-                    }`}
-                  >
-                    {error.locked ? (
-                      <Clock className="w-4 h-4 mt-[1px] shrink-0 text-amber-500" />
-                    ) : (
-                      <AlertCircle className="w-4 h-4 mt-[1px] shrink-0 text-destructive" />
-                    )}
-                    <span className="text-[12.5px] leading-relaxed">
-                      {error.text}
-                    </span>
-                  </div>
-                )}
+                <ErrorPanel error={error} />
 
-                <form onSubmit={submit} className="mt-8 space-y-[18px]">
+                <form onSubmit={submitCredentials} className="mt-8 space-y-[18px]">
                   {setupRequired && (
                     <div className="space-y-2">
                       <Label className="text-[12.5px] text-muted-foreground">
@@ -344,8 +401,6 @@ export default function LoginPage() {
                         className="rounded-[10px] h-11 pl-11 pr-11 text-sm bg-card"
                         data-testid="login-password-input"
                       />
-                      {/* a typo in a masked field is the commonest reason a
-                          sign-in fails twice over */}
                       <button
                         type="button"
                         onClick={() => setShowPassword((v) => !v)}
@@ -389,6 +444,224 @@ export default function LoginPage() {
                     )}
                   </Button>
                 </form>
+              </>
+            ) : step === "enroll" ? (
+              /* ---------------- step 2a: first-time enrolment ---------------- */
+              <>
+                <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
+                  <Smartphone className="w-4 h-4" />
+                  Two-factor setup
+                </div>
+                <h1 className="text-[23px] font-semibold tracking-tight mt-2">
+                  Set up your authenticator
+                </h1>
+                <p className="text-[13px] text-muted-foreground mt-2 leading-relaxed">
+                  Install Google Authenticator or Microsoft Authenticator on
+                  your phone, then scan this code.
+                </p>
+
+                <div className="mt-6 flex justify-center">
+                  <div className="rounded-xl border border-border bg-white p-3">
+                    {enrol?.qr && (
+                      <img
+                        src={enrol.qr}
+                        alt="Scan this code with your authenticator app"
+                        width={188}
+                        height={188}
+                        data-testid="enroll-qr"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {/* a phone camera that will not focus, or a desktop app, needs
+                    the secret typed instead */}
+                <details className="mt-4 group">
+                  <summary className="text-[12px] text-muted-foreground cursor-pointer list-none hover:text-foreground">
+                    Can't scan it? Enter this key by hand
+                  </summary>
+                  <p className="mt-2 font-mono text-[12.5px] tracking-wider break-all rounded-md border border-border bg-secondary/40 px-3 py-2">
+                    {enrol?.secret}
+                  </p>
+                </details>
+
+                <ErrorPanel error={error} />
+
+                <form onSubmit={submitCode} className="mt-6 space-y-3">
+                  <Label className="text-[12.5px] text-muted-foreground">
+                    Enter the 6-digit code the app shows
+                  </Label>
+                  <Input
+                    ref={codeRef}
+                    value={code}
+                    onChange={(e) => {
+                      setCode(e.target.value.replace(/[^\d]/g, "").slice(0, 6));
+                      if (error) setError(null);
+                    }}
+                    required
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="000000"
+                    className="rounded-[10px] h-12 text-center text-lg tracking-[0.4em] font-mono bg-card"
+                    data-testid="totp-code-input"
+                  />
+                  <Button
+                    type="submit"
+                    disabled={busy || code.length < 6}
+                    className="w-full rounded-[10px] h-12 text-[14.5px] text-white hover:opacity-90"
+                    style={{ backgroundColor: NAVY, boxShadow: BUTTON_SHADOW }}
+                    data-testid="totp-submit-btn"
+                  >
+                    {busy ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Checking…
+                      </>
+                    ) : (
+                      <>
+                        Confirm and continue
+                        <ArrowRight className="w-[18px] h-[18px] ml-2" />
+                      </>
+                    )}
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={startOver}
+                    className="w-full text-[12px] text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1.5 pt-1"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    Back
+                  </button>
+                </form>
+              </>
+            ) : step === "totp" ? (
+              /* ---------------- step 2b: routine code ---------------- */
+              <>
+                <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
+                  <ShieldCheck className="w-4 h-4" />
+                  Two-factor
+                </div>
+                <h1 className="text-[25px] font-semibold tracking-tight mt-2">
+                  Enter your code
+                </h1>
+                <p className="text-[13px] text-muted-foreground mt-2 leading-relaxed">
+                  Open your authenticator app and type the 6-digit code for
+                  EcoReport AI.
+                </p>
+
+                <ErrorPanel error={error} />
+
+                <form onSubmit={submitCode} className="mt-7 space-y-3">
+                  <Input
+                    ref={codeRef}
+                    value={code}
+                    onChange={(e) => {
+                      // recovery codes contain letters and a dash, so only
+                      // strip what could never belong to either form
+                      setCode(e.target.value.replace(/[^\w-]/g, "").slice(0, 9));
+                      if (error) setError(null);
+                    }}
+                    required
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="000000"
+                    className="rounded-[10px] h-12 text-center text-lg tracking-[0.4em] font-mono bg-card uppercase"
+                    data-testid="totp-code-input"
+                  />
+                  <Button
+                    type="submit"
+                    disabled={busy || code.length < 6}
+                    className="w-full rounded-[10px] h-12 text-[14.5px] text-white hover:opacity-90"
+                    style={{ backgroundColor: NAVY, boxShadow: BUTTON_SHADOW }}
+                    data-testid="totp-submit-btn"
+                  >
+                    {busy ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Checking…
+                      </>
+                    ) : (
+                      <>
+                        Verify
+                        <ArrowRight className="w-[18px] h-[18px] ml-2" />
+                      </>
+                    )}
+                  </Button>
+                  <p className="text-[11.5px] text-muted-foreground text-center leading-relaxed pt-1">
+                    <KeyRound className="w-3.5 h-3.5 inline-block mr-1 -mt-[2px]" />
+                    Lost your phone? Type one of your recovery codes instead.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={startOver}
+                    className="w-full text-[12px] text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1.5"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    Back
+                  </button>
+                </form>
+              </>
+            ) : (
+              /* ---------------- step 3: recovery codes, shown once ---------------- */
+              <>
+                <div className="flex items-center gap-2 text-[12px] text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 className="w-4 h-4" />
+                  Two-factor is on
+                </div>
+                <h1 className="text-[23px] font-semibold tracking-tight mt-2">
+                  Save your recovery codes
+                </h1>
+                <p className="text-[13px] text-muted-foreground mt-2 leading-relaxed">
+                  These are shown once and never again. Print them or write
+                  them down and keep them somewhere safe — they are how you get
+                  in if you lose your phone. Each one works a single time.
+                </p>
+
+                <div
+                  className="mt-5 grid grid-cols-2 gap-2 rounded-lg border border-border bg-secondary/40 p-3"
+                  data-testid="recovery-codes"
+                >
+                  {(recoveryCodes || []).map((c) => (
+                    <span
+                      key={c}
+                      className="font-mono text-[13px] tracking-wider text-center py-1"
+                    >
+                      {c}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="mt-4 flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={copyCodes}
+                    className="flex-1 rounded-[10px] h-10 text-[13px]"
+                  >
+                    <Copy className="w-4 h-4 mr-1.5" />
+                    Copy
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => window.print()}
+                    className="flex-1 rounded-[10px] h-10 text-[13px]"
+                  >
+                    <Printer className="w-4 h-4 mr-1.5" />
+                    Print
+                  </Button>
+                </div>
+
+                <Button
+                  type="button"
+                  onClick={finishEnrolment}
+                  className="w-full rounded-[10px] h-12 text-[14.5px] text-white hover:opacity-90 mt-4"
+                  style={{ backgroundColor: NAVY, boxShadow: BUTTON_SHADOW }}
+                  data-testid="recovery-done-btn"
+                >
+                  I have saved them — continue
+                  <ArrowRight className="w-[18px] h-[18px] ml-2" />
+                </Button>
               </>
             )}
           </div>
