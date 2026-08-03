@@ -181,6 +181,24 @@ export const uploadAttachments = (campaignId, kind, files, extra = {}) => {
 export const updateAttachment = (id, p) =>
   api.patch(`/attachments/${id}`, p).then((r) => r.data);
 export const deleteAttachment = (id) => api.delete(`/attachments/${id}`);
+
+// Cover photos — one shared library, each campaign picks from it
+export const listCoverPhotos = () =>
+  api.get("/cover-photos").then((r) => r.data);
+export const uploadCoverPhotos = (files, caption) => {
+  const fd = new FormData();
+  if (caption) fd.append("caption", caption);
+  Array.from(files).forEach((f) => fd.append("files", f));
+  return api.post("/cover-photos", fd, {
+    headers: { "Content-Type": "multipart/form-data" }, timeout: 300000,
+  }).then((r) => r.data);
+};
+export const deleteCoverPhoto = (id) => api.delete(`/cover-photos/${id}`);
+export const selectCoverPhoto = (campaignId, photoId) =>
+  api.post(`/campaigns/${campaignId}/cover-photo/${photoId}`)
+    .then((r) => r.data);
+export const clearCoverPhoto = (campaignId) =>
+  api.delete(`/campaigns/${campaignId}/cover-photo`);
 export const attachmentFileUrl = (id) => `${API_BASE}/attachments/${id}/file`;
 export async function fetchAttachmentBlob(id) {
   const res = await api.get(`/attachments/${id}/file`, { responseType: "blob" });
