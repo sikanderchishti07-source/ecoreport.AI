@@ -423,6 +423,11 @@ class Attachment(BaseModel):
     # one-off certificates stay on the campaign.
     campaign_id: str = ""
     station_id: Optional[str] = None
+    # A cover photo lives once in the shared library (campaign_id and
+    # station_id both empty) and is pointed at by each campaign that uses it.
+    # source_id names the library record, so deleting the original can find
+    # and clear every campaign still referring to it.
+    source_id: Optional[str] = None
     kind: str                           # one of ATTACHMENT_KINDS
     filename: str
     path: str
