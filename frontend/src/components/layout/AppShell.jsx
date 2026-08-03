@@ -1,5 +1,7 @@
 import { NavLink, Outlet, Link, useNavigate } from "react-router-dom";
-import { Activity, Gauge, LogOut, Ruler, ShieldCheck, Truck, UserRound, Users } from "lucide-react";
+import {
+  Activity, Gauge, Images, LogOut, Ruler, ShieldCheck, Truck, UserRound, Users,
+} from "lucide-react";
 import { NAV } from "@/constants/testIds";
 import { Toaster } from "sonner";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -61,6 +63,15 @@ export default function AppShell() {
               }
             >
               <Truck className="w-3.5 h-3.5" /> Mobile Labs
+            </NavLink>
+            <NavLink
+              to="/cover-photos"
+              data-testid="nav-cover-photos"
+              className={({ isActive }) =>
+                `${linkBase} ${isActive ? linkActive : linkIdle} inline-flex items-center gap-1.5`
+              }
+            >
+              <Images className="w-3.5 h-3.5" /> Cover Photos
             </NavLink>
             {user?.role === "admin" && (
               <NavLink
