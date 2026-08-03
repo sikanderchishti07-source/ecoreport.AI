@@ -94,6 +94,34 @@ code, .font-mono, .tabular {
   }
 }
 
+/* Autofilled fields
+   ------------------------------------------------------------------
+   Chrome paints its own pale blue behind any field it fills from saved
+   credentials, and it wins against every background rule the app sets — which
+   is why the login fields looked blue while the Input component is
+   bg-transparent. The colour cannot be replaced directly; the accepted way
+   round it is an inset box-shadow large enough to cover the field, which
+   Chrome does honour.
+
+   In dark mode the same override matters more: Chrome's light fill against
+   pale text left autofilled values close to unreadable.
+
+   The absurd transition delay stops the blue appearing for a frame before the
+   shadow is applied. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px hsl(var(--card)) inset !important;
+  box-shadow: 0 0 0 1000px hsl(var(--card)) inset !important;
+  -webkit-text-fill-color: hsl(var(--foreground)) !important;
+  caret-color: hsl(var(--foreground));
+  border-radius: inherit;
+  transition: background-color 9999s ease-in-out 0s;
+}
+
 /* Utility: status row tints for the Readings table (design guideline) */
 .row-valid {
   background-color: rgba(22, 101, 52, 0.10);
