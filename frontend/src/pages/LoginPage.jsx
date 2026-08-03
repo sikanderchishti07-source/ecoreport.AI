@@ -35,6 +35,48 @@ const FEATURES = [
   },
 ];
 
+/**
+ * The faint pattern behind the sign-in card.
+ *
+ * Drawn as SVG rather than shipped as an image: it is a handful of paths, it
+ * scales to any window without a second asset to load, and its colours come
+ * from the brand rather than from a texture file. Two layers, both nearly
+ * invisible on purpose — a fine dot grid over the whole area, and contour
+ * curves sweeping in from the right edge. Enough that the white half is not a
+ * blank page, quiet enough that it never competes with the form.
+ */
+function BackdropPattern() {
+  return (
+    <svg
+      className="absolute inset-0 w-full h-full pointer-events-none"
+      preserveAspectRatio="none"
+      viewBox="0 0 900 700"
+      aria-hidden="true"
+    >
+      <defs>
+        <pattern
+          id="ecoreport-login-dots"
+          width="26"
+          height="26"
+          patternUnits="userSpaceOnUse"
+        >
+          <circle cx="1.6" cy="1.6" r="1.2" fill={NAVY} opacity="0.07" />
+        </pattern>
+      </defs>
+      <rect width="900" height="700" fill="url(#ecoreport-login-dots)" />
+      <g fill="none" stroke="#2F9E63" strokeOpacity="0.16" strokeWidth="1.1">
+        <path d="M900 60 C 790 130, 770 220, 850 300 C 925 375, 875 490, 735 595" />
+        <path d="M900 118 C 808 182, 790 252, 866 322 C 936 388, 898 498, 782 600" />
+        <path d="M900 176 C 828 234, 812 288, 882 344 C 944 396, 922 508, 830 610" />
+      </g>
+      <g fill="none" stroke="#1F6FB2" strokeOpacity="0.10" strokeWidth="1.1">
+        <path d="M120 700 C 178 610, 164 534, 96 488" />
+        <path d="M174 700 C 230 616, 218 546, 152 498" />
+      </g>
+    </svg>
+  );
+}
+
 export default function LoginPage() {
   const nav = useNavigate();
   const [setupRequired, setSetupRequired] = useState(null); // null = loading
@@ -68,13 +110,16 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground lg:grid lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)]">
+    // The panel is a fixed width rather than a fraction of the page: as a
+    // proportion it stretched to half a wide monitor, which is what made the
+    // photograph dominate.
+    <div className="min-h-screen bg-background text-foreground lg:grid lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)]">
 
       {/* ---------------- brand panel ---------------- */}
       {/* On a phone this collapses to a short band above the card rather than
           a half-screen photograph, so the fields stay above the fold. */}
       <aside
-        className="relative overflow-hidden px-8 py-10 lg:py-14 lg:px-12 lg:rounded-r-3xl"
+        className="relative overflow-hidden px-8 py-10 lg:py-12 lg:px-9 lg:rounded-r-3xl"
         style={{ backgroundColor: NAVY }}
       >
         <div
@@ -88,31 +133,31 @@ export default function LoginPage() {
           className="absolute inset-0"
           style={{
             background:
-              "linear-gradient(140deg, rgba(12,44,83,0.95) 0%, rgba(15,61,110,0.86) 42%, rgba(15,61,110,0.55) 100%)",
+              "linear-gradient(155deg, rgba(12,44,83,0.95) 0%, rgba(15,61,110,0.88) 45%, rgba(15,61,110,0.58) 100%)",
           }}
           aria-hidden="true"
         />
 
-        <div className="relative flex h-full flex-col justify-between">
+        <div className="relative flex h-full flex-col justify-between gap-12">
           <div>
             <div className="flex items-center gap-3">
-              <span className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-white/10 border border-white/15">
+              <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-white/10 border border-white/15">
                 <Leaf className="w-5 h-5" style={{ color: "#9FE1CB" }} />
               </span>
-              <span className="text-xl font-semibold tracking-tight text-white">
+              <span className="text-lg font-semibold tracking-tight text-white">
                 EcoReport AI
               </span>
             </div>
 
-            <h2 className="mt-10 text-[22px] lg:text-2xl font-semibold leading-snug text-white max-w-[19rem]">
+            <h2 className="mt-9 text-xl font-semibold leading-snug text-white max-w-[15rem]">
               Intelligent Environmental Reporting System
             </h2>
             <div
-              className="mt-5 h-[2px] w-9"
+              className="mt-4 h-[2px] w-8"
               style={{ backgroundColor: "#5DCAA5" }}
             />
             <p
-              className="mt-4 text-[13px] leading-relaxed max-w-[19rem]"
+              className="mt-3.5 text-[12.5px] leading-relaxed max-w-[16rem]"
               style={{ color: "#B5D4F4" }}
             >
               AI-powered insights for a sustainable future. Monitor, analyze and
@@ -120,18 +165,18 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <ul className="mt-12 space-y-6 lg:mt-0">
+          <ul className="space-y-5">
             {FEATURES.map(({ icon: Icon, title, body }) => (
-              <li key={title} className="flex items-start gap-3.5">
-                <span className="inline-flex items-center justify-center min-w-[34px] h-[34px] rounded-full bg-white/10 border border-white/15">
+              <li key={title} className="flex items-start gap-3">
+                <span className="inline-flex items-center justify-center min-w-[32px] h-8 rounded-full bg-white/10 border border-white/15">
                   <Icon className="w-4 h-4" style={{ color: "#9FE1CB" }} />
                 </span>
                 <span>
-                  <span className="block text-[13px] font-semibold text-white">
+                  <span className="block text-[12.5px] font-semibold text-white">
                     {title}
                   </span>
                   <span
-                    className="block text-[12px] leading-relaxed mt-0.5 max-w-[15rem]"
+                    className="block text-[11.5px] leading-relaxed mt-0.5 max-w-[14rem]"
                     style={{ color: "#8FB6DC" }}
                   >
                     {body}
@@ -144,8 +189,10 @@ export default function LoginPage() {
       </aside>
 
       {/* ---------------- sign-in card ---------------- */}
-      <main className="flex items-center justify-center px-4 py-10 lg:py-14">
-        <div className="w-full max-w-[400px]">
+      <main className="relative flex items-center justify-center px-4 py-10 lg:py-14">
+        <BackdropPattern />
+
+        <div className="relative w-full max-w-[380px]">
           <div className="border border-border rounded-xl bg-card px-7 py-8">
 
             {/* the panel above already carries the mark on a wide screen */}
