@@ -1359,6 +1359,11 @@ def build(out_path: str = OUT) -> str:
     _p(doc, "List of Figures", size=14, bold=True, space_after=8)
     lof_p = doc.add_paragraph()
     _field(lof_p, ' TOC \\h \\z \\c "Figure" ')
+    # Each list gets its own page. Twenty figure entries and sixteen table
+    # entries do not fit on one sheet of A4, so sharing a page pushed the tail
+    # of the second list onto a sheet of its own — one line and a watermark.
+    # The break is unconditional because those counts only ever grow.
+    doc.add_page_break()
     _p(doc, "List of Tables", size=14, bold=True, space_after=8)
     lot_p = doc.add_paragraph()
     _field(lot_p, ' TOC \\h \\z \\c "Table" ')
