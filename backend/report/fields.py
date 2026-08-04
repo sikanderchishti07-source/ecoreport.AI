@@ -244,7 +244,14 @@ def _entry(doc, level: int, text: str, right_tab_in: float):
     p = doc.add_paragraph()                # appended, then moved into place
     pf = p.paragraph_format
     pf.left_indent = Inches(0.24 * (level - 1))
-    pf.space_after = Pt(3)
+    # Index entries inherit Normal, which carries body-text leading and six
+    # points after each paragraph. Over thirty-four contents entries that
+    # spacing alone costs about four centimetres — enough to push the last
+    # few onto a second, nearly empty page. Single leading and a hairline gap
+    # keep the list readable and fit it on one sheet.
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(1.5)
+    pf.line_spacing = 1.0
     pf.tab_stops.add_tab_stop(Inches(right_tab_in), WD_TAB_ALIGNMENT.RIGHT,
                               WD_TAB_LEADER.DOTS)
     run = p.add_run(text)
