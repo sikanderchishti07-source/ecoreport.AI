@@ -67,6 +67,14 @@ class ReviewNote(BaseModel):
     comment: Optional[str] = Field(default=None, max_length=2000)
 
 
+class SubmitPayload(ReviewNote):
+    # Which generated version is being submitted. A campaign accumulates
+    # versions — seventeen is not unusual — so "this campaign is ready" says
+    # nothing useful on its own. The reviewer must know which document they
+    # are signing off, and it must not change under them afterwards.
+    report_id: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Notification plumbing
 # ---------------------------------------------------------------------------
@@ -112,8 +120,18 @@ async def _set_status(campaign_id: str, new_status: str, extra: dict) -> None:
 # ---------------------------------------------------------------------------
 # Operator: submit for review
 # ---------------------------------------------------------------------------
+async def _report_summary(report_id: Optional[str]) -> Optional[dict]:
+    if not report_id:
+        return None
+    doc = await db.report_logs.find_one(
+        {"id": report_id},
+        {"_id": 0, "id": 1, "version": 1, "filename": 1, "lang": 1,
+         "format": 1, "generated_at": 1, "generated_by": 1, "size_bytes": 1})
+    return doc
+
+
 @router.post("/campaigns/{campaign_id}/submit")
-async def submit_for_review(campaign_id: str, payload: ReviewNote,
+async def submit_for_review(campaign_id: str, payload: SubmitPayload,
                             user: dict = Depends(current_user)):
     """Hand the campaign to the reviewing engineer.
 
@@ -131,17 +149,38 @@ async def submit_for_review(campaign_id: str, payload: ReviewNote,
             status_code=422,
             detail="Upload the monitoring data before submitting for review")
 
+    # Pin the exact document under review. Default to the newest version so
+    # the ordinary case needs no thought, but record which one it was.
+    report = await _report_summary(payload.report_id)
+    if payload.report_id and not report:
+        raise HTTPException(status_code=404,
+                            detail="That report version no longer exists")
+    if report is None:
+        report = await db.report_logs.find_one(
+            {"campaign_id": campaign_id}, {"_id": 0},
+            sort=[("generated_at", -1)])
+    if not report:
+        raise HTTPException(
+            status_code=422,
+            detail=("Generate the report before submitting it — the reviewer "
+                    "needs a document to sign off"))
+    if report.get("campaign_id") not in (None, campaign_id):
+        raise HTTPException(status_code=422,
+                            detail="That report belongs to another campaign")
+
     now = datetime.now(timezone.utc)
     await _set_status(campaign_id, SUBMITTED, {
         "submitted_by": user["name"],
         "submitted_by_id": user["id"],
         "submitted_at": now,
+        "submitted_report_id": report["id"],
         "review_comment": None,
     })
 
     project = campaign.get("project_name") or "Untitled campaign"
     note = (payload.comment or "").strip()
-    message = f"{user['name']} submitted {project} for review"
+    vlabel = ("v%03d" % report["version"]) if report.get("version") else "a report"
+    message = f"{user['name']} submitted {project} ({vlabel}) for review"
     if note:
         message += f" — {note}"
     admins = await _admin_ids()
@@ -151,8 +190,11 @@ async def submit_for_review(campaign_id: str, payload: ReviewNote,
                           user["name"])
 
     await audit("campaign.submit", "campaign", campaign_id, user["name"],
-                {"comment": note or None, "notified": len(admins)})
+                {"comment": note or None, "notified": len(admins),
+                 "report_id": report["id"], "version": report.get("version")})
     return {"status": SUBMITTED, "submitted_at": now,
+            "report_id": report["id"], "version": report.get("version"),
+            "filename": report.get("filename"),
             "notified": len([a for a in admins if a["id"] != user["id"]])}
 
 
@@ -252,14 +294,28 @@ async def mark_all_read(user: dict = Depends(current_user)):
 # ---------------------------------------------------------------------------
 @router.get("/review-queue")
 async def review_queue(user: dict = Depends(require_admin)):
+    """Everything waiting, with the document attached.
+
+    The reviewer should not have to open a campaign, find the Reports tab and
+    work out which of seventeen versions is the one being submitted. The
+    pinned version travels with the queue entry.
+    """
     docs = await db.campaigns.find(
         {"status": SUBMITTED},
         {"_id": 0, "id": 1, "project_name": 1, "client": 1, "site_name": 1,
-         "submitted_by": 1, "submitted_at": 1}) \
+         "report_number": 1, "revision": 1, "submitted_by": 1,
+         "submitted_at": 1, "submitted_report_id": 1, "review_comment": 1}) \
         .sort("submitted_at", -1).to_list(length=200)
-    # Counted here for the same reason as above: the campaign document does
-    # not carry it.
     for d in docs:
         d["reading_count"] = await db.readings.count_documents(
             {"campaign_id": d["id"]})
+        d["report"] = await _report_summary(d.get("submitted_report_id"))
+        # A version generated after submission is not the one under review,
+        # but the reviewer should know it exists.
+        newest = await db.report_logs.find_one(
+            {"campaign_id": d["id"]}, {"_id": 0, "id": 1, "version": 1},
+            sort=[("generated_at", -1)])
+        d["newer_version_exists"] = bool(
+            newest and d.get("submitted_report_id")
+            and newest["id"] != d["submitted_report_id"])
     return docs
