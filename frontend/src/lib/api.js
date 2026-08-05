@@ -255,8 +255,9 @@ export const uploadStationCertificate = (stationId, file, fields = {}) => {
 // are needed — the first is courtesy, the second is the control.
 export const isAdmin = () => getUser()?.role === "admin";
 
-export const submitForReview = (campaignId, comment) =>
-  api.post(`/campaigns/${campaignId}/submit`, { comment: comment || null })
+export const submitForReview = (campaignId, comment, reportId) =>
+  api.post(`/campaigns/${campaignId}/submit`,
+           { comment: comment || null, report_id: reportId || null })
      .then((r) => r.data);
 export const approveCampaign = (campaignId, comment) =>
   api.post(`/campaigns/${campaignId}/approve`, { comment: comment || null })
