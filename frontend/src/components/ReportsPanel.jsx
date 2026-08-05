@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   Copy, FileText, FileDown, Loader2, History, Link2, RefreshCw, ScrollText,
-  Trash2,
+  Trash2, Send, CheckCircle2, Undo2, Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,8 +15,9 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  campaignAudit, createShare, downloadReportVersion, generateReport,
-  listReports, listShares, revokeShare, shareUrl,
+  approveCampaign, campaignAudit, createShare, downloadReportVersion,
+  generateReport, getCampaign, isAdmin, listReports, listShares,
+  returnCampaign, revokeShare, shareUrl, submitForReview,
 } from "@/lib/api";
 
 const LANGS = [
@@ -96,6 +97,43 @@ export default function ReportsPanel({ campaignId, readingCount }) {
   const [newLink, setNewLink] = useState(null);
   const [preview, setPreview] = useState(false);
 
+  // Who is signed in decides what this panel offers. The server enforces it
+  // regardless — see routes/review.py.
+  const admin = isAdmin();
+  const [status, setStatus] = useState(null);
+  const [reviewNote, setReviewNote] = useState("");
+  const [reviewBusy, setReviewBusy] = useState(false);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const c = await getCampaign(campaignId);
+      setStatus(c);
+    } catch {
+      /* the panel still works without it */
+    }
+  }, [campaignId]);
+
+  useEffect(() => { loadStatus(); }, [loadStatus]);
+
+  const runReview = async (fn, okMessage, needsNote) => {
+    const note = reviewNote.trim();
+    if (needsNote && !note) {
+      toast.error("Say what needs changing — the operator sees this comment.");
+      return;
+    }
+    setReviewBusy(true);
+    try {
+      await fn(campaignId, note);
+      toast.success(okMessage);
+      setReviewNote("");
+      loadStatus();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not complete that");
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
   const makeShare = async () => {
     setSharing(true);
     try {
@@ -161,9 +199,19 @@ export default function ReportsPanel({ campaignId, readingCount }) {
     const label = `${LANGS.find((l) => l.value === lang)?.label} ${format.toUpperCase()}`;
     toast.info(`Generating ${label} report — this can take a minute…`);
     try {
-      const fname = await generateReport(campaignId, lang, format);
-      toast.success(`Report ready: ${fname}`);
+      const out = await generateReport(campaignId, lang, format);
+      if (out.downloaded) {
+        toast.success(`Report ready: ${out.filename}`);
+      } else {
+        // Operator: the report exists and is listed below, but the file
+        // itself is released by the reviewing engineer.
+        toast.success(
+          `Report generated (v${String(out.version || "").padStart(3, "0")}). ` +
+          "Use Preview to check it, then Submit for review."
+        );
+      }
       refresh();
+      loadStatus();
     } catch (e) {
       const detail = e?.response?.data?.detail || e.message;
       toast.error(`Report generation failed: ${detail}`);
@@ -222,7 +270,9 @@ export default function ReportsPanel({ campaignId, readingCount }) {
             {busy ? (
               <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Generating…</>
             ) : (
-              <><FileDown className="w-4 h-4 mr-1.5" /> Generate & download</>
+              admin
+                ? <><FileDown className="w-4 h-4 mr-1.5" /> Generate & download</>
+                : <><FileText className="w-4 h-4 mr-1.5" /> Generate</>
             )}
           </Button>
           <Button
@@ -244,6 +294,87 @@ export default function ReportsPanel({ campaignId, readingCount }) {
             />
           </div>
         )}
+      </div>
+
+      {/* Review workflow */}
+      <div className="border border-border rounded-sm p-4">
+        <h3 className="text-sm font-semibold flex items-center gap-2">
+          <Send className="w-4 h-4 text-primary" /> Review
+          {status?.status && (
+            <Badge variant="outline" className="rounded-sm font-mono uppercase">
+              {status.status}
+            </Badge>
+          )}
+        </h3>
+
+        {status?.review_comment && (
+          <div className="mt-3 border-l-2 border-primary bg-secondary/40 px-3 py-2 rounded-sm">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              {status.status === "approved" ? "Approved with note" : "Returned by the reviewer"}
+            </div>
+            <p className="text-xs mt-1">{status.review_comment}</p>
+          </div>
+        )}
+
+        {status?.status === "submitted" ? (
+          <p className="text-xs text-muted-foreground mt-2">
+            Submitted by {status.submitted_by || "—"}
+            {status.submitted_at ? ` · ${fmtTs(status.submitted_at)}` : ""}
+            {admin ? " — waiting for you." : " — waiting for the reviewing engineer."}
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground mt-1">
+            {admin
+              ? "Sign the campaign off, or send it back with a note. Returning it puts the campaign back to ready so it can be corrected and resubmitted."
+              : "When the campaign is complete, send it to the reviewing engineer. You can keep editing after submitting — the report is rebuilt from the current readings."}
+          </p>
+        )}
+
+        <div className="mt-3 space-y-2">
+          <Input
+            value={reviewNote}
+            onChange={(e) => setReviewNote(e.target.value)}
+            placeholder={admin
+              ? "Comment (required when returning, optional when approving)"
+              : "Note for the reviewer (optional)"}
+            className="rounded-sm h-9 text-sm"
+            data-testid="review-note"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            {admin ? (
+              <>
+                <Button
+                  onClick={() => runReview(approveCampaign, "Campaign approved", false)}
+                  disabled={reviewBusy}
+                  className="rounded-sm h-9"
+                  data-testid="approve-btn"
+                >
+                  <CheckCircle2 className="w-4 h-4 mr-1.5" /> Approve
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => runReview(returnCampaign, "Sent back to the operator", true)}
+                  disabled={reviewBusy}
+                  className="rounded-sm h-9"
+                  data-testid="return-btn"
+                >
+                  <Undo2 className="w-4 h-4 mr-1.5" /> Return with comment
+                </Button>
+              </>
+            ) : (
+              <Button
+                onClick={() => runReview(submitForReview, "Sent for review", false)}
+                disabled={reviewBusy || status?.status === "submitted"}
+                className="rounded-sm h-9"
+                data-testid="submit-review-btn"
+              >
+                {reviewBusy
+                  ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Sending…</>
+                  : <><Send className="w-4 h-4 mr-1.5" /> Submit for review</>}
+              </Button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Version history */}
@@ -269,7 +400,9 @@ export default function ReportsPanel({ campaignId, readingCount }) {
                 <TableHead className="text-xs">Format</TableHead>
                 <TableHead className="text-xs">Generated</TableHead>
                 <TableHead className="text-xs">By</TableHead>
-                <TableHead className="text-xs text-right">Download</TableHead>
+                <TableHead className="text-xs text-right">
+                  {admin ? "Download" : "File"}
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -283,7 +416,12 @@ export default function ReportsPanel({ campaignId, readingCount }) {
                   <TableCell className="text-xs">{fmtTs(r.generated_at)}</TableCell>
                   <TableCell className="text-xs">{r.generated_by || "—"}</TableCell>
                   <TableCell className="text-right">
-                    {r.id ? (
+                    {!admin ? (
+                      <span className="text-xs text-muted-foreground inline-flex items-center gap-1"
+                            title="Downloads are released by the reviewing engineer">
+                        <Lock className="w-3 h-3" /> {r.filename}
+                      </span>
+                    ) : r.id ? (
                       <button
                         onClick={() =>
                           downloadReportVersion(r.id, r.filename).catch((e) =>
@@ -310,7 +448,9 @@ export default function ReportsPanel({ campaignId, readingCount }) {
       </div>
 
 
-      {/* Client share links */}
+      {/* Client share links — admin only: the link downloads the report
+          with no login, so it is the same privilege as downloading. */}
+      {admin && (
       <div className="border border-border rounded-sm p-4">
         <h3 className="text-sm font-semibold flex items-center gap-2">
           <Link2 className="w-4 h-4 text-primary" /> Client links
@@ -396,6 +536,8 @@ export default function ReportsPanel({ campaignId, readingCount }) {
           </ul>
         )}
       </div>
+
+      )}
 
       {/* Activity / audit trail */}
       <div className="border border-border rounded-sm p-4">
