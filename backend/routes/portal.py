@@ -30,7 +30,8 @@ from pydantic import BaseModel, Field
 
 import storage
 from audit import audit
-from auth import JWT_ALG, JWT_SECRET, current_user, current_username
+from auth import (JWT_ALG, JWT_SECRET, current_user, current_username,
+                  require_admin)
 from db import db, to_mongo
 
 SHARE_TYP = "share"
@@ -57,7 +58,11 @@ def _sign(share_id: str, campaign_id: str, expires: datetime) -> str:
 
 @router.post("/shares", status_code=status.HTTP_201_CREATED)
 async def create_share(payload: ShareCreate,
-                       user: str = Depends(current_username)):
+                       user: str = Depends(current_username),
+                       _admin: dict = Depends(require_admin)):
+    """Admin only. A share link downloads the report with no login at all, so
+    leaving this open to operators would defeat the download restriction
+    entirely."""
     campaign = await db.campaigns.find_one({"id": payload.campaign_id},
                                            {"_id": 0})
     if not campaign:
@@ -105,7 +110,8 @@ async def list_shares(campaign_id: str):
 
 @router.delete("/shares/{share_id}", status_code=204)
 async def revoke_share(share_id: str,
-                       user: str = Depends(current_username)) -> Response:
+                       user: str = Depends(current_username),
+                       _admin: dict = Depends(require_admin)) -> Response:
     doc = await db.shares.find_one({"id": share_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Link not found")

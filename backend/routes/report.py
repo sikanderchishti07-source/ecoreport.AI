@@ -9,11 +9,11 @@ from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from audit import audit
-from auth import current_username
+from auth import current_user, current_username
 from db import db, to_mongo
 import storage
 from models import Campaign, PollutantLimit, Reading
@@ -28,7 +28,8 @@ REPORT_DIR = os.environ.get("REPORT_DIR", os.path.join(tempfile.gettempdir(), "e
 @router.post("/campaigns/{campaign_id}/report")
 async def create_report(campaign_id: str, lang: str = "en",
                         format: str = "docx",
-                        x_user: str = Depends(current_username)):
+                        x_user: str = Depends(current_username),
+                        user: dict = Depends(current_user)):
     if lang not in ("en", "ar", "bilingual"):
         raise HTTPException(status_code=422,
                             detail="lang must be en, ar, or bilingual")
@@ -201,6 +202,25 @@ async def create_report(campaign_id: str, lang: str = "en",
     await audit("report.generate", "report", report_id, x_user,
                 {"campaign_id": campaign_id, "version": version,
                  "lang": lang, "format": format, "filename": fname})
+
+    # Field operators generate and read the report on screen, but the file
+    # itself only leaves the system through an admin. This endpoint returns
+    # the bytes, so for a non-admin it returns the version record instead —
+    # the report is still built, stored and logged, and the reviewer
+    # downloads it from the versions list. See routes/review.py.
+    if user.get("role") != "admin":
+        return JSONResponse({
+            "download": False,
+            "report_id": report_id,
+            "filename": fname,
+            "version": version,
+            "format": format,
+            "lang": lang,
+            "size_bytes": os.path.getsize(out_path),
+            "detail": ("Report generated. Downloads are handled by the "
+                       "reviewing engineer — use Submit for review when the "
+                       "campaign is ready."),
+        })
 
     media = ("application/pdf" if format == "pdf" else
              "application/vnd.openxmlformats-officedocument"

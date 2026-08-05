@@ -16,9 +16,10 @@ import os
 import re
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from auth import require_admin
 from db import db
 import storage
 
@@ -61,7 +62,11 @@ async def global_audit(
 
 
 @router.get("/reports/{report_id}/download")
-async def download_report(report_id: str):
+async def download_report(report_id: str,
+                          user: dict = Depends(require_admin)):
+    """Admin only. Field operators generate and read reports on screen but
+    never take the file off the system — see routes/review.py. Hiding the
+    button would not be a control; this is the check that matters."""
     doc = await db.report_logs.find_one({"id": report_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Report version not found")
