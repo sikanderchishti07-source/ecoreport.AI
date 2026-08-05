@@ -94,6 +94,25 @@ def _in_day(ts: datetime, start_h: int, end_h: int) -> bool:
     return h >= start_h or h < end_h
 
 
+def _as_dt(v) -> datetime:
+    """Mongo returns timestamps as ISO strings; the engine needs datetimes.
+    Any timezone marker is stripped — the locked rule is that timestamps are
+    naive local (KSA) time, and comparing an aware value against the naive
+    campaign window would raise just as loudly as comparing a string did."""
+    if isinstance(v, datetime):
+        return v.replace(tzinfo=None) if v.tzinfo else v
+    return datetime.fromisoformat(str(v).replace("Z", "+00:00")) \
+        .replace(tzinfo=None)
+
+
+def coerce_timestamps(readings: List[dict]) -> List[dict]:
+    """Normalise every reading's timestamp in place. Mutating the dicts means
+    the same list handed onward to the charts already carries datetimes."""
+    for r in readings:
+        r["timestamp"] = _as_dt(r["timestamp"])
+    return readings
+
+
 def build_noise_summary(readings: List[dict],
                         window_start: datetime,
                         window_end: datetime,
@@ -101,9 +120,13 @@ def build_noise_summary(readings: List[dict],
                         day_end_hour: int = 19) -> NoiseSummary:
     """Statistics over the valid readings inside the monitoring window.
 
-    ``readings`` are dicts with at least ``timestamp`` (naive local datetime),
-    ``laeq`` and ``valid`` — the shape they take straight from Mongo.
+    ``readings`` are dicts with at least ``timestamp``, ``laeq`` and
+    ``valid`` — the shape they take straight from Mongo, where timestamps
+    arrive as ISO strings and are normalised here.
     """
+    readings = coerce_timestamps(readings)
+    window_start = _as_dt(window_start)
+    window_end = _as_dt(window_end)
     in_window = [r for r in readings
                  if window_start <= r["timestamp"] < window_end]
     valid = [r for r in in_window if r.get("valid", True)
