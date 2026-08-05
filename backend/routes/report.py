@@ -188,6 +188,14 @@ async def create_report(campaign_id: str, lang: str = "en",
         raise HTTPException(status_code=404, detail="Campaign not found")
     campaign = Campaign(**campaign_doc)
 
+    # Noise campaigns take their own generator; everything downstream —
+    # versioning, storage, the review workflow, the on-screen reader — is
+    # shared because it operates on the produced file, not on how it was
+    # made.
+    if getattr(campaign, "campaign_type", "air") == "noise":
+        return await _create_noise_report(campaign, campaign_id, lang,
+                                          format, x_user, user)
+
     reading_docs = (
         await db.readings.find({"campaign_id": campaign_id}, {"_id": 0})
         .sort("timestamp", 1).to_list(length=100000)
@@ -395,6 +403,14 @@ async def preview_report(campaign_id: str):
         raise HTTPException(status_code=404, detail="Campaign not found")
     campaign = Campaign(**campaign_doc)
 
+    if getattr(campaign, "campaign_type", "air") == "noise":
+        # The noise summary endpoint already says everything a pre-flight
+        # check needs; the panel renders it directly.
+        from routes.noise import noise_summary as _ns
+        data = await _ns(campaign_id)
+        data["campaign_type"] = "noise"
+        return data
+
     reading_docs = await db.readings.find(
         {"campaign_id": campaign_id}, {"_id": 0}).sort("timestamp", 1) \
         .to_list(length=None)
@@ -505,3 +521,134 @@ async def preview_report(campaign_id: str):
         "pollutants": [pol_row(p) for p in summary.pollutants],
         "sections": sections,
     }
+
+
+# ---------------------------------------------------------------------------
+# Noise report generation
+# ---------------------------------------------------------------------------
+async def _create_noise_report(campaign, campaign_id: str, lang: str,
+                               format: str, x_user: str, user: dict):
+    from noise_calc import assess, build_noise_summary
+    from report.noise_charts import generate_noise_charts
+    from report.noise_generate import generate_noise_report
+
+    if lang != "en":
+        raise HTTPException(
+            status_code=422,
+            detail="Noise reports are English-only in this version — "
+                   "Arabic follows once the wording is approved.")
+
+    readings = await db.noise_readings.find(
+        {"campaign_id": campaign_id}, {"_id": 0}).sort("timestamp", 1) \
+        .to_list(length=None)
+    if not readings:
+        raise HTTPException(status_code=400,
+                            detail="No noise readings uploaded for this "
+                                   "campaign")
+
+    summary = build_noise_summary(readings, campaign.monitoring_start,
+                                  campaign.monitoring_end,
+                                  campaign.day_start_hour,
+                                  campaign.day_end_hour)
+    verdicts = assess(summary, campaign.noise_category)
+
+    out_dir = os.path.join(REPORT_DIR, campaign_id)
+    os.makedirs(out_dir, exist_ok=True)
+    version = 1 + await db.report_logs.count_documents(
+        {"campaign_id": campaign_id})
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    fname = (f"Noise_Report_{campaign_id[:8]}_v{version:03d}_"
+             f"{lang}_{stamp}.docx")
+    out_path = os.path.join(out_dir, fname)
+    charts_dir = os.path.join(out_dir, "charts")
+
+    figs = await run_in_threadpool(
+        generate_noise_charts, summary, readings,
+        campaign.noise_category, charts_dir)
+
+    # site map, field photos, certificates and licence — the same
+    # attachment kinds the air report uses
+    async def _paths(kind):
+        docs = await db.attachments.find(
+            {"campaign_id": campaign_id, "kind": kind}, {"_id": 0}) \
+            .sort("order", 1).to_list(length=50)
+        return [d["path"] for d in docs if d.get("path")]
+
+    site_photos = await _paths("field_photo")
+    licence = await _paths("license")
+    cal_docs = await db.attachments.find(
+        {"$or": [{"campaign_id": campaign_id},
+                 {"station_id": campaign.station_id or "__none__"}],
+         "kind": "calibration"}, {"_id": 0}) \
+        .sort("order", 1).to_list(length=50)
+    cal_items = [{"path": d.get("path"),
+                  "title": d.get("caption") or "Calibration certificate"}
+                 for d in cal_docs]
+
+    site_map = None
+    maps = await _paths("site_map")
+    if maps:
+        site_map = maps[0]
+    if not site_map:
+        try:
+            from report.sitemap import fetch_site_map
+            site_map = await run_in_threadpool(
+                fetch_site_map, campaign.latitude, campaign.longitude,
+                os.path.join(out_dir, "site_map.png"))
+        except Exception:  # noqa: BLE001
+            log.warning("site map unavailable for noise report",
+                        exc_info=True)
+
+    try:
+        await run_in_threadpool(
+            generate_noise_report, campaign, summary, verdicts, figs,
+            out_path, site_map, site_photos, cal_items, licence, charts_dir)
+        from report.fields import build_indexes, populate_field_caches
+        await run_in_threadpool(populate_field_caches, out_path)
+        await run_in_threadpool(build_indexes, out_path, convert_to_pdf)
+        if format == "pdf":
+            out_path = await run_in_threadpool(convert_to_pdf, out_path)
+            fname = os.path.basename(out_path)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.exception("noise report generation failed")
+        raise HTTPException(status_code=500,
+                            detail=f"Report generation failed: {exc}")
+
+    storage_meta = await run_in_threadpool(
+        storage.store_report, out_path, campaign_id, fname)
+    report_id = str(uuid.uuid4())
+    await db.report_logs.insert_one(to_mongo({
+        "id": report_id,
+        "storage": storage_meta["storage"],
+        "s3_key": storage_meta["s3_key"],
+        "campaign_id": campaign_id,
+        "project_name": campaign.project_name,
+        "version": version,
+        "filename": fname,
+        "path": out_path,
+        "lang": lang,
+        "format": format,
+        "generated_by": x_user,
+        "generated_at": datetime.now(timezone.utc),
+        "readings_count": len(readings),
+        "size_bytes": os.path.getsize(out_path),
+    }))
+    await audit("report.generate", "report", report_id, x_user,
+                {"campaign_id": campaign_id, "version": version,
+                 "lang": lang, "format": format, "filename": fname,
+                 "type": "noise"})
+
+    if user.get("role") != "admin":
+        return JSONResponse({
+            "download": False, "report_id": report_id, "filename": fname,
+            "version": version, "format": format, "lang": lang,
+            "size_bytes": os.path.getsize(out_path),
+            "detail": ("Report generated. Downloads are handled by the "
+                       "reviewing engineer — use Submit for review when "
+                       "the campaign is ready.")})
+    media = ("application/pdf" if format == "pdf" else
+             "application/vnd.openxmlformats-officedocument"
+             ".wordprocessingml.document")
+    return FileResponse(out_path, media_type=media, filename=fname)

@@ -140,8 +140,11 @@ async def submit_for_review(campaign_id: str, payload: SubmitPayload,
     """
     campaign = await _campaign_or_404(campaign_id)
     # reading_count is computed by the campaigns endpoints at read time and is
-    # never stored on the document, so count the readings themselves.
-    if not await db.readings.count_documents({"campaign_id": campaign_id}):
+    # never stored on the document, so count the readings themselves. Noise
+    # campaigns keep theirs in a separate collection.
+    coll = (db.noise_readings
+            if campaign.get("campaign_type") == "noise" else db.readings)
+    if not await coll.count_documents({"campaign_id": campaign_id}):
         raise HTTPException(
             status_code=422,
             detail="Upload the monitoring data before submitting for review")
