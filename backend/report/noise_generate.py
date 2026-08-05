@@ -60,6 +60,19 @@ def _tight(p, before=0, after=6):
     return p
 
 
+def _table_width(table, mm: float):
+    """Force the table's overall width. Cell widths alone leave the table
+    itself at its default, which is why the cover's footer band stopped
+    short of the paper edge instead of bleeding across it."""
+    tblPr = table._tbl.tblPr
+    for old in tblPr.findall(qn("w:tblW")):
+        tblPr.remove(old)
+    w = OxmlElement("w:tblW")
+    w.set(qn("w:w"), str(int(mm * 56.7)))      # twentieths of a point
+    w.set(qn("w:type"), "dxa")
+    tblPr.append(w)
+
+
 def _shade(cell, hexval):
     tcPr = cell._tc.get_or_add_tcPr()
     sh = OxmlElement("w:shd")
@@ -254,8 +267,16 @@ def _date_only(dt: Optional[datetime]) -> str:
             else dt.strftime("%B %d, %Y"))
 
 
-def _render_hero(project_name: str, site_line: str, out: str) -> str:
-    """The cover band, drawn — navy field, sound-wave arcs, title block."""
+def _render_hero(project_name: str, site_line: str, out: str,
+                 photo_path: Optional[str] = None) -> str:
+    """The cover band.
+
+    With a cover photograph selected on the campaign, the photograph becomes
+    the band and a navy scrim is laid over it so the title stays legible —
+    the same treatment the air report's cover uses, and what makes the
+    manual reports look like consultancy documents rather than forms.
+    Without one, the band is drawn: navy field and sound-wave arcs.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -268,32 +289,64 @@ def _render_hero(project_name: str, site_line: str, out: str) -> str:
     ax.axis("off")
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
-    gx = np.linspace(0, 1, 240)
-    for g in gx[:-1]:
-        ax.add_patch(Rectangle((g, 0), 1 / 239, 1,
-                     color=(0.055 + 0.05 * g, 0.20 + 0.06 * g,
-                            0.38 + 0.05 * g), lw=0))
+    photo_used = False
+    if photo_path and os.path.exists(photo_path):
+        try:
+            from PIL import Image
+            im = Image.open(photo_path).convert("RGB")
+            # centre-crop to the band's aspect so nothing is squashed
+            target = W / H
+            iw, ih = im.size
+            if iw / ih > target:
+                nw = int(ih * target)
+                im = im.crop(((iw - nw) // 2, 0, (iw + nw) // 2, ih))
+            else:
+                nh = int(iw / target)
+                im = im.crop((0, (ih - nh) // 2, iw, (ih + nh) // 2))
+            ax.imshow(np.asarray(im), extent=(0, 1, 0, 1), aspect="auto",
+                      zorder=0)
+            # navy scrim, heavier on the left where the wording sits
+            for i in range(120):
+                x = i / 120.0
+                ax.add_patch(Rectangle(
+                    (x, 0), 1 / 119, 1, lw=0, zorder=1,
+                    color=(0.055, 0.20, 0.38),
+                    alpha=max(0.30, 0.86 - 0.75 * x)))
+            photo_used = True
+        except Exception:  # noqa: BLE001
+            log.warning("cover photo unusable — drawing the band instead",
+                        exc_info=True)
+
+    if not photo_used:
+        gx = np.linspace(0, 1, 240)
+        for g in gx[:-1]:
+            ax.add_patch(Rectangle((g, 0), 1 / 239, 1,
+                         color=(0.055 + 0.05 * g, 0.20 + 0.06 * g,
+                                0.38 + 0.05 * g), lw=0))
     th = np.linspace(-np.pi / 2.6, np.pi / 2.6, 120)
-    for r, a in [(0.34, 0.10), (0.44, 0.085), (0.54, 0.07),
-                 (0.64, 0.055), (0.74, 0.04)]:
-        ax.plot(0.78 + r * np.cos(th) * 0.62, 0.52 + r * np.sin(th),
-                color="white", alpha=a, lw=5)
-    ax.plot([0.78, 0.78], [0.44, 0.60], color="white", alpha=0.13, lw=7,
-            solid_capstyle="round")
-    ax.text(0.065, 0.86, "ENVIRONMENTAL NOISE", fontsize=13,
+    if not photo_used:
+        for r, a in [(0.34, 0.10), (0.44, 0.085), (0.54, 0.07),
+                     (0.64, 0.055), (0.74, 0.04)]:
+            ax.plot(0.78 + r * np.cos(th) * 0.62, 0.52 + r * np.sin(th),
+                    color="white", alpha=a, lw=5)
+        ax.plot([0.78, 0.78], [0.44, 0.60], color="white", alpha=0.13,
+                lw=7, solid_capstyle="round")
+    ax.text(0.065, 0.86, "ENVIRONMENTAL NOISE", fontsize=13, zorder=6,
             color="#7fd39a", fontweight="bold")
     ax.add_patch(Rectangle((0.065, 0.80), 0.055, 0.014, color="#2f9e5f",
-                           lw=0))
+                           lw=0, zorder=6))
     for i, t in enumerate(["NOISE", "MONITORING", "REPORT"]):
         ax.text(0.062, 0.66 - i * 0.135, t, fontsize=40, color="white",
-                fontweight="bold")
-    ax.text(0.065, 0.24, "Accurate Monitoring.", fontsize=13,
+                fontweight="bold", zorder=6)
+    ax.text(0.065, 0.24, "Accurate Monitoring.", fontsize=13, zorder=6,
             color="#dbe4ef")
-    ax.text(0.065, 0.185, "Reliable Results.", fontsize=13, color="#dbe4ef")
-    ax.text(0.065, 0.13, "Healthier Environment.", fontsize=13,
+    ax.text(0.065, 0.185, "Reliable Results.", fontsize=13, zorder=6,
+            color="#dbe4ef")
+    ax.text(0.065, 0.13, "Healthier Environment.", fontsize=13, zorder=6,
             color="#7fd39a")
     ax.add_patch(Polygon([(0, 0.02), (0.5, 0.10), (0.5, 0.0), (0, 0.0)],
-                         closed=True, color="#2f9e5f", lw=0, alpha=0.95))
+                         closed=True, color="#2f9e5f", lw=0, alpha=0.95,
+                         zorder=6))
     fig.savefig(out, facecolor="#16406f")
     plt.close(fig)
     return out
@@ -307,6 +360,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
                           figs: Dict[str, str], out_path: str,
                           site_map_path: Optional[str] = None,
                           site_photo_paths: Optional[List[str]] = None,
+                          cover_photo_path: Optional[str] = None,
                           calibration_items: Optional[List[dict]] = None,
                           license_image_paths: Optional[List[str]] = None,
                           work_dir: Optional[str] = None) -> str:
@@ -347,7 +401,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     hero = os.path.join(wd, "noise_hero.png")
     try:
         _render_hero(campaign.project_name or "", campaign.site_name or "",
-                     hero)
+                     hero, cover_photo_path)
         p = _tight(doc.add_paragraph(), 0, 0)
         p.add_run().add_picture(hero, width=Mm(210))
     except Exception:  # noqa: BLE001
@@ -378,6 +432,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     t = doc.add_table(rows=len(info), cols=2)
     t.alignment = WD_TABLE_ALIGNMENT.CENTER
     t.autofit = False
+    _table_width(t, 180)
     for i, (lab, val) in enumerate(info):
         a, b = t.cell(i, 0), t.cell(i, 1)
         a.width = Mm(52)
@@ -387,8 +442,13 @@ def generate_noise_report(campaign, summary: NoiseSummary,
         for c in (a, b):
             _borders(c, bottom=(HAIR, 2))
 
+    # Push the band to the foot of the cover rather than leaving a third of
+    # the page blank under the document details.
+    for _ in range(9):
+        _tight(doc.add_paragraph(), 0, 0)
     band = doc.add_table(rows=1, cols=1)
     band.autofit = False
+    _table_width(band, 210)
     c = band.cell(0, 0)
     c.width = Mm(210)
     _shade(c, NAVY_HEX)
@@ -482,7 +542,6 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     doc.add_page_break()
     _heading(doc, "Table of Contents", 1)
     _toc_anchor(doc, ' TOC \\o "1-3" \\h \\z \\u ')
-    doc.add_page_break()
     _heading(doc, "List of Figures", 1)
     _toc_anchor(doc, ' TOC \\h \\z \\c "Figure" ')
     _heading(doc, "List of Tables", 1)
@@ -544,7 +603,6 @@ def generate_noise_report(campaign, summary: NoiseSummary,
                  NAVY_HEX, "EEF3F9", "KEY FINDING")
 
     # ---- introduction and scope -----------------------------------------
-    doc.add_page_break()
     _heading(doc, "1  Introduction", 1)
     _body(doc,
           f"A noise monitoring survey was conducted at "
@@ -585,7 +643,6 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     if site_photo_paths:
         imgs = [p for p in site_photo_paths if p and os.path.exists(p)]
         if imgs:
-            doc.add_page_break()
             t = doc.add_table(rows=(len(imgs) + 1) // 2, cols=2)
             t.alignment = WD_TABLE_ALIGNMENT.CENTER
             for k, path in enumerate(imgs[:4]):
@@ -623,7 +680,6 @@ def generate_noise_report(campaign, summary: NoiseSummary,
           "this report.")
 
     # ---- standards -------------------------------------------------------
-    doc.add_page_break()
     _heading(doc, "4  Environmental Noise Standards", 1)
     _body(doc,
           "Measured levels are assessed against the Implementing "
@@ -655,7 +711,6 @@ def generate_noise_report(campaign, summary: NoiseSummary,
            [110, 54], aligns=["left", "center"])
 
     # ---- results ---------------------------------------------------------
-    doc.add_page_break()
     _heading(doc, "5  Results", 1)
     _body(doc,
           f"Statistical parameters were derived from the validated "
@@ -760,20 +815,37 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     # ---- appendices ------------------------------------------------------
     if calibration_items:
         doc.add_page_break()
-        _heading(doc, "Appendix B — Calibration certificate", 1)
-        for c in calibration_items:
+        _heading(doc, "Appendix B — Calibration certificates", 1)
+        _body(doc,
+              "The laboratory calibration certificates covering the "
+              "instrument used for this survey are reproduced below.")
+        for i, c in enumerate(calibration_items):
             path = c.get("path")
-            if path and os.path.exists(path):
-                p = _tight(doc.add_paragraph(), 4, 0)
-                pic(p, path, 150)
+            if not (path and os.path.exists(path)):
+                continue
+            if i:
+                doc.add_page_break()
+            title = (c.get("title") or "Calibration certificate").strip()
+            p = _tight(doc.add_paragraph(), 2, 4)
+            r = p.add_run(title)
+            r.font.size = Pt(9.5)
+            r.font.bold = True
+            r.font.color.rgb = NAVY
+            p = _tight(doc.add_paragraph(), 0, 0)
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            pic(p, path, 165)
     if license_image_paths:
         doc.add_page_break()
-        _heading(doc, "Appendix C — Environmental license for the "
+        _heading(doc, "Appendix C — Environmental licence for the "
                       "institution", 1)
-        for path in license_image_paths:
-            if path and os.path.exists(path):
-                p = _tight(doc.add_paragraph(), 4, 0)
-                pic(p, path, 150)
+        for i, path in enumerate(license_image_paths):
+            if not (path and os.path.exists(path)):
+                continue
+            if i:
+                doc.add_page_break()
+            p = _tight(doc.add_paragraph(), 2, 0)
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            pic(p, path, 165)
 
     # ---- end marker ------------------------------------------------------
     doc.add_page_break()
