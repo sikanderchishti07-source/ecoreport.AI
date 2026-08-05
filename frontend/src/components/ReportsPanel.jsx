@@ -106,6 +106,10 @@ export default function ReportsPanel({ campaignId, readingCount }) {
   const [reviewBusy, setReviewBusy] = useState(false);
   // Which stored version is open in the on-screen reader, if any.
   const [viewing, setViewing] = useState(null);
+  // Which generated version is being submitted. A campaign accumulates many;
+  // "this campaign is ready" tells the reviewer nothing about which document
+  // they are signing off.
+  const [submitVersion, setSubmitVersion] = useState("");
 
   const loadStatus = useCallback(async () => {
     try {
@@ -126,7 +130,7 @@ export default function ReportsPanel({ campaignId, readingCount }) {
     }
     setReviewBusy(true);
     try {
-      await fn(campaignId, note);
+      await fn(campaignId, note, submitVersion || undefined);
       toast.success(okMessage);
       setReviewNote("");
       loadStatus();
@@ -180,6 +184,10 @@ export default function ReportsPanel({ campaignId, readingCount }) {
         listShares(campaignId).catch(() => []),
       ]);
       setReports(r);
+      // Newest first from the API — default to it, so the ordinary case
+      // needs no thought, but leave the choice visible.
+      setSubmitVersion((cur) =>
+        cur && r.some((x) => x.id === cur) ? cur : (r[0]?.id || ""));
       setAudit(a);
       setShares(sh);
     } catch (e) {
@@ -323,11 +331,39 @@ export default function ReportsPanel({ campaignId, readingCount }) {
         )}
 
         {status?.status === "submitted" ? (
-          <p className="text-xs text-muted-foreground mt-2">
-            Submitted by {status.submitted_by || "—"}
-            {status.submitted_at ? ` · ${fmtTs(status.submitted_at)}` : ""}
-            {admin ? " — waiting for you." : " — waiting for the reviewing engineer."}
-          </p>
+          <>
+            <p className="text-xs text-muted-foreground mt-2">
+              Submitted by {status.submitted_by || "—"}
+              {status.submitted_at ? ` · ${fmtTs(status.submitted_at)}` : ""}
+              {admin ? " — waiting for you." : " — waiting for the reviewing engineer."}
+            </p>
+            {(() => {
+              const sent = reports.find((r) => r.id === status.submitted_report_id);
+              if (!sent) return null;
+              return (
+                <div className="mt-2 flex flex-wrap items-center gap-2 border border-border rounded-sm bg-secondary/30 px-3 py-2">
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Under review
+                  </span>
+                  <Badge variant="outline" className="rounded-sm font-mono">
+                    {sent.version ? `v${String(sent.version).padStart(3, "0")}` : "—"}
+                  </Badge>
+                  <span className="text-xs uppercase text-muted-foreground">
+                    {(sent.lang || "en")} · {(sent.format || "docx")}
+                  </span>
+                  <span className="text-xs font-mono truncate max-w-[360px]">
+                    {sent.filename}
+                  </span>
+                  {reports[0] && reports[0].id !== sent.id && (
+                    <span className="text-[11px] text-muted-foreground w-full">
+                      A newer version exists. Submit again to put that one
+                      under review instead.
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
+          </>
         ) : (
           <p className="text-xs text-muted-foreground mt-1">
             {admin
@@ -368,9 +404,29 @@ export default function ReportsPanel({ campaignId, readingCount }) {
                 </Button>
               </>
             ) : (
+              <>
+                <Select value={submitVersion} onValueChange={setSubmitVersion}>
+                  <SelectTrigger className="w-[280px] rounded-sm h-9"
+                                 data-testid="submit-version">
+                    <SelectValue placeholder={
+                      reports.length ? "Choose a version" : "Generate a report first"
+                    } />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {reports.map((r) => (
+                      <SelectItem key={r.id} value={r.id}>
+                        {r.version ? `v${String(r.version).padStart(3, "0")}` : "—"}
+                        {" · "}{(r.lang || "en").toUpperCase()}
+                        {" · "}{(r.format || "docx").toUpperCase()}
+                        {" · "}{fmtTs(r.generated_at)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               <Button
                 onClick={() => runReview(submitForReview, "Sent for review", false)}
-                disabled={reviewBusy || status?.status === "submitted"}
+                disabled={reviewBusy || !submitVersion
+                          || status?.status === "submitted"}
                 className="rounded-sm h-9"
                 data-testid="submit-review-btn"
               >
@@ -378,6 +434,7 @@ export default function ReportsPanel({ campaignId, readingCount }) {
                   ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Sending…</>
                   : <><Send className="w-4 h-4 mr-1.5" /> Submit for review</>}
               </Button>
+              </>
             )}
           </div>
         </div>
