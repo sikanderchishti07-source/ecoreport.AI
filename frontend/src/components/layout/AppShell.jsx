@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, Link, useNavigate } from "react-router-dom";
 import {
-  Activity, Bell, Gauge, Images, LogOut, Ruler, ShieldCheck, Truck, UserRound,
-  Users,
+  Activity, Bell, Gauge, Images, Inbox, LogOut, Ruler, ShieldCheck, Truck,
+  UserRound, Users,
 } from "lucide-react";
 import { NAV } from "@/constants/testIds";
 import { Toaster } from "sonner";
 import ThemeToggle from "@/components/ThemeToggle";
 import {
   clearSession, getUser, listNotifications, markAllNotificationsRead,
-  markNotificationRead,
+  markNotificationRead, reviewQueue,
 } from "@/lib/api";
 
 const linkBase =
@@ -44,6 +44,9 @@ export default function AppShell() {
   const [openBell, setOpenBell] = useState(false);
   const bellRef = useRef(null);
 
+  const [waiting, setWaiting] = useState(0);
+  const admin = user?.role === "admin";
+
   const loadNotes = useCallback(async () => {
     try {
       const d = await listNotifications();
@@ -52,7 +55,15 @@ export default function AppShell() {
     } catch {
       /* signed out or offline — the bell simply stays quiet */
     }
-  }, []);
+    if (admin) {
+      try {
+        const q = await reviewQueue();
+        setWaiting(q.length || 0);
+      } catch {
+        /* the count simply does not show */
+      }
+    }
+  }, [admin]);
 
   useEffect(() => {
     loadNotes();
@@ -144,7 +155,23 @@ export default function AppShell() {
             >
               <Images className="w-3.5 h-3.5" /> Cover Photos
             </NavLink>
-            {user?.role === "admin" && (
+            {admin && (
+              <NavLink
+                to="/review"
+                data-testid="nav-review"
+                className={({ isActive }) =>
+                  `${linkBase} ${isActive ? linkActive : linkIdle} inline-flex items-center gap-1.5`
+                }
+              >
+                <Inbox className="w-3.5 h-3.5" /> Review
+                {waiting > 0 && (
+                  <span className="ml-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-medium leading-[18px] text-center">
+                    {waiting}
+                  </span>
+                )}
+              </NavLink>
+            )}
+            {admin && (
               <NavLink
                 to="/users"
                 className={({ isActive }) =>
@@ -207,7 +234,7 @@ export default function AppShell() {
               className="hidden sm:flex items-center gap-1.5 ml-2 border border-border rounded-sm px-2.5 h-9 bg-secondary/40 text-xs"
               title={`Signed in as ${user?.name || ""} — all actions are recorded under this name`}
             >
-              {user?.role === "admin"
+              {admin
                 ? <ShieldCheck className="w-3.5 h-3.5 text-primary" />
                 : <UserRound className="w-3.5 h-3.5 text-muted-foreground" />}
               <span className="max-w-[140px] truncate">{user?.name || "—"}</span>
