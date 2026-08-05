@@ -29,7 +29,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { listNoiseReadings } from "@/lib/api";
+import { listNoiseReadings, noiseSummary } from "@/lib/api";
 import ReportsPanel from "@/components/ReportsPanel";
 import CampaignDashboard from "@/components/CampaignDashboard";
 import InstrumentsPanel from "@/components/InstrumentsPanel";
@@ -72,6 +72,7 @@ export default function CampaignDetail() {
   const [readings, setReadings] = useState([]);
   const [noiseCount, setNoiseCount] = useState(0);
   const [noiseRows, setNoiseRows] = useState([]);
+  const [noiseStats, setNoiseStats] = useState(null);
   const [uploads, setUploads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [bins, setBins] = useState(DEFAULT_BINS);
@@ -95,6 +96,9 @@ export default function CampaignDetail() {
           setNoiseCount(nr.total || 0);
           setNoiseRows(nr.items || []);
         } catch { /* the count simply stays at zero */ }
+        try {
+          setNoiseStats(await noiseSummary(id));
+        } catch { /* no readings yet — the overview says so */ }
       }
       setUploads(u);
       setBins((c.wind_rose_bins && c.wind_rose_bins.length) ? c.wind_rose_bins : DEFAULT_BINS);
@@ -244,7 +248,82 @@ export default function CampaignDetail() {
 
         {/* OVERVIEW */}
         <TabsContent value="overview" className="mt-4 space-y-4">
-          {campaign && (
+          {campaign && campaign.campaign_type === "noise" ? (
+            !noiseStats ? (
+              <div className="border border-dashed border-border rounded-sm p-10 text-center">
+                <p className="text-sm text-muted-foreground">
+                  No sound-level data yet — upload the meter export to see
+                  the acoustic summary here.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[["LAeq, T", noiseStats.stats?.laeq_t],
+                    ["L Day", noiseStats.stats?.l_day],
+                    ["L Night", noiseStats.stats?.l_night],
+                    ["LA10", noiseStats.stats?.la10],
+                    ["LA50", noiseStats.stats?.la50],
+                    ["LA90", noiseStats.stats?.la90],
+                    ["Lmax", noiseStats.stats?.lmax],
+                    ["Lmin", noiseStats.stats?.lmin]].map(([lab, v]) => (
+                    <div key={lab}
+                         className="border border-border rounded-sm px-4 py-3">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                        {lab}
+                      </div>
+                      <div className="text-xl font-semibold text-primary font-mono tabular">
+                        {v == null ? "—" : Number(v).toFixed(1)}
+                        <span className="text-[10px] text-muted-foreground font-sans ml-1">dB(A)</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="border border-border rounded-sm px-4 py-3">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Data capture — monitoring window
+                    </div>
+                    <div className="text-lg font-semibold font-mono tabular">
+                      {noiseStats.capture?.pct ?? "—"}%
+                      <span className="text-xs text-muted-foreground font-sans ml-2">
+                        {noiseStats.capture?.valid?.toLocaleString()} valid of{" "}
+                        {noiseStats.capture?.expected?.toLocaleString()} expected
+                        one-minute intervals
+                        {noiseStats.capture?.invalid
+                          ? ` · ${noiseStats.capture.invalid} flagged`
+                          : ""}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Counted inside the campaign's monitoring window only —
+                      uploaded intervals outside it are stored but not
+                      assessed.
+                    </p>
+                  </div>
+                  <div className="border border-border rounded-sm px-4 py-3">
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      Assessment — {noiseStats.category_label}
+                    </div>
+                    {(noiseStats.verdicts || []).length === 0 ? (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        No compliance judgement — the report states the
+                        measured levels against every NCEC category.
+                      </p>
+                    ) : (
+                      noiseStats.verdicts.map((v) => (
+                        <p key={v.period}
+                           className={`text-xs mt-1 ${v.status === "ok" ? "text-emerald-700" : "text-amber-700"}`}>
+                          {v.status === "ok" ? "✓" : "⚠"} {v.text}
+                        </p>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          ) : campaign && (
             <CampaignDashboard campaign={campaign} onGoTo={setTab} />
           )}
         </TabsContent>
