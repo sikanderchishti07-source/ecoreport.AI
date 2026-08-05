@@ -88,7 +88,9 @@ function AuditDetails({ entry }) {
   return null;
 }
 
-export default function ReportsPanel({ campaignId, readingCount }) {
+export default function ReportsPanel({ campaignId, readingCount,
+                                       campaignType = "air" }) {
+  const isNoise = campaignType === "noise";
   const [lang, setLang] = useState("en");
   const [format, setFormat] = useState("docx");
   const [busy, setBusy] = useState(false);
@@ -247,7 +249,11 @@ export default function ReportsPanel({ campaignId, readingCount }) {
           as a new version below.
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Select value={lang} onValueChange={setLang}>
+          <Select value={lang} onValueChange={setLang}
+                  disabled={isNoise}
+                  title={isNoise
+                    ? "Noise reports are English-only in this version"
+                    : undefined}>
             <SelectTrigger className="w-[190px] rounded-sm h-9">
               <SelectValue />
             </SelectTrigger>
@@ -267,6 +273,7 @@ export default function ReportsPanel({ campaignId, readingCount }) {
               ))}
             </SelectContent>
           </Select>
+          {!isNoise && (
           <Button
             variant="outline"
             className="rounded-sm h-9"
@@ -275,6 +282,7 @@ export default function ReportsPanel({ campaignId, readingCount }) {
           >
             {preview ? "Hide preview" : "Preview"}
           </Button>
+          )}
           <Button
             onClick={onGenerate}
             disabled={busy}
