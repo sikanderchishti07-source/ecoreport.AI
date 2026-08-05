@@ -273,3 +273,16 @@ export const markNotificationRead = (id) =>
   api.post(`/notifications/${id}/read`).then((r) => r.data);
 export const markAllNotificationsRead = () =>
   api.post("/notifications/read-all").then((r) => r.data);
+
+// ---- On-screen report reader --------------------------------------------
+// Pages are images, not a PDF: there is no document in the browser to save,
+// and no viewer toolbar offering to download one. Every request carries the
+// Bearer token, so they cannot be fetched with a plain <img src>.
+export const reportPageCount = (reportId) =>
+  api.get(`/reports/${reportId}/page-count`).then((r) => r.data);
+export const fetchReportPage = async (reportId, page) => {
+  const res = await api.get(`/reports/${reportId}/page/${page}`, {
+    responseType: "blob", timeout: 180000,
+  });
+  return res.data;
+};
