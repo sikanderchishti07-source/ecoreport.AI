@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -102,15 +102,31 @@ def _page_image(doc: dict, page: int) -> str:
     return img
 
 
-def _page_total(doc: dict) -> int:
+def _render_all(doc: dict, total: int) -> None:
+    """Render every page once, in the background, right after the first
+    request. Rendering on demand made scrolling stutter: each page waited on
+    its own round trip. One pass costs a few seconds and every page after it
+    is served from disk."""
+    try:
+        for n in range(1, total + 1):
+            _page_image(doc, n)
+    except Exception:  # noqa: BLE001
+        log.warning("background page render stopped early", exc_info=True)
+
+
+def _page_geometry(doc: dict) -> tuple:
+    """Page count and the aspect ratio of the first page, so the reader can
+    lay out placeholders at the right height before any image arrives."""
     pdf_path = _viewable_pdf(doc)
     try:
         import fitz
         with fitz.open(pdf_path) as pdf:
-            return pdf.page_count
+            r = pdf[0].rect if pdf.page_count else None
+            return (pdf.page_count,
+                    float(r.width) if r else 595.0,
+                    float(r.height) if r else 842.0)
     except Exception:  # noqa: BLE001
-        log.warning("PyMuPDF unavailable — counting pages with pdfinfo",
-                    exc_info=True)
+        log.warning("PyMuPDF unavailable — using pdfinfo", exc_info=True)
     import re as _re
     import subprocess
     out = subprocess.run(["pdfinfo", pdf_path], capture_output=True,
@@ -119,7 +135,9 @@ def _page_total(doc: dict) -> int:
     if not m:
         raise HTTPException(status_code=500,
                             detail="Could not read the report for viewing")
-    return int(m.group(1))
+    size = _re.search(r"Page size:\s+([\d.]+) x ([\d.]+)", out)
+    w, h = (float(size.group(1)), float(size.group(2))) if size else (595.0, 842.0)
+    return int(m.group(1)), w, h
 
 
 async def _report_or_404(report_id: str) -> dict:
@@ -130,12 +148,19 @@ async def _report_or_404(report_id: str) -> dict:
 
 
 @router.get("/reports/{report_id}/page-count")
-async def report_page_count(report_id: str):
-    """How many pages the on-screen reader has. Open to every signed-in
-    account — reading is not downloading."""
+async def report_page_count(report_id: str, background: BackgroundTasks):
+    """Open the report for reading. Open to every signed-in account — reading
+    is not downloading.
+
+    The first call on a DOCX version converts it with LibreOffice, which is
+    the slow part and happens once. Every page is then rendered in the
+    background so the reader scrolls without waiting on each one.
+    """
     doc = await _report_or_404(report_id)
-    pages = await run_in_threadpool(_page_total, doc)
+    pages, width, height = await run_in_threadpool(_page_geometry, doc)
+    background.add_task(run_in_threadpool, _render_all, doc, pages)
     return {"report_id": report_id, "pages": pages,
+            "page_width": width, "page_height": height,
             "filename": doc.get("filename")}
 
 
