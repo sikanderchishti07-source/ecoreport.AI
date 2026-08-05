@@ -120,6 +120,18 @@ export const generateReport = async (campaignId, lang = "en", format = "docx") =
     }
     throw e;
   }
+  // Field operators get the version record instead of the bytes: the report
+  // is built and stored, but only an admin takes the file off the system.
+  // In blob mode a JSON body still arrives as a Blob, so read the content
+  // type rather than the shape of the data.
+  const ctype = res.headers["content-type"] || "";
+  if (ctype.includes("application/json")) {
+    let meta = {};
+    try {
+      meta = JSON.parse(await res.data.text());
+    } catch {}
+    return { downloaded: false, ...meta };
+  }
   const dispo = res.headers["content-disposition"] || "";
   const m = dispo.match(/filename="?([^";]+)"?/);
   const filename = m ? m[1] : `AAQ_Report.${format}`;
@@ -129,7 +141,7 @@ export const generateReport = async (campaignId, lang = "en", format = "docx") =
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
-  return filename;
+  return { downloaded: true, filename };
 };
 export const previewReport = (campaignId) =>
   api.get(`/campaigns/${campaignId}/report-preview`).then((r) => r.data);
@@ -236,3 +248,28 @@ export const uploadStationCertificate = (stationId, file, fields = {}) => {
     headers: { "Content-Type": "multipart/form-data" }, timeout: 300000,
   }).then((r) => r.data);
 };
+
+
+// ---- Roles and review workflow ------------------------------------------
+// The browser hides what an operator cannot use; the server refuses it. Both
+// are needed — the first is courtesy, the second is the control.
+export const isAdmin = () => getUser()?.role === "admin";
+
+export const submitForReview = (campaignId, comment) =>
+  api.post(`/campaigns/${campaignId}/submit`, { comment: comment || null })
+     .then((r) => r.data);
+export const approveCampaign = (campaignId, comment) =>
+  api.post(`/campaigns/${campaignId}/approve`, { comment: comment || null })
+     .then((r) => r.data);
+export const returnCampaign = (campaignId, comment) =>
+  api.post(`/campaigns/${campaignId}/return`, { comment })
+     .then((r) => r.data);
+export const reviewQueue = () =>
+  api.get("/review-queue").then((r) => r.data);
+
+export const listNotifications = (limit = 30) =>
+  api.get("/notifications", { params: { limit } }).then((r) => r.data);
+export const markNotificationRead = (id) =>
+  api.post(`/notifications/${id}/read`).then((r) => r.data);
+export const markAllNotificationsRead = () =>
+  api.post("/notifications/read-all").then((r) => r.data);
