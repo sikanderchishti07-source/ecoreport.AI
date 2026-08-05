@@ -154,6 +154,7 @@ class Campaign(CampaignBase):
     submitted_by: Optional[str] = None
     submitted_by_id: Optional[str] = None
     submitted_at: Optional[datetime] = None
+    submitted_report_id: Optional[str] = None
     approved_by: Optional[str] = None
     approved_at: Optional[datetime] = None
     returned_by: Optional[str] = None
