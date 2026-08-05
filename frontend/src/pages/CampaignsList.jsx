@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus, Trash2, ArrowRight, MapPin, Search, X } from "lucide-react";
+import { Plus, Trash2, ArrowRight, MapPin, Search, Wind, Volume2, X } from "lucide-react";
 
 import { listCampaigns, deleteCampaign, searchArchive } from "@/lib/api";
 import { CAMPAIGNS_LIST } from "@/constants/testIds";
@@ -44,6 +44,53 @@ function formatWindow(start, end) {
   } catch {
     return `${start} → ${end}`;
   }
+}
+
+/**
+ * The chooser a New Campaign click opens: one card per report type. The
+ * type is fixed at creation — an air campaign's readings, engine and report
+ * are different things from a noise survey's, so it cannot change later.
+ */
+function TypeChooser({ onClose, onPick }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center p-4"
+         onMouseDown={onClose}>
+      <div className="w-full max-w-2xl border border-border rounded-sm bg-background p-6 shadow-lg"
+           onMouseDown={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-semibold tracking-tight">What is being monitored?</h2>
+        <p className="text-xs text-muted-foreground mt-1">
+          The campaign type decides the data format, the calculations and the
+          report the system generates.
+        </p>
+        <div className="grid md:grid-cols-2 gap-4 mt-5">
+          <button
+            onClick={() => onPick("air")}
+            data-testid="new-campaign-air"
+            className="text-left border border-border rounded-sm p-5 hover:border-primary hover:bg-secondary/40 transition-colors"
+          >
+            <Wind className="w-6 h-6 text-primary" />
+            <div className="mt-3 text-sm font-semibold">Ambient Air Quality</div>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+              Hourly analyser data — gases, particulates and meteorology,
+              assessed against the NCEC 2020 ambient standards.
+            </p>
+          </button>
+          <button
+            onClick={() => onPick("noise")}
+            data-testid="new-campaign-noise"
+            className="text-left border border-border rounded-sm p-5 hover:border-primary hover:bg-secondary/40 transition-colors"
+          >
+            <Volume2 className="w-6 h-6 text-primary" />
+            <div className="mt-3 text-sm font-semibold">Environmental Noise</div>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+              One-minute sound level record — LAeq, day and night levels and
+              statistical percentiles against the NCEC noise limits.
+            </p>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function CampaignsList() {
@@ -110,8 +157,16 @@ export default function CampaignsList() {
     }
   };
 
+  const [choosing, setChoosing] = useState(false);
+
   return (
     <div data-testid={CAMPAIGNS_LIST.root} className="space-y-6">
+      {choosing && (
+        <TypeChooser
+          onClose={() => setChoosing(false)}
+          onPick={(t) => { setChoosing(false); nav(`/campaigns/new?type=${t}`); }}
+        />
+      )}
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Campaigns</h1>
@@ -121,7 +176,7 @@ export default function CampaignsList() {
         </div>
         <Button
           data-testid={CAMPAIGNS_LIST.createBtn}
-          onClick={() => nav("/campaigns/new")}
+          onClick={() => setChoosing(true)}
           className="rounded-sm"
         >
           <Plus className="w-4 h-4 mr-2" /> New Campaign
@@ -182,6 +237,10 @@ export default function CampaignsList() {
             <div className="col-span-4">
               <div className="flex items-center gap-2 font-medium">
                 <span>{c.project_name}</span>
+                <Badge variant="outline"
+                       className="rounded-sm text-[10px] uppercase tracking-wider">
+                  {c.campaign_type === "noise" ? "Noise" : "Air"}
+                </Badge>
                 <StatusPill value={c.status} />
               </div>
               <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">

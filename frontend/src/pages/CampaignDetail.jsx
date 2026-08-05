@@ -25,9 +25,11 @@ import {
 } from "@/lib/api";
 import { CAMPAIGN_DETAIL } from "@/constants/testIds";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { listNoiseReadings } from "@/lib/api";
 import ReportsPanel from "@/components/ReportsPanel";
 import CampaignDashboard from "@/components/CampaignDashboard";
 import InstrumentsPanel from "@/components/InstrumentsPanel";
@@ -68,6 +70,7 @@ export default function CampaignDetail() {
   const nav = useNavigate();
   const [campaign, setCampaign] = useState(null);
   const [readings, setReadings] = useState([]);
+  const [noiseCount, setNoiseCount] = useState(0);
   const [uploads, setUploads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [bins, setBins] = useState(DEFAULT_BINS);
@@ -83,6 +86,14 @@ export default function CampaignDetail() {
       ]);
       setCampaign(c);
       setReadings(r);
+      if (c?.campaign_type === "noise") {
+        // Noise intervals live in their own collection; the analyser
+        // readings list is legitimately empty for these campaigns.
+        try {
+          const nr = await listNoiseReadings(id, { limit: 1 });
+          setNoiseCount(nr.total || 0);
+        } catch { /* the count simply stays at zero */ }
+      }
       setUploads(u);
       setBins((c.wind_rose_bins && c.wind_rose_bins.length) ? c.wind_rose_bins : DEFAULT_BINS);
     } catch {
@@ -174,7 +185,13 @@ export default function CampaignDetail() {
             <ArrowLeft className="w-4 h-4 mr-1" /> Campaigns
           </Button>
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{campaign.project_name}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+              {campaign.project_name}
+              <Badge variant="outline"
+                     className="rounded-sm text-[10px] uppercase tracking-wider">
+                {campaign.campaign_type === "noise" ? "Noise" : "Air"}
+              </Badge>
+            </h1>
             <p className="text-xs text-muted-foreground mt-0.5">
               {campaign.site_name} · {campaign.client}
             </p>
@@ -474,7 +491,12 @@ export default function CampaignDetail() {
         </TabsContent>
 
         <TabsContent value="reports" className="mt-4">
-          <ReportsPanel campaignId={id} readingCount={campaign?.reading_count} />
+          <ReportsPanel
+            campaignId={id}
+            campaignType={campaign?.campaign_type || "air"}
+            readingCount={campaign?.campaign_type === "noise"
+              ? noiseCount : campaign?.reading_count}
+          />
         </TabsContent>
       </Tabs>
     </div>

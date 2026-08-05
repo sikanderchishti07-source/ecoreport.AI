@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, UploadCloud, FileSpreadsheet, CheckCircle2, AlertTriangle, ShieldAlert } from "lucide-react";
 
-import { getCampaign, uploadReadings } from "@/lib/api";
+import { getCampaign, uploadNoiseReadings, uploadReadings } from "@/lib/api";
 import { UPLOAD } from "@/constants/testIds";
 import { Button } from "@/components/ui/button";
 
@@ -45,6 +45,8 @@ export default function UploadPage() {
     if (e.dataTransfer.files?.[0]) onFile(e.dataTransfer.files[0]);
   };
 
+  const isNoise = campaign?.campaign_type === "noise";
+
   const submit = async () => {
     if (!file) {
       toast.error("Choose a file first");
@@ -52,6 +54,24 @@ export default function UploadPage() {
     }
     setUploading(true);
     try {
+      if (isNoise) {
+        // The noise ingest replies with a different shape — rows, flags,
+        // first and last timestamps — so it is handled here rather than
+        // funnelled through the analyser result panel.
+        const res = await uploadNoiseReadings(id, file);
+        setResult(null);
+        if (res.rows > 0) {
+          toast.success(
+            `${res.rows.toLocaleString()} intervals ingested` +
+            (res.auto_flagged
+              ? ` — ${res.auto_flagged} flagged outside the plausible range`
+              : ""));
+          nav(`/campaigns/${id}`);
+        } else {
+          toast.warning("No rows ingested — check the file's columns");
+        }
+        return;
+      }
       const res = await uploadReadings(id, file);
       setResult(res);
       const warnings = res.upload_log.units_warnings || [];
@@ -93,6 +113,28 @@ export default function UploadPage() {
         </div>
       </div>
 
+      {isNoise ? (
+      <section className="border border-border rounded-sm">
+        <header className="px-4 py-2 border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground bg-secondary/40">
+          Expected columns — sound level meter export
+        </header>
+        <div className="p-4 space-y-2">
+          <div className="grid grid-cols-4 gap-2 text-xs font-mono max-w-md">
+            {["No.", "Date", "Time", "dB"].map((c) => (
+              <span key={c}
+                    className="border border-border rounded-sm px-2 py-1 text-primary border-primary/40 text-center">
+                {c}
+              </span>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            One row per logged interval, exactly as the meter exports it.
+            Times that run past midnight under one date are handled.
+            Re-uploading replaces the previous data for this campaign.
+          </p>
+        </div>
+      </section>
+      ) : (
       <section className="border border-border rounded-sm">
         <header className="px-4 py-2 border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground bg-secondary/40">
           Expected columns (order-agnostic)
@@ -115,6 +157,7 @@ export default function UploadPage() {
           <div>• QA flag is not read from the file — mark rows as invalid via the Readings tab after upload.</div>
         </div>
       </section>
+      )}
 
       <label
         htmlFor="upload-input"

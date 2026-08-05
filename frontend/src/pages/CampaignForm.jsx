@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, Save } from "lucide-react";
@@ -30,7 +31,24 @@ const DEFAULT_GAS_UNITS_MAP = {
   O3: "ppb", H2S: "ppb", CO: "ppm",
 };
 
+const NOISE_CATEGORIES = [
+  { value: "A", label: "A — Sensitive zones (hospitals, schools)" },
+  { value: "B", label: "B — Residential areas" },
+  { value: "C", label: "C — Mixed residential and commercial" },
+  { value: "D", label: "D — Commercial and business districts" },
+  { value: "roadside", label: "Roadside — main roads and highways" },
+  { value: "industrial", label: "Industrial zones" },
+  { value: "construction", label: "Construction work site" },
+  { value: "tbd", label: "To be determined by the consultant" },
+];
+
 const defaults = {
+  campaign_type: "air",
+  noise_category: "tbd",
+  day_start_hour: 7,
+  day_end_hour: 19,
+  meter_model: "",
+  meter_serial: "",
   project_name: "",
   client: "",
   provider: "Bander Said Allehiany (BSA)",
@@ -180,7 +198,12 @@ export function parseCoordinates(text) {
 export default function CampaignForm({ mode }) {
   const { id } = useParams();
   const nav = useNavigate();
-  const [form, setForm] = useState(defaults);
+  const [params] = useSearchParams();
+  // The type comes from the chooser card and never changes afterwards —
+  // an air campaign cannot become a noise one, because its readings,
+  // engine and report are different things.
+  const urlType = params.get("type") === "noise" ? "noise" : "air";
+  const [form, setForm] = useState({ ...defaults, campaign_type: urlType });
   const [loading, setLoading] = useState(mode === "edit");
   const [saving, setSaving] = useState(false);
   const [pasted, setPasted] = useState("");
@@ -192,6 +215,12 @@ export default function CampaignForm({ mode }) {
       try {
         const c = await getCampaign(id);
         setForm({
+          campaign_type: c.campaign_type || "air",
+          noise_category: c.noise_category || "tbd",
+          day_start_hour: c.day_start_hour ?? 7,
+          day_end_hour: c.day_end_hour ?? 19,
+          meter_model: c.meter_model || "",
+          meter_serial: c.meter_serial || "",
           project_name: c.project_name || "",
           client: c.client || "",
           provider: c.provider || "",
@@ -252,6 +281,8 @@ export default function CampaignForm({ mode }) {
     try {
       const payload = {
         ...form,
+        day_start_hour: parseInt(form.day_start_hour, 10) || 7,
+        day_end_hour: parseInt(form.day_end_hour, 10) || 19,
         latitude: parseFloat(form.latitude),
         facility_latitude: form.facility_latitude === "" || form.facility_latitude == null
           ? null : parseFloat(form.facility_latitude),
@@ -431,6 +462,64 @@ export default function CampaignForm({ mode }) {
         </div>
       </Section>
 
+      {form.campaign_type === "noise" && (
+      <Section title="Noise settings">
+        <p className="text-[11px] text-muted-foreground -mt-1">
+          The land-use category decides which NCEC limits the report judges
+          against. Choosing "to be determined" produces a report that states
+          the measured levels against every category and leaves the
+          assessment to the consultant.
+        </p>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label>NCEC land-use category</Label>
+            <select
+              value={form.noise_category}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, noise_category: e.target.value }))}
+              className="w-full h-9 rounded-sm border border-border bg-background px-2 text-sm"
+              data-testid="noise-category"
+            >
+              {NOISE_CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Day period starts</Label>
+              <Input type="number" min={0} max={23}
+                     value={form.day_start_hour}
+                     onChange={(e) => setForm((f) => ({ ...f, day_start_hour: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Day period ends</Label>
+              <Input type="number" min={0} max={23}
+                     value={form.day_end_hour}
+                     onChange={(e) => setForm((f) => ({ ...f, day_end_hour: e.target.value }))} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Sound level meter</Label>
+            <Input value={form.meter_model}
+                   onChange={(e) => setForm((f) => ({ ...f, meter_model: e.target.value }))}
+                   placeholder="Cirrus Noise Meter Type 1" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Meter serial number</Label>
+            <Input value={form.meter_serial}
+                   onChange={(e) => setForm((f) => ({ ...f, meter_serial: e.target.value }))}
+                   placeholder="G330052" />
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          L Day and L Night are energy averages over the day period and its
+          complement. The regulation's default of 07:00–19:00 is preset.
+        </p>
+      </Section>
+      )}
+
+      {form.campaign_type !== "noise" && (
       <Section title="Gas units">
         <p className="text-[11px] text-muted-foreground -mt-1">
           The units of each gas column in the file you will upload. NCEC limits
@@ -490,6 +579,8 @@ export default function CampaignForm({ mode }) {
           </Button>
         </div>
       </Section>
+
+      )}
 
       <Section title="Monitoring window">
         <div className="grid grid-cols-2 gap-4">
