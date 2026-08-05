@@ -287,3 +287,17 @@ export const fetchReportPage = async (reportId, page) => {
   });
   return res.data;
 };
+
+// ---- Noise campaigns ------------------------------------------------------
+export const uploadNoiseReadings = (campaignId, file) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post(`/campaigns/${campaignId}/noise-readings`, fd, {
+    headers: { "Content-Type": "multipart/form-data" }, timeout: 300000,
+  }).then((r) => r.data);
+};
+export const listNoiseReadings = (campaignId, params = {}) =>
+  api.get(`/campaigns/${campaignId}/noise-readings`, { params })
+     .then((r) => r.data);
+export const noiseSummary = (campaignId) =>
+  api.get(`/campaigns/${campaignId}/noise-summary`).then((r) => r.data);
