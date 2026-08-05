@@ -190,9 +190,19 @@ export default function LoginPage() {
   const codeIsComplete = (v) =>
     /^\d{6}$/.test(v) || /^[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(v);
 
+  // Each code may be sent exactly once. Without this, the auto-submit
+  // effect re-fires after a successful verify (busy flips back to false
+  // while the code is still in the field), the same code is sent again,
+  // the server correctly rejects the replay with a 401 — and the
+  // interceptor reads that 401 as an expired session and signs the user
+  // straight back out. That was the "login then sudden auto logout".
+  const sentRef = useRef("");
+
   const submitCode = async (e) => {
     e?.preventDefault?.();
     if (busy) return;
+    if (sentRef.current === code) return;
+    sentRef.current = code;
     setBusy(true);
     setError(null);
     try {
@@ -218,6 +228,7 @@ export default function LoginPage() {
     } catch (err) {
       setError(describe(err));
       setCode("");
+      sentRef.current = "";          // a fresh code may be tried
     } finally {
       setBusy(false);
     }
