@@ -566,29 +566,65 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
         generate_noise_charts, summary, readings,
         campaign.noise_category, charts_dir)
 
-    # site map, field photos, certificates and licence — the same
-    # attachment kinds the air report uses
-    async def _paths(kind):
-        docs = await db.attachments.find(
-            {"campaign_id": campaign_id, "kind": kind}, {"_id": 0}) \
-            .sort("order", 1).to_list(length=50)
-        return [d["path"] for d in docs if d.get("path")]
+    # Attachments, collected exactly as the air report collects them —
+    # same kinds, same certificate selection — so a noise campaign behaves
+    # the way the operator already expects. The first version looked for a
+    # "field_photo" kind that nothing writes and ignored cover photographs
+    # entirely, which is why a selected cover never appeared.
+    atts = await db.attachments.find({"campaign_id": campaign_id},
+                                     {"_id": 0}) \
+        .sort([("order", 1), ("uploaded_at", 1)]).to_list(length=500)
+    by_kind: dict = {}
+    for a in atts:
+        by_kind.setdefault(a["kind"], []).append(a)
 
-    site_photos = await _paths("field_photo")
-    licence = await _paths("license")
-    cal_docs = await db.attachments.find(
-        {"$or": [{"campaign_id": campaign_id},
-                 {"station_id": campaign.station_id or "__none__"}],
-         "kind": "calibration"}, {"_id": 0}) \
-        .sort("order", 1).to_list(length=50)
-    cal_items = [{"path": d.get("path"),
-                  "title": d.get("caption") or "Calibration certificate"}
-                 for d in cal_docs]
+    site_photos = [a["path"] for a in by_kind.get("site_photo", [])
+                   if os.path.exists(a.get("path", ""))]
+    licence = [a["path"] for a in by_kind.get("license", [])
+               if os.path.exists(a.get("path", ""))]
+    cover = next((a["path"] for a in by_kind.get("cover_photo", [])
+                  if os.path.exists(a.get("path", ""))), None)
 
-    site_map = None
-    maps = await _paths("site_map")
-    if maps:
-        site_map = maps[0]
+    cal_items = []
+    for a in by_kind.get("calibration", []):
+        if os.path.exists(a.get("path", "")):
+            cal_items.append({
+                "title": a.get("caption") or "Calibration certificate",
+                "path": a["path"]})
+
+    # The lab's own certificates are used unless the campaign supplied its
+    # own, and only those valid for this survey window — the same selector
+    # the air report uses, so Appendix B fills itself with no extra work.
+    try:
+        from report.certificates import select as select_certs
+        station_certs = []
+        if campaign.station_id:
+            station_certs = await db.attachments.find(
+                {"station_id": campaign.station_id, "kind": "calibration"},
+                {"_id": 0}).to_list(length=200)
+        chosen_certs, cert_warnings = select_certs(
+            [a for a in by_kind.get("calibration", [])
+             if a.get("cert_number")],
+            station_certs, campaign.monitoring_start,
+            campaign.monitoring_end)
+        for msg in cert_warnings:
+            log.warning("campaign %s: %s", campaign_id, msg)
+        for c in chosen_certs:
+            if not os.path.exists(c.get("path", "")):
+                continue
+            if any(item["path"] == c["path"] for item in cal_items):
+                continue
+            cal_items.append({
+                "title": (f"Calibration certificate "
+                          f"{c.get('cert_number', '')}").strip(),
+                "path": c["path"]})
+    except Exception:  # noqa: BLE001
+        log.warning("certificate selection unavailable for the noise report",
+                    exc_info=True)
+
+    # Figure 1 — an operator-uploaded map wins over the generated one.
+    site_map = next((a["path"] for a in by_kind.get("site_map", [])
+                     if os.path.exists(a.get("path", ""))), None)
     if not site_map:
         try:
             from report.sitemap import fetch_site_map
@@ -602,7 +638,8 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
     try:
         await run_in_threadpool(
             generate_noise_report, campaign, summary, verdicts, figs,
-            out_path, site_map, site_photos, cal_items, licence, charts_dir)
+            out_path, site_map, site_photos, cover, cal_items, licence,
+            charts_dir)
         from report.fields import build_indexes, populate_field_caches
         await run_in_threadpool(populate_field_caches, out_path)
         await run_in_threadpool(build_indexes, out_path, convert_to_pdf)
