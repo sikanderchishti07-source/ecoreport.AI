@@ -124,7 +124,9 @@ async def submit_for_review(campaign_id: str, payload: ReviewNote,
     if campaign.get("status") == SUBMITTED:
         raise HTTPException(status_code=409,
                             detail="This campaign is already awaiting review")
-    if not campaign.get("reading_count"):
+    # reading_count is computed by the campaigns endpoints at read time and is
+    # never stored on the document, so count the readings themselves.
+    if not await db.readings.count_documents({"campaign_id": campaign_id}):
         raise HTTPException(
             status_code=422,
             detail="Upload the monitoring data before submitting for review")
@@ -253,6 +255,11 @@ async def review_queue(user: dict = Depends(require_admin)):
     docs = await db.campaigns.find(
         {"status": SUBMITTED},
         {"_id": 0, "id": 1, "project_name": 1, "client": 1, "site_name": 1,
-         "submitted_by": 1, "submitted_at": 1, "reading_count": 1}) \
+         "submitted_by": 1, "submitted_at": 1}) \
         .sort("submitted_at", -1).to_list(length=200)
+    # Counted here for the same reason as above: the campaign document does
+    # not carry it.
+    for d in docs:
+        d["reading_count"] = await db.readings.count_documents(
+            {"campaign_id": d["id"]})
     return docs
