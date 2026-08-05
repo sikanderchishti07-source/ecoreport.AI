@@ -146,22 +146,30 @@ def generate_report(
     tpl = DocxTemplate(template_path)
     ctx = build_context(campaign, summary, lang=lang)
 
+    def _inline(path, width_mm):
+        """Every image enters the document through here. ``slim`` re-encodes
+        photographs and scans, which were being stored as PNG and cost about
+        22 MB of the 30 MB a finished report used to weigh. Charts, brand
+        artwork and anything using transparency are returned untouched."""
+        from report.imaging import slim
+        return InlineImage(tpl, slim(path, charts_dir), width=Mm(width_mm))
+
     for ctx_key, fig_key in FIG_MAP.items():
         path = figs.get(fig_key)
         if path and os.path.exists(path):
             width = ROSE_WIDTH_MM if fig_key == "wind_rose" else FIG_WIDTH_MM
-            ctx[ctx_key] = InlineImage(tpl, path, width=Mm(width))
+            ctx[ctx_key] = _inline(path, width)
         else:
             ctx[ctx_key] = ""
 
     def _img_list(paths: Optional[List[str]], width_mm: int = 150):
-        return [InlineImage(tpl, p, width=Mm(width_mm))
+        return [_inline(p, width_mm)
                 for p in (paths or []) if os.path.exists(p)]
 
     # Figure 2 — field photos in a 2x2 grid
     rows = []
     if site_photo_paths:
-        imgs = [InlineImage(tpl, p, width=Mm(74)) for p in site_photo_paths
+        imgs = [_inline(p, 74) for p in site_photo_paths
                 if p and os.path.exists(p)]
         for i in range(0, len(imgs), 2):
             pair = imgs[i:i + 2]
@@ -183,7 +191,7 @@ def generate_report(
                    site_line=campaign.site_name)
         # exactly the page width: at 212 mm the band was wider than the
         # 210 mm page and sat 3 mm off-centre against the footer below it
-        ctx["cover_hero"] = InlineImage(tpl, hero_png, width=Mm(210))
+        ctx["cover_hero"] = _inline(hero_png, 210)
     except Exception:  # noqa: BLE001
         import logging
         logging.getLogger(__name__).warning("cover hero failed", exc_info=True)
@@ -218,21 +226,21 @@ def generate_report(
                     prevailing=rose.prevailing_direction)
                 if overlay and os.path.exists(overlay):
                     figs["wind_rose_map"] = overlay
-                    ctx["fig_windrose_map"] = InlineImage(
-                        tpl, overlay, width=Mm(ROSE_WIDTH_MM))
+                    ctx["fig_windrose_map"] = _inline(
+                        overlay, ROSE_WIDTH_MM)
         except Exception:  # noqa: BLE001
             import logging
             logging.getLogger(__name__).warning(
                 "wind rose overlay skipped", exc_info=True)
     ctx.setdefault("fig_windrose_map", "")
 
-    ctx["fig_site_map"] = (InlineImage(tpl, site_map_path, width=Mm(150))
+    ctx["fig_site_map"] = (_inline(site_map_path, 150)
                            if site_map_path and os.path.exists(site_map_path)
                            else None)
-    ctx["fig_site_photo"] = (InlineImage(tpl, site_photo_path, width=Mm(150))
+    ctx["fig_site_photo"] = (_inline(site_photo_path, 150)
                              if site_photo_path and os.path.exists(site_photo_path)
                              else None)
-    ctx["cover_photo"] = (InlineImage(tpl, cover_photo_path, width=Mm(150))
+    ctx["cover_photo"] = (_inline(cover_photo_path, 150)
                           if cover_photo_path and os.path.exists(cover_photo_path)
                           else None)
     # Verdict colours are attached to the value itself via RichText, so the
@@ -248,7 +256,7 @@ def generate_report(
         for c in (cert_rows or [])]
     ctx["calibration_images"] = [
         {"title": (c.get("title") or "Calibration certificate"),
-         "image": InlineImage(tpl, c["path"], width=Mm(150))}
+         "image": _inline(c["path"], 150)}
         for c in (calibration_items or [])
         if c.get("path") and os.path.exists(c["path"])]
     ctx["license_images"] = _img_list(license_image_paths)
