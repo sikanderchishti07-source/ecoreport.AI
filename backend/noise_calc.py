@@ -164,7 +164,19 @@ def build_noise_summary(readings: List[dict],
             dist_levels.append(sv[i])
             dist_exceed.append(100.0 * (1 - (i + 1) / n))
 
-    expected = max(1, int((window_end - window_start).total_seconds() // 60))
+    # The logging interval is whatever the meter used — one reading a minute
+    # on some instruments, one a second on others. Assume nothing: take the
+    # median gap between consecutive readings and derive the expected count
+    # from it, so data capture reads correctly for any logger.
+    step_s = 60.0
+    if len(valid) >= 3:
+        stamps = sorted(r["timestamp"] for r in valid)
+        gaps = sorted((b - a).total_seconds()
+                      for a, b in zip(stamps, stamps[1:]) if b > a)
+        if gaps:
+            step_s = max(1.0, gaps[len(gaps) // 2])
+    expected = max(1, int((window_end - window_start).total_seconds()
+                          // step_s))
     return NoiseSummary(
         total_records=len(in_window),
         valid_records=len(valid),
