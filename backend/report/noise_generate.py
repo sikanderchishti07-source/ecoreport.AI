@@ -227,6 +227,33 @@ def _f(v) -> str:
     return "—" if v is None else f"{v:.2f}"
 
 
+def _interval_phrase(seconds: float) -> str:
+    """Describe the logging interval the meter actually used.
+
+    This was hardcoded as "one-minute" throughout the report and became a
+    false statement about the measurement method the first time a
+    per-second logger was used — in a document that goes to a regulator.
+    """
+    if seconds <= 1.5:
+        return "one-second"
+    if seconds < 55:
+        return f"{int(round(seconds))}-second"
+    if seconds <= 65:
+        return "one-minute"
+    mins = seconds / 60.0
+    return (f"{int(round(mins))}-minute" if abs(mins - round(mins)) < 0.05
+            else f"{mins:.1f}-minute")
+
+
+def _date_only(dt: Optional[datetime]) -> str:
+    """The date with its year. Splitting the long form on its first comma
+    dropped the year and printed "July 14" on the cover."""
+    if not dt:
+        return "—"
+    return (dt.strftime("%B %-d, %Y") if os.name != "nt"
+            else dt.strftime("%B %d, %Y"))
+
+
 def _render_hero(project_name: str, site_line: str, out: str) -> str:
     """The cover band, drawn — navy field, sound-wave arcs, title block."""
     import matplotlib
@@ -347,7 +374,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
             ("Report number", campaign.report_number or "—"),
             ("Revision and issue date",
              f"{campaign.revision or '00'}    ·    "
-             f"{_fmt_dt(campaign.reporting_date).split(',')[0] if campaign.reporting_date else '—'}")]
+             f"{_date_only(campaign.reporting_date)}")]
     t = doc.add_table(rows=len(info), cols=2)
     t.alignment = WD_TABLE_ALIGNMENT.CENTER
     t.autofit = False
@@ -388,9 +415,9 @@ def generate_noise_report(campaign, summary: NoiseSummary,
           align="right")
     p2 = _tight(hc2.add_paragraph(), 0, 0)
     p2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    r = p2.add_run(f"{campaign.project_name or ''}  ·  "
-                   f"{campaign.report_number or ''}  ·  "
-                   f"Rev {campaign.revision or '00'}")
+    r = p2.add_run("  ·  ".join(
+        x for x in (campaign.project_name, campaign.report_number,
+                    f"Rev {campaign.revision or '00'}") if x))
     r.font.size = Pt(7.5)
     r.font.color.rgb = MUT
     for c in (hc1, hc2):
@@ -445,8 +472,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     _table(doc, ["Rev", "Reporting Date", "Prepared By",
                  "Project Supervision", "Status"],
            [[campaign.revision or "00",
-             _fmt_dt(campaign.reporting_date).split(",")[0]
-             if campaign.reporting_date else "—",
+             _date_only(campaign.reporting_date),
              campaign.prepared_by or "—",
              campaign.project_supervision or "—",
              campaign.document_status or "Issued for Client Use"]],
@@ -466,11 +492,12 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     doc.add_page_break()
     _heading(doc, "Executive Summary", 1)
     day = f"{summary.day_start_hour:02d}:00–{summary.day_end_hour:02d}:00"
+    interval = _interval_phrase(getattr(summary, "interval_seconds", 60.0))
     _body(doc,
           f"Bander Said Allehiany (BSA) was commissioned by "
           f"{campaign.client} to conduct an attended environmental noise "
           f"survey at {campaign.project_name}. Sound pressure levels were "
-          f"logged continuously at one-minute intervals at one location, "
+          f"logged continuously at {interval} intervals at one location, "
           f"from {_fmt_dt(campaign.monitoring_start)} to "
           f"{_fmt_dt(campaign.monitoring_end)}. The location was selected "
           f"to represent background conditions at the project site; key "
@@ -495,7 +522,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
         _borders(b, bottom=(HAIR, 4), left=(HAIR, 4), right=(HAIR, 4))
     _muted(doc,
            f"All values in dB(A) · derived from "
-           f"{summary.valid_records:,} validated one-minute intervals · "
+           f"{summary.valid_records:,} validated {interval} intervals · "
            f"day period {day} · data capture {summary.data_capture_pct}%")
 
     if verdicts:
@@ -531,12 +558,12 @@ def generate_noise_report(campaign, summary: NoiseSummary,
 
     _heading(doc, "2  Scope of Work", 1)
     _body(doc,
-          "A noise baseline survey using a Class 1 sound level meter was "
-          "conducted to characterise the noise environment. Monitoring was "
-          "carried out continuously, with instantaneous sound pressure "
-          "levels sampled and stored at one-minute intervals. The "
-          "continuous equivalent level (LAeq) over the day and night "
-          "periods was derived from the logged record by energy averaging.")
+          f"A noise baseline survey using a Class 1 sound level meter was "
+          f"conducted to characterise the noise environment. Monitoring was "
+          f"carried out continuously, with instantaneous sound pressure "
+          f"levels sampled and stored at {interval} intervals. The "
+          f"continuous equivalent level (LAeq) over the day and night "
+          f"periods was derived from the logged record by energy averaging.")
     _caption(doc, "Table 1 — Time of monitoring")
     dur = (campaign.monitoring_end - campaign.monitoring_start)
     _table(doc, ["Site ID", "Start", "End", "Duration (hrs)"],
@@ -587,8 +614,8 @@ def generate_noise_report(campaign, summary: NoiseSummary,
           "where calibration or instrument faults affected the record.")
     _heading(doc, "3.3  Measurement Procedure", 2)
     _body(doc,
-          "The A-weighted equivalent level was logged continuously at "
-          "one-minute intervals over the full survey period. The location "
+          f"The A-weighted equivalent level was logged continuously at "
+          f"{interval} intervals over the full survey period. The location "
           "was manned in shifts and key observations — unusual sounds, "
           "passing plant, wind conditions — were noted. Levels outside the "
           "physically plausible range for an outdoor measurement are "
@@ -631,10 +658,10 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     doc.add_page_break()
     _heading(doc, "5  Results", 1)
     _body(doc,
-          "Statistical parameters were derived from the validated "
-          "one-minute record by energy averaging. The full one-minute "
-          "trace, the hourly profile and the statistical distribution are "
-          "presented in the figures that follow.")
+          f"Statistical parameters were derived from the validated "
+          f"{interval} record by energy averaging. The full record, the "
+          f"hourly profile and the statistical distribution are presented "
+          f"in the figures that follow.")
     _caption(doc, "Table 7 — Summary of measured noise levels")
     _table(doc, ["Site", "LAeq, T", "L Day", "L Night", "LA10", "LA50",
                  "LA90", "Lmax", "Lmin"],
@@ -646,7 +673,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
            f"Values in dB(A). L Day and L Night are energy averages over "
            f"{summary.day_start_hour:02d}:00–{summary.day_end_hour:02d}:00 "
            f"and the complementary night period respectively.")
-    _caption(doc, "Table 8 — Data capture")
+    _caption(doc, f"Table 8 — Data capture ({interval} intervals)")
     _table(doc, ["Expected intervals", "Recorded", "Valid", "Invalid",
                  "Capture %"],
            [[f"{summary.expected_records:,}", f"{summary.total_records:,}",
@@ -661,8 +688,9 @@ def generate_noise_report(campaign, summary: NoiseSummary,
                                      "applicable day and night limits"),
                           ("cats", "Measured levels against the four NCEC "
                                    "land-use categories"),
-                          ("trace", "One-minute sound level record with the "
-                                    "LA90–LA10 statistical envelope"),
+                          ("trace", f"Sound level record ({interval} "
+                                    f"resolution) with the LA90–LA10 "
+                                    f"statistical envelope"),
                           ("dist", "Exceedance distribution of measured "
                                    "levels with statistical percentiles")):
         path = figs.get(key)
@@ -759,9 +787,10 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     r.font.color.rgb = NAVY
     p = _tight(doc.add_paragraph(), 0, 0)
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = p.add_run(f"{campaign.report_number or ''}  ·  "
-                  f"Rev {campaign.revision or '00'}  ·  "
-                  f"{campaign.project_name or ''}")
+    r = p.add_run("  ·  ".join(
+        x for x in (campaign.report_number,
+                    f"Rev {campaign.revision or '00'}",
+                    campaign.project_name) if x))
     r.font.size = Pt(9)
     r.font.color.rgb = MUT
 
