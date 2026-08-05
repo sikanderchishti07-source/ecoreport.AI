@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   Copy, FileText, FileDown, Loader2, History, Link2, RefreshCw, ScrollText,
-  Trash2, Send, CheckCircle2, Undo2, Lock,
+  Trash2, Send, CheckCircle2, Undo2, Lock, Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import ReportPreview from "@/components/ReportPreview";
+import ReportViewer from "@/components/ReportViewer";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -103,6 +104,8 @@ export default function ReportsPanel({ campaignId, readingCount }) {
   const [status, setStatus] = useState(null);
   const [reviewNote, setReviewNote] = useState("");
   const [reviewBusy, setReviewBusy] = useState(false);
+  // Which stored version is open in the on-screen reader, if any.
+  const [viewing, setViewing] = useState(null);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -222,6 +225,9 @@ export default function ReportsPanel({ campaignId, readingCount }) {
 
   return (
     <div className="space-y-6">
+      {viewing && (
+        <ReportViewer report={viewing} onClose={() => setViewing(null)} />
+      )}
       {/* Generate */}
       <div className="border border-border rounded-sm p-4">
         <h3 className="text-sm font-semibold flex items-center gap-2">
@@ -400,6 +406,7 @@ export default function ReportsPanel({ campaignId, readingCount }) {
                 <TableHead className="text-xs">Format</TableHead>
                 <TableHead className="text-xs">Generated</TableHead>
                 <TableHead className="text-xs">By</TableHead>
+                <TableHead className="text-xs">Read</TableHead>
                 <TableHead className="text-xs text-right">
                   {admin ? "Download" : "File"}
                 </TableHead>
@@ -415,6 +422,17 @@ export default function ReportsPanel({ campaignId, readingCount }) {
                   <TableCell className="text-xs uppercase">{r.format || "docx"}</TableCell>
                   <TableCell className="text-xs">{fmtTs(r.generated_at)}</TableCell>
                   <TableCell className="text-xs">{r.generated_by || "—"}</TableCell>
+                  <TableCell>
+                    {r.id && (
+                      <button
+                        onClick={() => setViewing(r)}
+                        className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+                        data-testid="view-report-btn"
+                      >
+                        <Eye className="w-3.5 h-3.5" /> View
+                      </button>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right">
                     {!admin ? (
                       <span className="text-xs text-muted-foreground inline-flex items-center gap-1"
