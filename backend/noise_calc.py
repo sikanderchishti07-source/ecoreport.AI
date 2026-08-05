@@ -78,6 +78,11 @@ class NoiseSummary:
     day_end_hour: int
     day_records: int
     night_records: int
+    # How often the meter logged, taken from the data itself. Reports must
+    # describe the measurement they actually made — "one-minute intervals"
+    # was hardcoded and became untrue the moment a per-second logger was
+    # used.
+    interval_seconds: float = 60.0
 
     hourly: List[HourPoint] = field(default_factory=list)
     # sorted levels + exceedance percentages, for the distribution chart
@@ -178,6 +183,7 @@ def build_noise_summary(readings: List[dict],
     expected = max(1, int((window_end - window_start).total_seconds()
                           // step_s))
     return NoiseSummary(
+        interval_seconds=step_s,
         total_records=len(in_window),
         valid_records=len(valid),
         invalid_records=len(in_window) - len(valid),
