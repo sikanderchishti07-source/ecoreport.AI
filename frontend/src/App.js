@@ -10,6 +10,7 @@ import LoginPage from "@/pages/LoginPage";
 import HomeDashboard from "@/pages/HomeDashboard";
 import PortalPage from "@/pages/PortalPage";
 import UsersPage from "@/pages/UsersPage";
+import ReviewQueue from "@/pages/ReviewQueue";
 import StationsPage from "@/pages/StationsPage";
 import CoverPhotosPage from "@/pages/CoverPhotosPage";
 import { getToken } from "@/lib/api";
@@ -43,6 +44,7 @@ export default function App() {
             <Route path="/labs" element={<StationsPage />} />
             <Route path="/cover-photos" element={<CoverPhotosPage />} />
             <Route path="/users" element={<UsersPage />} />
+            <Route path="/review" element={<ReviewQueue />} />
             <Route path="*" element={<Navigate to="/campaigns" replace />} />
           </Route>
         </Routes>
