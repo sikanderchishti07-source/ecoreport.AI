@@ -17,6 +17,7 @@ from routes import history as history_router
 from routes import media as media_router
 from routes import portal as portal_router
 from routes import report as report_router
+from routes import review as review_router
 from routes import summary as summary_router
 
 logging.basicConfig(
@@ -50,6 +51,7 @@ api.include_router(readings_router.router, dependencies=_protected)
 api.include_router(limits_router.router, dependencies=_protected)
 api.include_router(summary_router.router, dependencies=_protected)
 api.include_router(report_router.router, dependencies=_protected)
+api.include_router(review_router.router, dependencies=_protected)
 api.include_router(history_router.router, dependencies=_protected)
 api.include_router(media_router.router, dependencies=_protected)
 api.include_router(portal_router.router, dependencies=_protected)

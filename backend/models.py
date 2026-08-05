@@ -147,7 +147,18 @@ class Campaign(CampaignBase):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     station_id: Optional[str] = None
     instruments: List["Instrument"] = Field(default_factory=list)
-    status: str = "draft"  # draft | ingested | ready | archived
+    # draft | ingested | ready | submitted | approved | archived
+    # submitted and approved are set by the review workflow (routes/review.py);
+    # returning a campaign puts it back to ready so it can be resubmitted.
+    status: str = "draft"
+    submitted_by: Optional[str] = None
+    submitted_by_id: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    returned_by: Optional[str] = None
+    returned_at: Optional[datetime] = None
+    review_comment: Optional[str] = None
     reading_count: int = 0
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

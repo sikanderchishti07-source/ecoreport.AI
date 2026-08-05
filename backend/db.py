@@ -139,3 +139,7 @@ async def create_indexes() -> None:
     )
     await db.upload_logs.create_index("id", unique=True)
     await db.upload_logs.create_index([("campaign_id", 1), ("uploaded_at", -1)])
+    # The bell reads one user's newest first, and counts their unread.
+    await db.notifications.create_index("id", unique=True)
+    await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
+    await db.notifications.create_index([("user_id", 1), ("read", 1)])
