@@ -83,7 +83,21 @@ DEFAULT_GAS_UNITS_MAP: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Campaigns — one monitoring project (site + client + window + metadata).
 # ---------------------------------------------------------------------------
+# The four NCEC land-use categories plus roadside, industrial and
+# construction, and a deliberate "to be determined" that produces a report
+# which states the measured levels against every category without judging —
+# the posture BSA's manual noise reports take when the client has not yet
+# fixed the category.
+NOISE_CATEGORIES = ("A", "B", "C", "D", "roadside", "industrial",
+                    "construction", "tbd")
+
+
 class CampaignBase(BaseModel):
+    # "air" is the original ambient-air campaign; "noise" is an attended
+    # sound-level survey. The type decides which ingest, engine and report
+    # generator a campaign uses — everything else (review workflow,
+    # versioning, attachments, the viewer) is shared.
+    campaign_type: str = "air"
     project_name: str
     client: str
     provider: str = "Bander Said Allehiany (BSA)"
@@ -110,6 +124,12 @@ class CampaignBase(BaseModel):
     wind_rose_bins: List[WindClassBin] = Field(
         default_factory=lambda: [b.model_copy() for b in DEFAULT_WIND_BINS]
     )
+    # --- noise campaigns only -------------------------------------------
+    noise_category: str = "tbd"        # one of NOISE_CATEGORIES
+    day_start_hour: int = 7            # day period per the Implementing
+    day_end_hour: int = 19             # Regulations; configurable per job
+    meter_model: Optional[str] = None  # sound level meter, printed in
+    meter_serial: Optional[str] = None # the methodology section
 
 
 class CampaignCreate(CampaignBase):
@@ -141,6 +161,12 @@ class CampaignUpdate(BaseModel):
     revision: Optional[str] = None
     reporting_date: Optional[datetime] = None
     wind_rose_bins: Optional[List[WindClassBin]] = None
+    campaign_type: Optional[str] = None
+    noise_category: Optional[str] = None
+    day_start_hour: Optional[int] = None
+    day_end_hour: Optional[int] = None
+    meter_model: Optional[str] = None
+    meter_serial: Optional[str] = None
 
 
 class Campaign(CampaignBase):
@@ -198,6 +224,17 @@ class Reading(ReadingBase):
     valid: bool = True
     invalidation_reason: Optional[str] = None
     auto_flagged_fields: List[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class NoiseReading(BaseModel):
+    """One logged sound-level interval — typically one minute of LAeq."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    campaign_id: str
+    timestamp: datetime
+    laeq: float                        # dB(A)
+    valid: bool = True
+    invalidation_reason: Optional[str] = None
     created_at: datetime = Field(default_factory=utcnow)
 
 

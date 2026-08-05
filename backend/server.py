@@ -15,6 +15,7 @@ from routes import limits as limits_router
 from routes import readings as readings_router
 from routes import history as history_router
 from routes import media as media_router
+from routes import noise as noise_router
 from routes import portal as portal_router
 from routes import report as report_router
 from routes import review as review_router
@@ -54,6 +55,7 @@ api.include_router(report_router.router, dependencies=_protected)
 api.include_router(review_router.router, dependencies=_protected)
 api.include_router(history_router.router, dependencies=_protected)
 api.include_router(media_router.router, dependencies=_protected)
+api.include_router(noise_router.router, dependencies=_protected)
 api.include_router(portal_router.router, dependencies=_protected)
 # Client portal: intentionally open — access is granted by a signed,
 # expiring, revocable share token carried in the URL.
