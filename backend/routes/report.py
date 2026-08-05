@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -23,6 +24,127 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["report"])
 
 REPORT_DIR = os.environ.get("REPORT_DIR", os.path.join(tempfile.gettempdir(), "ecoreport_reports"))
+
+# On-screen reader --------------------------------------------------------
+# Field operators read the whole report in the browser but never receive the
+# file. Streaming the PDF would defeat that: Chrome's own viewer puts a
+# download button on the page. So each page is rasterised and served as an
+# image — there is no document in the browser to save, only the page being
+# looked at. Rendered once and cached; a report is immutable, so a cached
+# page never goes stale.
+PAGES_DIR = os.path.join(REPORT_DIR, "_pages")
+VIEW_DPI = 110          # comfortable on screen, ~120 KB a page
+
+
+def _cache_dir(report_id: str) -> str:
+    d = os.path.join(PAGES_DIR, report_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _viewable_pdf(doc: dict) -> str:
+    """A PDF of this report version, converting the DOCX once if needed."""
+    src = storage.fetch_report(doc)
+    if not src:
+        raise HTTPException(
+            status_code=410,
+            detail=("This version's file is no longer on the server. "
+                    "Generate the report again to create a new version."))
+    if (doc.get("format") or "").lower() == "pdf":
+        return src
+    cache = _cache_dir(doc["id"])
+    pdf = os.path.join(cache, "view.pdf")
+    if os.path.exists(pdf) and os.path.getsize(pdf) > 0:
+        return pdf
+    work = os.path.join(cache, os.path.basename(src))
+    if not os.path.exists(work):
+        shutil.copy(src, work)
+    produced = convert_to_pdf(work, cache)
+    if produced != pdf:
+        shutil.move(produced, pdf)
+    try:
+        os.remove(work)
+    except OSError:
+        pass
+    return pdf
+
+
+def _page_image(doc: dict, page: int) -> str:
+    cache = _cache_dir(doc["id"])
+    img = os.path.join(cache, "p%04d.jpg" % page)
+    if os.path.exists(img) and os.path.getsize(img) > 0:
+        return img
+    pdf_path = _viewable_pdf(doc)
+    try:
+        import fitz  # PyMuPDF — already required for certificate rendering
+        with fitz.open(pdf_path) as pdf:
+            if page < 1 or page > pdf.page_count:
+                raise HTTPException(status_code=404, detail="No such page")
+            pdf[page - 1].get_pixmap(dpi=VIEW_DPI).save(img, jpg_quality=80)
+        return img
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001
+        log.warning("PyMuPDF page render failed — trying pdftoppm",
+                    exc_info=True)
+    # Same fallback the certificate renderer uses, for hosts where PyMuPDF
+    # cannot be imported.
+    import subprocess
+    stem = os.path.join(cache, "tmp_p%04d" % page)
+    subprocess.run(["pdftoppm", "-jpeg", "-r", str(VIEW_DPI),
+                    "-f", str(page), "-l", str(page), "-singlefile",
+                    pdf_path, stem],
+                   check=True, capture_output=True, timeout=180)
+    produced = stem + ".jpg"
+    if not os.path.exists(produced):
+        raise HTTPException(status_code=404, detail="No such page")
+    shutil.move(produced, img)
+    return img
+
+
+def _page_total(doc: dict) -> int:
+    pdf_path = _viewable_pdf(doc)
+    try:
+        import fitz
+        with fitz.open(pdf_path) as pdf:
+            return pdf.page_count
+    except Exception:  # noqa: BLE001
+        log.warning("PyMuPDF unavailable — counting pages with pdfinfo",
+                    exc_info=True)
+    import re as _re
+    import subprocess
+    out = subprocess.run(["pdfinfo", pdf_path], capture_output=True,
+                         timeout=60).stdout.decode("utf-8", "replace")
+    m = _re.search(r"Pages:\s+(\d+)", out)
+    if not m:
+        raise HTTPException(status_code=500,
+                            detail="Could not read the report for viewing")
+    return int(m.group(1))
+
+
+async def _report_or_404(report_id: str) -> dict:
+    doc = await db.report_logs.find_one({"id": report_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Report version not found")
+    return doc
+
+
+@router.get("/reports/{report_id}/page-count")
+async def report_page_count(report_id: str):
+    """How many pages the on-screen reader has. Open to every signed-in
+    account — reading is not downloading."""
+    doc = await _report_or_404(report_id)
+    pages = await run_in_threadpool(_page_total, doc)
+    return {"report_id": report_id, "pages": pages,
+            "filename": doc.get("filename")}
+
+
+@router.get("/reports/{report_id}/page/{page}")
+async def report_page(report_id: str, page: int):
+    doc = await _report_or_404(report_id)
+    img = await run_in_threadpool(_page_image, doc, page)
+    return FileResponse(img, media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.post("/campaigns/{campaign_id}/report")
