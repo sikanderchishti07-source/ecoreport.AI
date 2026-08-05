@@ -741,6 +741,8 @@ def generate_noise_report(campaign, summary: NoiseSummary,
         (2 if site_map_path and os.path.exists(site_map_path) else 1)
     for key, cap_text in (("hourly", "Hourly LAeq over the survey with the "
                                      "applicable day and night limits"),
+                          ("daynight", "Day and night levels against the "
+                                       "applicable NCEC limit"),
                           ("cats", "Measured levels against the four NCEC "
                                    "land-use categories"),
                           ("trace", f"Sound level record ({interval} "
