@@ -71,6 +71,7 @@ export default function CampaignDetail() {
   const [campaign, setCampaign] = useState(null);
   const [readings, setReadings] = useState([]);
   const [noiseCount, setNoiseCount] = useState(0);
+  const [noiseRows, setNoiseRows] = useState([]);
   const [uploads, setUploads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [bins, setBins] = useState(DEFAULT_BINS);
@@ -90,8 +91,9 @@ export default function CampaignDetail() {
         // Noise intervals live in their own collection; the analyser
         // readings list is legitimately empty for these campaigns.
         try {
-          const nr = await listNoiseReadings(id, { limit: 1 });
+          const nr = await listNoiseReadings(id, { limit: 500 });
           setNoiseCount(nr.total || 0);
+          setNoiseRows(nr.items || []);
         } catch { /* the count simply stays at zero */ }
       }
       setUploads(u);
@@ -222,7 +224,9 @@ export default function CampaignDetail() {
             Overview
           </TabsTrigger>
           <TabsTrigger value="readings" data-testid={CAMPAIGN_DETAIL.tabReadings} className="rounded-sm">
-            Readings <span className="ml-1.5 font-mono tabular text-muted-foreground">{readings.length}</span>
+            Readings <span className="ml-1.5 font-mono tabular text-muted-foreground">
+              {campaign?.campaign_type === "noise" ? noiseCount : readings.length}
+            </span>
           </TabsTrigger>
           <TabsTrigger value="settings" data-testid={CAMPAIGN_DETAIL.tabSettings} className="rounded-sm">
             Settings
@@ -247,7 +251,53 @@ export default function CampaignDetail() {
 
         {/* READINGS */}
         <TabsContent value="readings" className="mt-4 space-y-3">
-          {readings.length === 0 ? (
+          {campaign?.campaign_type === "noise" ? (
+            noiseRows.length === 0 ? (
+              <div className="border border-dashed border-border rounded-sm p-10 text-center">
+                <FileWarning className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground">
+                  No sound-level intervals yet. Upload the meter export to
+                  populate this campaign.
+                </p>
+              </div>
+            ) : (
+              <div className="border border-border rounded-sm">
+                <header className="px-4 py-2 border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground bg-secondary/40">
+                  Sound level record — {noiseCount.toLocaleString()} intervals
+                  {noiseCount > noiseRows.length
+                    ? ` (showing first ${noiseRows.length})` : ""}
+                </header>
+                <div className="max-h-[520px] overflow-auto">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-background">
+                      <tr className="text-left text-muted-foreground">
+                        <th className="px-4 py-2 font-medium">Timestamp</th>
+                        <th className="px-4 py-2 font-medium text-right">LAeq dB(A)</th>
+                        <th className="px-4 py-2 font-medium">Validity</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {noiseRows.map((r) => (
+                        <tr key={r.id} className="border-t border-border">
+                          <td className="px-4 py-1.5 font-mono">
+                            {new Date(r.timestamp).toLocaleString()}
+                          </td>
+                          <td className="px-4 py-1.5 font-mono text-right">
+                            {Number(r.laeq).toFixed(1)}
+                          </td>
+                          <td className="px-4 py-1.5">
+                            {r.valid
+                              ? <span className="text-muted-foreground">valid</span>
+                              : <span className="text-amber-600" title={r.invalidation_reason || ""}>flagged</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          ) : readings.length === 0 ? (
             <div className="border border-dashed border-border rounded-sm p-10 text-center">
               <FileWarning className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
               <p className="text-sm text-muted-foreground">
