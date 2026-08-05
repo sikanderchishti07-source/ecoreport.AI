@@ -425,14 +425,21 @@ export default function ReportsPanel({ campaignId, readingCount }) {
                 </Select>
               <Button
                 onClick={() => runReview(submitForReview, "Sent for review", false)}
+                // Locked only when the chosen version is the one already
+                // waiting. Submitting a newer version is how a correction
+                // reaches the reviewer.
                 disabled={reviewBusy || !submitVersion
-                          || status?.status === "submitted"}
+                          || (status?.status === "submitted"
+                              && status?.submitted_report_id === submitVersion)}
                 className="rounded-sm h-9"
                 data-testid="submit-review-btn"
               >
                 {reviewBusy
                   ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Sending…</>
-                  : <><Send className="w-4 h-4 mr-1.5" /> Submit for review</>}
+                  : <><Send className="w-4 h-4 mr-1.5" />
+                      {status?.status === "submitted"
+                        ? "Resubmit this version"
+                        : "Submit for review"}</>}
               </Button>
               </>
             )}
