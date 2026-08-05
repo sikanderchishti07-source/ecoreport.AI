@@ -9,30 +9,44 @@ Two jobs, both run after ``DocxTemplate.render()``:
 
 ``build_indexes``
     Replaces the three index fields (Table of Contents, List of Figures,
-    List of Tables) with real entries carrying real page numbers.
+    List of Tables) with real entries whose page numbers are cross-references
+    to bookmarks placed on the headings and captions themselves.
 
-Why not leave it to Word
-------------------------
-A Word field stores an instruction and a cached result. Word evaluates the
-instruction; LibreOffice — which produces our PDFs — never does. The template
-wrote empty caches, so every exported PDF carried three blank index pages and
-37 captions reading "Table  —".
+Why the page numbers are cross-references
+-----------------------------------------
+Page numbers need a layout pass, and the only layout engine available on the
+server is LibreOffice. LibreOffice and Word do not paginate identically: the
+same report runs to about 63 pages in LibreOffice and about 55 in Word. So a
+measured number written in as plain text is right in the PDF and wrong in the
+DOCX, by a margin that grows down the document.
 
-Marking the fields dirty does not help: LibreOffice ignores that too. Nor does
-``w:updateFields``, which Word honours only at open time, before the document
-has been paginated — which is why the contents page showed 1 against every
-entry. So the numbers are computed here and written in as literal text. The
-document is then correct in Word, in LibreOffice, and in a phone PDF viewer,
-without depending on the reader to finish the job.
+The number is therefore stored as a PAGEREF field pointing at a bookmark on
+the heading or caption it describes, carrying the LibreOffice-measured value
+as its cached result:
 
-Page numbers need a layout pass, so ``build_indexes`` converts the document
-once to find out where everything landed. The entries are inserted *before*
-that conversion with their numbers left blank, so the index pages are already
-at full height when pagination is measured; filling in a two-digit number
-afterwards cannot push anything onto a different page.
+* Word evaluates the field against its own layout, so the DOCX is correct —
+  and stays correct after a reviewer edits a paragraph, because the bookmark
+  travels with the heading.
+* LibreOffice resolves the cross-reference itself, or falls back to the cached
+  value it measured; either way the server-produced PDF is unchanged.
+
+``updateFields`` is switched on so Word refreshes on open. This is safe only
+because ``_strip_field`` deletes the TOC field first — an earlier attempt left
+a live TOC field in place and Word regenerated a contents page reading 1
+against every entry. There is now no TOC field to regenerate, only
+cross-references to fixed bookmarks.
+
+Caption numbers stay as computed SEQ caches: they are already verified correct
+and Word recomputes the same sequence.
+
+The index entries are inserted *before* the measuring conversion with their
+numbers left blank, so the index pages are already at full height when
+pagination is measured; filling in a two-digit number afterwards cannot push
+anything onto a different page.
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 import re
@@ -47,6 +61,8 @@ log = logging.getLogger(__name__)
 DOC_XML = "word/document.xml"
 SETTINGS_XML = "word/settings.xml"
 
+XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
 # One field = one run: begin, instrText, separate, cached result, end.
 _FIELD_RE = re.compile(
     r'(<w:fldChar\s+w:fldCharType="begin"[^/]*/>'
@@ -59,6 +75,10 @@ _FIELD_RE = re.compile(
 _SEQ_RE = re.compile(r"\bSEQ\s+(\w+)", re.I)
 
 INDEX_TITLES = ("Table of Contents", "List of Figures", "List of Tables")
+
+# Word reserves ids below 1000 for its own bookmarks in some documents; start
+# clear of them and never reuse a number within one build.
+_BOOKMARK_IDS = itertools.count(9000)
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +145,88 @@ def populate_field_caches(docx_path: str) -> Dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# 2. Index pages
+# 2. Bookmarks and cross-reference fields
+# ---------------------------------------------------------------------------
+def _add_bookmark(paragraph, name: str) -> None:
+    """Wrap a paragraph in a hidden bookmark.
+
+    The marker is zero-width and carries no formatting, so it cannot affect
+    where anything falls on the page. Names beginning with an underscore are
+    hidden from Word's bookmark list, which is what Word uses for its own
+    cross-reference targets.
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    bid = str(next(_BOOKMARK_IDS))
+    start = OxmlElement("w:bookmarkStart")
+    start.set(qn("w:id"), bid)
+    start.set(qn("w:name"), name)
+    end = OxmlElement("w:bookmarkEnd")
+    end.set(qn("w:id"), bid)
+
+    p = paragraph._p
+    pPr = p.find(qn("w:pPr"))
+    if pPr is not None:
+        pPr.addnext(start)                 # must follow the properties block
+    else:
+        p.insert(0, start)
+    p.append(end)
+
+
+def _pageref_field(paragraph, bookmark: str, half_pt: str = "20"):
+    """Append a PAGEREF cross-reference and return its cached-result element.
+
+    Five runs, as Word writes them: begin, instruction, separate, cached
+    result, end. Word replaces the cached result with the real page number;
+    readers that do not evaluate fields display the cached value as-is.
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    def _run():
+        r = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        for tag in ("w:sz", "w:szCs"):
+            el = OxmlElement(tag)
+            el.set(qn("w:val"), half_pt)
+            rPr.append(el)
+        r.append(rPr)
+        return r
+
+    begin = _run()
+    fld = OxmlElement("w:fldChar")
+    fld.set(qn("w:fldCharType"), "begin")
+    begin.append(fld)
+
+    instr_run = _run()
+    instr = OxmlElement("w:instrText")
+    instr.set(XML_SPACE, "preserve")
+    instr.text = " PAGEREF %s \\h " % bookmark
+    instr_run.append(instr)
+
+    sep = _run()
+    fld = OxmlElement("w:fldChar")
+    fld.set(qn("w:fldCharType"), "separate")
+    sep.append(fld)
+
+    cache_run = _run()
+    cache = OxmlElement("w:t")
+    cache.text = ""                        # filled in after measuring
+    cache_run.append(cache)
+
+    end = _run()
+    fld = OxmlElement("w:fldChar")
+    fld.set(qn("w:fldCharType"), "end")
+    end.append(fld)
+
+    for r in (begin, instr_run, sep, cache_run, end):
+        paragraph._p.append(r)
+    return cache
+
+
+# ---------------------------------------------------------------------------
+# 3. Index pages
 # ---------------------------------------------------------------------------
 def _pdf_pages(pdf_path: str) -> List[str]:
     """Per-page plain text. PyMuPDF is already a dependency; pdftotext is the
@@ -179,7 +280,7 @@ def _find_page(norm_pages: List[str], skip: set, text: str) -> Optional[int]:
     return None
 
 
-def _plan(doc) -> List[Tuple[object, List[Tuple[int, str]]]]:
+def _plan(doc) -> List[Tuple[object, List[Tuple[int, str, str]]]]:
     """Pair every index anchor with the entries that belong to it.
 
     A bilingual report contains the whole English document followed by the
@@ -188,15 +289,24 @@ def _plan(doc) -> List[Tuple[object, List[Tuple[int, str]]]]:
     each heading or caption to the most recent anchor of its kind keeps each
     index describing its own half, instead of the English index absorbing the
     Arabic captions as well.
+
+    Each heading and caption also gets its bookmark here, so the index entry
+    built later has something to point at.
     """
-    buckets: Dict[int, List[Tuple[int, str]]] = {}
+    buckets: Dict[int, List[Tuple[int, str, str]]] = {}
     order: List[object] = []
     current: Dict[str, object] = {"toc": None, "fig": None, "tab": None}
+    marks = itertools.count(1)
 
     def _open(kind: str, paragraph) -> None:
         current[kind] = paragraph
         buckets[id(paragraph)] = []
         order.append(paragraph)
+
+    def _mark(paragraph) -> str:
+        name = "_EcoRef%04d" % next(marks)
+        _add_bookmark(paragraph, name)
+        return name
 
     for p in doc.paragraphs:
         xml = p._p.xml
@@ -223,7 +333,7 @@ def _plan(doc) -> List[Tuple[object, List[Tuple[int, str]]]]:
             m = re.search(r"(\d)", style)
             level = int(m.group(1)) if m else 1
             if level <= 3:
-                buckets[id(anchor)].append((level, text))
+                buckets[id(anchor)].append((level, text, _mark(p)))
         elif style == "Caption":
             kind = "fig" if text.startswith("Figure") else (
                 "tab" if text.startswith("Table") else None)
@@ -231,13 +341,13 @@ def _plan(doc) -> List[Tuple[object, List[Tuple[int, str]]]]:
                 continue
             anchor = current[kind]
             if anchor is not None:
-                buckets[id(anchor)].append((1, text))
+                buckets[id(anchor)].append((1, text, _mark(p)))
 
     return [(a, buckets[id(a)]) for a in order if buckets[id(a)]]
 
 
-def _entry(doc, level: int, text: str, right_tab_in: float):
-    """One index line: text, dot leader, right-aligned page number."""
+def _entry(doc, level: int, text: str, bookmark: str, right_tab_in: float):
+    """One index line: text, dot leader, right-aligned page-number field."""
     from docx.enum.text import WD_TAB_ALIGNMENT, WD_TAB_LEADER
     from docx.shared import Inches, Pt
 
@@ -256,9 +366,10 @@ def _entry(doc, level: int, text: str, right_tab_in: float):
                               WD_TAB_LEADER.DOTS)
     run = p.add_run(text)
     run.font.size = Pt(10)
-    page_run = p.add_run("\t")             # number filled in after measuring
-    page_run.font.size = Pt(10)
-    return p, page_run
+    tab = p.add_run("\t")                  # dot leader to the right margin
+    tab.font.size = Pt(10)
+    cache = _pageref_field(p, bookmark)    # number resolved by the reader
+    return p, cache
 
 
 def _insert_after(anchor, paragraphs) -> None:
@@ -269,16 +380,24 @@ def _insert_after(anchor, paragraphs) -> None:
 
 def _strip_field(paragraph) -> None:
     """Remove the now-redundant TOC field so Word cannot regenerate a second,
-    duplicate index on top of the one we just wrote."""
+    duplicate index on top of the one we just wrote. This also makes it safe
+    to ask Word to refresh fields on open."""
     for run in list(paragraph.runs):
         if "fldChar" in run._r.xml or "instrText" in run._r.xml:
             run._r.getparent().remove(run._r)
 
 
-def _disable_update_on_open(docx_path: str) -> None:
-    """Drop <w:updateFields/>. Every number in the document is now literal, so
-    an update on open can only replace correct values with Word's own — which
-    is what produced a contents page reading 1 against every entry."""
+def _set_update_on_open(docx_path: str, enabled: bool = True) -> None:
+    """Ask Word to refresh fields when the document is opened.
+
+    Every page number is now a cross-reference to a bookmark, so a refresh is
+    exactly what makes the contents agree with the pages in Word — including
+    after a reviewer has edited the text. The TOC fields have been removed by
+    this point, so there is nothing left that a refresh could regenerate
+    incorrectly.
+
+    LibreOffice ignores this setting, so the PDF path is unaffected.
+    """
     try:
         with zipfile.ZipFile(docx_path) as zin:
             names = zin.namelist()
@@ -286,12 +405,19 @@ def _disable_update_on_open(docx_path: str) -> None:
         if SETTINGS_XML not in blobs:
             return
         settings = blobs[SETTINGS_XML].decode("utf-8")
-        cleaned = re.sub(r"<w:updateFields[^/]*/>", "", settings)
+        cleaned = re.sub(r"<w:updateFields[^/>]*/>", "", settings)
+        if enabled:
+            tag = '<w:updateFields w:val="true"/>'
+            if "</w:settings>" in cleaned:
+                cleaned = cleaned.replace("</w:settings>", tag + "</w:settings>")
+            else:                          # self-closing, empty settings part
+                cleaned = re.sub(r"(<w:settings[^>]*)/>",
+                                 r"\1>" + tag + "</w:settings>", cleaned)
         if cleaned != settings:
             blobs[SETTINGS_XML] = cleaned.encode("utf-8")
             _rewrite_zip(docx_path, names, blobs)
     except Exception:  # noqa: BLE001
-        log.exception("could not clear updateFields")
+        log.exception("could not set updateFields")
 
 
 def build_indexes(docx_path: str, convert_to_pdf) -> bool:
@@ -303,7 +429,8 @@ def build_indexes(docx_path: str, convert_to_pdf) -> bool:
 
     Returns True when page numbers were resolved. On any failure the document
     still keeps its entries — an index without page numbers is a great deal
-    better than three blank pages.
+    better than three blank pages, and Word will fill the numbers in on open
+    from the bookmarks regardless.
     """
     try:
         from docx import Document
@@ -334,13 +461,13 @@ def build_indexes(docx_path: str, convert_to_pdf) -> bool:
             right_tab = page_in - 2.0       # assume 1" margins
         right_tab = max(right_tab, 2.0)
 
-        page_runs: List[Tuple[object, str]] = []
+        caches: List[Tuple[object, str]] = []
         for anchor, entries in plan:
             built = []
-            for level, text in entries:
-                p, run = _entry(doc, level, text, right_tab)
+            for level, text, bookmark in entries:
+                p, cache = _entry(doc, level, text, bookmark, right_tab)
                 built.append(p)
-                page_runs.append((run, text))
+                caches.append((cache, text))
             _insert_after(anchor, built)
             _strip_field(anchor)
 
@@ -355,27 +482,27 @@ def build_indexes(docx_path: str, convert_to_pdf) -> bool:
                 pdf = convert_to_pdf(probe, td)
             except Exception:  # noqa: BLE001
                 log.exception("index measuring pass failed — "
-                              "entries kept without page numbers")
-                _disable_update_on_open(docx_path)
+                              "entries kept without cached page numbers")
+                _set_update_on_open(docx_path)
                 return False
             norm_pages, skip = _page_lookup(_pdf_pages(pdf))
 
         if not norm_pages:
-            _disable_update_on_open(docx_path)
+            _set_update_on_open(docx_path)
             return False
 
         resolved = 0
-        for run, text in page_runs:
+        for cache, text in caches:
             page = _find_page(norm_pages, skip, text)
             if page:
-                run.text = "\t%d" % page
+                cache.text = str(page)
                 resolved += 1
 
         doc.save(docx_path)
-        _disable_update_on_open(docx_path)
+        _set_update_on_open(docx_path)
         log.info("indexes built: %d index block(s), %d entries, "
-                 "%d/%d page numbers resolved",
-                 len(plan), len(page_runs), resolved, len(page_runs))
+                 "%d/%d page numbers cached (Word resolves from bookmarks)",
+                 len(plan), len(caches), resolved, len(caches))
         return resolved > 0
     except Exception:  # noqa: BLE001
         log.exception("index build failed — index pages may be empty")
