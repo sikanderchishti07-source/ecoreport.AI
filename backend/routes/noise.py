@@ -42,14 +42,19 @@ def _campaign_or_404_sync(doc: Optional[dict]) -> Campaign:
     return Campaign(**doc)
 
 
-def _parse_timestamp(dval, tval) -> Optional[datetime]:
+def _parse_timestamp(dval, tval, dayfirst: bool = False
+                     ) -> Optional[datetime]:
     """Combine the date and time cells, tolerating the shapes Excel and CSV
-    exports actually produce."""
+    exports actually produce. ``dayfirst`` settles slashed dates — decided
+    once per file by ``_slash_order``, never guessed per row."""
     d = None
     if isinstance(dval, datetime):
         d = dval.date()
     elif isinstance(dval, str) and dval.strip():
-        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y"):
+        fmts = (("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y")
+                if dayfirst else
+                ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y"))
+        for fmt in fmts:
             try:
                 d = datetime.strptime(dval.strip().split()[0], fmt).date()
                 break
@@ -99,6 +104,57 @@ def _find_columns(header: List) -> Tuple[Optional[int], Optional[int],
     return date_i, time_i, db_i
 
 
+def _slash_order(date_cells: List[str]) -> bool:
+    """True when slashed dates in this file are day-first.
+
+    A date like 7/10/2026 is genuinely ambiguous — July 10 to an American
+    meter, 7 October to almost everyone else — and guessing wrong quietly
+    moves a whole survey three months, which is exactly what happened to the
+    first real upload. The order is decided for the file as a whole:
+
+    * any first part over 12 proves day-first; any second part over 12
+      proves month-first;
+    * if every value is 12 or under, both readings are tried on the file's
+      distinct dates and the one spanning the fewer days wins — a survey's
+      dates are consecutive, and the wrong reading scatters them across
+      months.
+    """
+    firsts, seconds, dates = set(), set(), set()
+    for c in date_cells:
+        parts = str(c).strip().split()[0].split("/")
+        if len(parts) != 3:
+            continue
+        try:
+            a, b = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        firsts.add(a)
+        seconds.add(b)
+        dates.add((a, b, int(parts[2]) if parts[2].isdigit() else 0))
+    if not dates:
+        return False
+    if any(a > 12 for a in firsts):
+        return True
+    if any(b > 12 for b in seconds):
+        return False
+
+    def span(dayfirst):
+        vals = []
+        for a, b, y in dates:
+            try:
+                vals.append(datetime(y, b, a) if dayfirst
+                            else datetime(y, a, b))
+            except ValueError:
+                return None
+        return (max(vals) - min(vals)).days
+    s_df, s_mf = span(True), span(False)
+    if s_df is None:
+        return False
+    if s_mf is None:
+        return True
+    return s_df < s_mf
+
+
 def _parse_rows(raw: bytes, filename: str) -> List[Tuple[datetime, float]]:
     name = (filename or "").lower()
     rows: List[List] = []
@@ -146,6 +202,11 @@ def _parse_rows(raw: bytes, filename: str) -> List[Tuple[datetime, float]]:
             detail=("Could not find a sound-level column. Expected columns "
                     "like: No. / Date / Time / dB."))
 
+    dayfirst = _slash_order(
+        [r[date_i] for r in rows[h_idx + 1:]
+         if date_i is not None and date_i < len(r)
+         and isinstance(r[date_i], str) and "/" in r[date_i]][:5000])
+
     out: List[Tuple[datetime, float]] = []
     for r in rows[h_idx + 1:]:
         if db_i >= len(r):
@@ -157,7 +218,8 @@ def _parse_rows(raw: bytes, filename: str) -> List[Tuple[datetime, float]]:
         ts = _parse_timestamp(r[date_i] if date_i is not None
                               and date_i < len(r) else None,
                               r[time_i] if time_i is not None
-                              and time_i < len(r) else None)
+                              and time_i < len(r) else None,
+                              dayfirst=dayfirst)
         if ts is None:
             continue
         out.append((ts, level))
