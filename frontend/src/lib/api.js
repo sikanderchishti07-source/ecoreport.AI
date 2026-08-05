@@ -34,7 +34,13 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   (err) => {
+    // A 401 from the sign-in endpoints is a credential problem the login
+    // page handles itself — a wrong code, or a replayed one. Treating it
+    // as an expired session here wiped a freshly-issued token and signed
+    // people out immediately after a successful login.
+    const url = err?.config?.url || "";
     if (err?.response?.status === 401 &&
+        !url.includes("/auth/") &&
         !window.location.pathname.startsWith("/login")) {
       clearSession();
       window.location.href = "/login";
