@@ -76,6 +76,15 @@ _SEQ_RE = re.compile(r"\bSEQ\s+(\w+)", re.I)
 
 INDEX_TITLES = ("Table of Contents", "List of Figures", "List of Tables")
 
+# Elements that must follow w:updateFields inside w:settings. The tag is
+# inserted before whichever of these appears first.
+SETTINGS_AFTER_UPDATE = (
+    "w:hdrShapeDefaults", "w:footnotePr", "w:endnotePr", "w:compat",
+    "w:docVars", "w:rsids", "m:mathPr", "w:themeFontLang",
+    "w:clrSchemeMapping", "w:doNotAutoCompressPictures", "w:shapeDefaults",
+    "w:decimalSymbol", "w:listSeparator",
+)
+
 # Word reserves ids below 1000 for its own bookmarks in some documents; start
 # clear of them and never reuse a number within one build.
 _BOOKMARK_IDS = itertools.count(9000)
@@ -197,6 +206,11 @@ def _pageref_field(paragraph, bookmark: str, half_pt: str = "20"):
     begin = _run()
     fld = OxmlElement("w:fldChar")
     fld.set(qn("w:fldCharType"), "begin")
+    # A dirty field is refreshed by Word when the document is opened. This is
+    # independent of the settings file, so the numbers come right even if
+    # updateFields is ignored. LibreOffice ignores w:dirty, so the PDF is
+    # unaffected.
+    fld.set(qn("w:dirty"), "true")
     begin.append(fld)
 
     instr_run = _run()
@@ -408,7 +422,18 @@ def _set_update_on_open(docx_path: str, enabled: bool = True) -> None:
         cleaned = re.sub(r"<w:updateFields[^/>]*/>", "", settings)
         if enabled:
             tag = '<w:updateFields w:val="true"/>'
-            if "</w:settings>" in cleaned:
+            # settings.xml is a fixed sequence, not a bag of elements. Word
+            # silently discards anything out of order — appending the tag at
+            # the end looks right and does nothing at all. It belongs ahead of
+            # rsids, compat, mathPr and everything after them.
+            pos = None
+            for name in SETTINGS_AFTER_UPDATE:
+                m = re.search(r"<%s[ />]" % re.escape(name), cleaned)
+                if m and (pos is None or m.start() < pos):
+                    pos = m.start()
+            if pos is not None:
+                cleaned = cleaned[:pos] + tag + cleaned[pos:]
+            elif "</w:settings>" in cleaned:
                 cleaned = cleaned.replace("</w:settings>", tag + "</w:settings>")
             else:                          # self-closing, empty settings part
                 cleaned = re.sub(r"(<w:settings[^>]*)/>",
