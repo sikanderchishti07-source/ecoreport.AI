@@ -184,8 +184,15 @@ export default function LoginPage() {
     }
   };
 
+  // A six-digit authenticator code, or a recovery code in XXXX-XXXX form.
+  // A recovery code always has its hyphen after four characters, so it can
+  // never look like six straight digits — the two patterns cannot collide.
+  const codeIsComplete = (v) =>
+    /^\d{6}$/.test(v) || /^[0-9A-Z]{4}-[0-9A-Z]{4}$/.test(v);
+
   const submitCode = async (e) => {
-    e.preventDefault();
+    e?.preventDefault?.();
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -215,6 +222,20 @@ export default function LoginPage() {
       setBusy(false);
     }
   };
+
+  // Submit the moment the code is complete. Nobody types six digits and then
+  // wants to reach for a button, and the code expires in thirty seconds.
+  // The button stays for anyone who pastes, or uses a keyboard only.
+  useEffect(() => {
+    if ((step === "totp" || step === "enroll") && !busy
+        && codeIsComplete(code)) {
+      submitCode();
+    }
+    // submitCode is redefined every render; the guard above is what makes
+    // this safe to run on any change to the code itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, step, busy]);
+
 
   const finishEnrolment = () => {
     if (!pending) return;
@@ -489,17 +510,26 @@ export default function LoginPage() {
 
                 <form onSubmit={submitCode} className="mt-6 space-y-3">
                   <Label className="text-[12.5px] text-muted-foreground">
-                    Enter the 6-digit code the app shows
+                    Enter the 6-digit code the app shows, or a recovery code
                   </Label>
                   <Input
                     ref={codeRef}
                     value={code}
                     onChange={(e) => {
-                      setCode(e.target.value.replace(/[^\d]/g, "").slice(0, 6));
+                      // Two things are typed here: a six-digit code from the
+                      // authenticator, and a recovery code like K7QD-2M4X.
+                      // Stripping to digits made the second impossible to
+                      // enter, which left anyone with a lost phone stuck.
+                      setCode(
+                        e.target.value
+                          .toUpperCase()
+                          .replace(/[^0-9A-Z-]/g, "")
+                          .slice(0, 9)
+                      );
                       if (error) setError(null);
                     }}
                     required
-                    inputMode="numeric"
+                    inputMode="text"
                     autoComplete="one-time-code"
                     placeholder="000000"
                     className="rounded-[10px] h-12 text-center text-lg tracking-[0.4em] font-mono bg-card"
@@ -507,7 +537,7 @@ export default function LoginPage() {
                   />
                   <Button
                     type="submit"
-                    disabled={busy || code.length < 6}
+                    disabled={busy || !codeIsComplete(code)}
                     className="w-full rounded-[10px] h-12 text-[14.5px] text-white hover:opacity-90"
                     style={{ backgroundColor: NAVY, boxShadow: BUTTON_SHADOW }}
                     data-testid="totp-submit-btn"
