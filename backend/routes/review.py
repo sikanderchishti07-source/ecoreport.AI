@@ -139,9 +139,6 @@ async def submit_for_review(campaign_id: str, payload: SubmitPayload,
     a campaign themselves may still want it in the queue.
     """
     campaign = await _campaign_or_404(campaign_id)
-    if campaign.get("status") == SUBMITTED:
-        raise HTTPException(status_code=409,
-                            detail="This campaign is already awaiting review")
     # reading_count is computed by the campaigns endpoints at read time and is
     # never stored on the document, so count the readings themselves.
     if not await db.readings.count_documents({"campaign_id": campaign_id}):
@@ -167,6 +164,17 @@ async def submit_for_review(campaign_id: str, payload: SubmitPayload,
     if report.get("campaign_id") not in (None, campaign_id):
         raise HTTPException(status_code=422,
                             detail="That report belongs to another campaign")
+
+    # Resubmitting is the normal way to put a corrected version under review,
+    # so it is allowed and simply repins. Only sending the very same version
+    # that is already waiting is refused — that is a double-click, and it
+    # would notify the reviewer twice about nothing.
+    if (campaign.get("status") == SUBMITTED
+            and campaign.get("submitted_report_id") == report["id"]):
+        raise HTTPException(
+            status_code=409,
+            detail=("That version is already awaiting review. Generate a new "
+                    "one, or choose a different version, to resubmit."))
 
     now = datetime.now(timezone.utc)
     await _set_status(campaign_id, SUBMITTED, {
