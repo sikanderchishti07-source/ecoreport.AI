@@ -267,17 +267,6 @@ async def create_report(campaign_id: str, lang: str = "en",
         return i if isinstance(i, dict) else i.model_dump()
     sn_map = {_as_dict(i).get("sn"): _as_dict(i)
               for i in (campaign.instruments or [])}
-    # Photographs of the equipment, held against the library record so every
-    # campaign using that meter gets them without re-uploading.
-    equipment_photos: list = []
-    if campaign.station_id:
-        eq = await db.attachments.find(
-            {"station_id": campaign.station_id, "kind": "equipment_photo"},
-            {"_id": 0}).sort([("order", 1), ("uploaded_at", 1)]) \
-            .to_list(length=20)
-        equipment_photos = [a["path"] for a in eq
-                            if os.path.exists(a.get("path", ""))]
-
     cal_items = []
     for a in by_kind.get("calibration", []):
         if not os.path.exists(a.get("path", "")):
@@ -605,6 +594,17 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
                if os.path.exists(a.get("path", ""))]
     cover = next((a["path"] for a in by_kind.get("cover_photo", [])
                   if os.path.exists(a.get("path", ""))), None)
+
+    # Photographs of the equipment, held against the library record so every
+    # campaign using that meter gets them without re-uploading.
+    equipment_photos: list = []
+    if campaign.station_id:
+        eq = await db.attachments.find(
+            {"station_id": campaign.station_id, "kind": "equipment_photo"},
+            {"_id": 0}).sort([("order", 1), ("uploaded_at", 1)]) \
+            .to_list(length=20)
+        equipment_photos = [a["path"] for a in eq
+                            if os.path.exists(a.get("path", ""))]
 
     cal_items = []
     for a in by_kind.get("calibration", []):
