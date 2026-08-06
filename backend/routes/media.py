@@ -56,8 +56,20 @@ LIBRARY_QUERY = {"kind": "cover_photo", "campaign_id": "",
 # Mobile-lab library
 # ---------------------------------------------------------------------------
 @router.get("/stations", response_model=List[Station])
-async def list_stations():
-    docs = await db.stations.find({}, {"_id": 0}).sort("name", 1) \
+async def list_stations(kind: Optional[str] = None):
+    """The equipment library, optionally narrowed to one kind.
+
+    Records created before the library was typed carry no ``kind`` and are
+    mobile laboratories, so a query for air must match those too — otherwise
+    every existing lab would vanish from the page the day this deploys.
+    """
+    q: dict = {}
+    if kind == "air":
+        q = {"$or": [{"kind": "air"}, {"kind": {"$exists": False}},
+                     {"kind": None}]}
+    elif kind:
+        q = {"kind": kind}
+    docs = await db.stations.find(q, {"_id": 0}).sort("name", 1) \
         .to_list(length=200)
     return [Station(**d) for d in docs]
 
@@ -103,22 +115,45 @@ async def delete_station(station_id: str,
 @router.post("/campaigns/{campaign_id}/load-station/{station_id}")
 async def load_station_into_campaign(campaign_id: str, station_id: str,
                                      user: str = Depends(current_username)):
-    """Copy a mobile lab's instrument set into the campaign (editable there)."""
+    """Copy the equipment's instrument set into the campaign.
+
+    For a noise campaign the meter model and serial on the campaign are
+    overwritten from the library record. The registry is the single source
+    of truth for what the instrument is: leaving a typed-in serial to
+    disagree with the selected meter is how a report ends up naming
+    equipment that was never used.
+    """
     st = await db.stations.find_one({"id": station_id}, {"_id": 0})
     if not st:
-        raise HTTPException(status_code=404, detail="Station not found")
+        raise HTTPException(status_code=404, detail="Equipment not found")
     camp = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if not camp:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    await db.campaigns.update_one(
-        {"id": campaign_id},
-        {"$set": to_mongo({"station_id": station_id,
-                           "instruments": st.get("instruments", []),
-                           "updated_at": datetime.now(timezone.utc)})})
+
+    patch = {"station_id": station_id,
+             "instruments": st.get("instruments", []),
+             "updated_at": datetime.now(timezone.utc)}
+
+    if camp.get("campaign_type") == "noise":
+        first = (st.get("instruments") or [{}])[0]
+        patch["meter_model"] = (first.get("technique") or st.get("name") or
+                                None)
+        patch["meter_serial"] = first.get("sn") or st.get("code") or None
+        for inst in st.get("instruments") or []:
+            tech = (inst.get("technique") or "").lower()
+            param = (inst.get("parameter") or "").lower()
+            if "calibrat" in tech or "calibrat" in param:
+                patch["calibrator_model"] = inst.get("technique") or None
+                break
+
+    await db.campaigns.update_one({"id": campaign_id},
+                                  {"$set": to_mongo(patch)})
     await audit("campaign.load_station", "campaign", campaign_id, user,
-                {"station": st.get("name"),
+                {"station": st.get("name"), "kind": st.get("kind", "air"),
                  "instruments": len(st.get("instruments", []))})
     return {"station": st.get("name"),
+            "meter_model": patch.get("meter_model"),
+            "meter_serial": patch.get("meter_serial"),
             "instruments": st.get("instruments", [])}
 
 
@@ -418,6 +453,57 @@ async def clear_cover_photo(campaign_id: str,
     await audit("campaign.cover_photo", "campaign", campaign_id, user,
                 {"photo": None})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Photographs of the equipment itself — printed in the report's methodology
+# beside the instrument description, as BSA's manual reports do. Held
+# against the library record, so every campaign using that equipment gets
+# them without re-uploading.
+# ---------------------------------------------------------------------------
+@router.get("/stations/{station_id}/photos", response_model=List[Attachment])
+async def list_station_photos(station_id: str):
+    docs = await db.attachments.find(
+        {"station_id": station_id, "kind": "equipment_photo"}, {"_id": 0}) \
+        .sort([("order", 1), ("uploaded_at", 1)]).to_list(length=50)
+    return [Attachment(**d) for d in docs]
+
+
+@router.post("/stations/{station_id}/photos",
+             status_code=status.HTTP_201_CREATED)
+async def upload_station_photo(station_id: str,
+                               caption: Optional[str] = Form(None),
+                               files: List[UploadFile] = File(...),
+                               user: str = Depends(current_username)):
+    st = await db.stations.find_one({"id": station_id}, {"_id": 0})
+    if not st:
+        raise HTTPException(status_code=404, detail="Equipment not found")
+    dest_dir = os.path.join(MEDIA_DIR, "stations", station_id, "photos")
+    os.makedirs(dest_dir, exist_ok=True)
+    created: List[Attachment] = []
+    for up in files:
+        raw = await up.read()
+        if len(raw) > MAX_MB * 1024 * 1024:
+            raise HTTPException(status_code=413,
+                                detail=f"{up.filename} exceeds {MAX_MB} MB")
+        ext = os.path.splitext(up.filename or "")[1].lower()
+        if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+            raise HTTPException(
+                status_code=415,
+                detail="Equipment photos must be JPG, PNG or WebP")
+        path = os.path.join(dest_dir, f"{uuid.uuid4().hex}{ext}")
+        with open(path, "wb") as fh:
+            fh.write(raw)
+        att = Attachment(campaign_id="", station_id=station_id,
+                         kind="equipment_photo",
+                         filename=up.filename or os.path.basename(path),
+                         path=path, caption=caption,
+                         size_bytes=len(raw), uploaded_by=user)
+        await db.attachments.insert_one(to_mongo(att.model_dump()))
+        created.append(att)
+    await audit("station.photo", "station", station_id, user,
+                {"files": len(created)})
+    return created
 
 
 # ---------------------------------------------------------------------------
