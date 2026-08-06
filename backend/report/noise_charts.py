@@ -39,8 +39,23 @@ GREY = "#8a8f98"
 NIGHT = "#0d2340"
 
 MM = 1 / 25.4
-FIG_W, FIG_H = 164 * MM, 74 * MM
+# 164 x 100 mm, placed at exactly that size on the page, so the type in a
+# chart renders at the point size it is set at. Charts were 74 mm tall, which
+# let three of them land on one page and read as a wall of small plots; at
+# 100 mm two fill a page with their captions.
+FIG_W_MM, FIG_H_MM = 164.0, 100.0
+FIG_W, FIG_H = FIG_W_MM * MM, FIG_H_MM * MM
 DPI = 220
+
+
+def _y(mm_from_top: float) -> float:
+    """Figure-fraction y for a distance in mm below the top edge.
+
+    The chrome is placed in millimetres rather than fractions so that
+    changing the figure height grows the plot and leaves the header, the
+    chips and the footnote exactly where they were.
+    """
+    return 1.0 - mm_from_top / FIG_H_MM
 
 _RC = {"font.family": "DejaVu Sans", "axes.edgecolor": "#d7dbe0",
        "axes.linewidth": 0.8, "axes.grid": True, "grid.color": "#eceff3",
@@ -51,7 +66,11 @@ _RC = {"font.family": "DejaVu Sans", "axes.edgecolor": "#d7dbe0",
 def _fig(left: float = 0.078):
     plt.rcParams.update(_RC)
     fig = plt.figure(figsize=(FIG_W, FIG_H), dpi=DPI)
-    ax = fig.add_axes([left, 0.19, 0.978 - left, 0.575])
+    # 14.1 mm of axis furniture below, 17.3 mm of chrome above; the rest of
+    # the height belongs to the plot.
+    bottom = 14.1 / FIG_H_MM
+    height = (FIG_H_MM - 14.1 - 17.3) / FIG_H_MM
+    ax = fig.add_axes([left, bottom, 0.978 - left, height])
     return fig, ax
 
 
@@ -91,16 +110,17 @@ def _interval_phrase(seconds: float) -> str:
 
 
 def _chrome(fig, title, sub, chips):
-    fig.text(0.055, 0.935, title, fontsize=12.5, fontweight="bold",
+    fig.text(0.055, _y(4.8), title, fontsize=12.5, fontweight="bold",
              color=NAVY)
-    fig.text(0.055, 0.872, sub, fontsize=6.8, color=GREY)
+    fig.text(0.055, _y(9.5), sub, fontsize=6.8, color=GREY)
     x = 0.985
     for lab, val in reversed(chips):
-        fig.text(x, 0.908, val, fontsize=10, fontweight="bold", color=NAVY,
+        fig.text(x, _y(6.8), val, fontsize=10, fontweight="bold", color=NAVY,
                  ha="right")
-        fig.text(x, 0.957, lab, fontsize=5.6, color=GREY, ha="right")
+        fig.text(x, _y(3.2), lab, fontsize=5.6, color=GREY, ha="right")
         x -= 0.088
-    fig.text(0.055, 0.025, "Generated from validated monitoring data",
+    fig.text(0.055, _y(FIG_H_MM - 1.9),
+             "Generated from validated monitoring data",
              fontsize=5.6, color="#b7bcc4")
 
 
