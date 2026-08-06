@@ -29,7 +29,10 @@ async def create_campaign(payload: CampaignCreate,
 async def list_campaigns() -> List[Campaign]:
     cursor = db.campaigns.find({}, {"_id": 0}).sort("created_at", -1)
     docs = await cursor.to_list(length=1000)
-    # Attach reading counts (skeleton: cheap because we also track it lazily).
+    # Attach reading counts. Air readings and noise intervals live in
+    # separate collections, so both are counted — counting only the air one
+    # showed every noise campaign as empty while its data sat safely in
+    # noise_readings.
     ids = [d["id"] for d in docs]
     counts: dict[str, int] = {}
     if ids:
@@ -37,8 +40,9 @@ async def list_campaigns() -> List[Campaign]:
             {"$match": {"campaign_id": {"$in": ids}}},
             {"$group": {"_id": "$campaign_id", "n": {"$sum": 1}}},
         ]
-        async for row in db.readings.aggregate(pipeline):
-            counts[row["_id"]] = row["n"]
+        for coll in (db.readings, db.noise_readings):
+            async for row in coll.aggregate(pipeline):
+                counts[row["_id"]] = counts.get(row["_id"], 0) + row["n"]
     for d in docs:
         d["reading_count"] = counts.get(d["id"], 0)
     return [Campaign(**d) for d in docs]
@@ -49,7 +53,10 @@ async def get_campaign(campaign_id: str) -> Campaign:
     doc = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    doc["reading_count"] = await db.readings.count_documents({"campaign_id": campaign_id})
+    coll = (db.noise_readings if doc.get("campaign_type") == "noise"
+            else db.readings)
+    doc["reading_count"] = await coll.count_documents(
+        {"campaign_id": campaign_id})
     return Campaign(**doc)
 
 
@@ -71,7 +78,10 @@ async def update_campaign(campaign_id: str, payload: CampaignUpdate,
     if changes:
         await audit("campaign.update", "campaign", campaign_id, x_user,
                     {"changes": changes})
-    fresh["reading_count"] = await db.readings.count_documents({"campaign_id": campaign_id})
+    coll = (db.noise_readings if fresh.get("campaign_type") == "noise"
+            else db.readings)
+    fresh["reading_count"] = await coll.count_documents(
+        {"campaign_id": campaign_id})
     return Campaign(**fresh)
 
 
@@ -85,6 +95,9 @@ async def delete_campaign(campaign_id: str,
         raise HTTPException(status_code=404, detail="Campaign not found")
     # cascade (report history and audit logs are intentionally preserved)
     await db.readings.delete_many({"campaign_id": campaign_id})
+    # Noise intervals live in their own collection; without this they were
+    # left orphaned in the database when the campaign that owned them went.
+    await db.noise_readings.delete_many({"campaign_id": campaign_id})
     await db.upload_logs.delete_many({"campaign_id": campaign_id})
     await audit("campaign.delete", "campaign", campaign_id, x_user,
                 {"project_name": (existing or {}).get("project_name")})
