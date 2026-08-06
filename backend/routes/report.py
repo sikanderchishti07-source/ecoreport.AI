@@ -250,6 +250,16 @@ async def create_report(campaign_id: str, lang: str = "en",
                    if os.path.exists(a.get("path", ""))]
     licence = [a["path"] for a in by_kind.get("license", [])
                if os.path.exists(a.get("path", ""))]
+    if not licence:
+        # The environmental licence belongs to the company, not the job, so
+        # it is held once in the library and used by every report unless the
+        # campaign carries its own.
+        company = await db.attachments.find(
+            {"kind": "license", "campaign_id": "", "station_id": None,
+             "source_id": None}, {"_id": 0}) \
+            .sort([("order", 1), ("uploaded_at", 1)]).to_list(length=50)
+        licence = [a["path"] for a in company
+                   if os.path.exists(a.get("path", ""))]
     cover = next((a["path"] for a in by_kind.get("cover_photo", [])
                   if os.path.exists(a.get("path", ""))), None)
 
