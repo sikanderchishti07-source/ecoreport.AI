@@ -174,7 +174,18 @@ export const searchArchive = (q) =>
 
 
 // Mobile labs (stations) — Phase 8
-export const listStations = () => api.get("/stations").then((r) => r.data);
+export const listStations = (kind) =>
+  api.get("/stations", { params: kind ? { kind } : {} }).then((r) => r.data);
+export const listStationPhotos = (stationId) =>
+  api.get(`/stations/${stationId}/photos`).then((r) => r.data);
+export const uploadStationPhotos = (stationId, files, caption) => {
+  const fd = new FormData();
+  [...files].forEach((f) => fd.append("files", f));
+  if (caption) fd.append("caption", caption);
+  return api.post(`/stations/${stationId}/photos`, fd, {
+    headers: { "Content-Type": "multipart/form-data" },
+  }).then((r) => r.data);
+};
 export const createStation = (p) => api.post("/stations", p).then((r) => r.data);
 export const updateStation = (id, p) =>
   api.put(`/stations/${id}`, p).then((r) => r.data);
