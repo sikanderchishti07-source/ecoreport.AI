@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  Loader2, LockOpen, Plus, ShieldCheck, ShieldOff, Smartphone, UserRound,
+  Loader2, LockOpen, MapPin, Plus, ShieldCheck, ShieldOff, Smartphone,
+  UserRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -140,6 +141,7 @@ export default function UsersPage() {
             <SelectTrigger className="rounded-sm h-9"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="member">Member</SelectItem>
+              <SelectItem value="field">Field operator</SelectItem>
               <SelectItem value="admin">Admin</SelectItem>
             </SelectContent>
           </Select>
@@ -178,9 +180,14 @@ export default function UsersPage() {
                 <TableRow key={u.id}>
                   <TableCell className="text-sm">
                     <span className="inline-flex items-center gap-1.5">
+                      {/* A field account signs in from a phone at a site and
+                          can reach far less than the others; worth telling
+                          apart at a glance rather than reading the column. */}
                       {u.role === "admin"
                         ? <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                        : <UserRound className="w-3.5 h-3.5 text-muted-foreground" />}
+                        : u.role === "field"
+                          ? <MapPin className="w-3.5 h-3.5 text-amber-600" />
+                          : <UserRound className="w-3.5 h-3.5 text-muted-foreground" />}
                       {u.name}
                       {u.id === me?.id && (
                         <Badge variant="outline" className="rounded-sm ml-1">you</Badge>
@@ -195,11 +202,12 @@ export default function UsersPage() {
                         patch(u.id, { role: v }, `Role changed to ${v}`)}
                       disabled={u.id === me?.id}
                     >
-                      <SelectTrigger className="rounded-sm h-8 w-[110px] text-xs">
+                      <SelectTrigger className="rounded-sm h-8 w-[140px] text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="member">Member</SelectItem>
+                        <SelectItem value="field">Field operator</SelectItem>
                         <SelectItem value="admin">Admin</SelectItem>
                       </SelectContent>
                     </Select>
