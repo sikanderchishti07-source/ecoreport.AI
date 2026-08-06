@@ -49,6 +49,14 @@ const defaults = {
   day_end_hour: 19,
   meter_model: "",
   meter_serial: "",
+  calibrator_model: "",
+  calibration_level_db: 94,
+  mic_height_m: 1.5,
+  met_temp_max_c: "", met_temp_min_c: "",
+  met_rh_max_pct: "", met_rh_min_pct: "",
+  met_wind_max_ms: "", met_wind_min_ms: "", met_wind_mean_ms: "",
+  met_wind_prevailing: "",
+  site_conditions_note: "",
   project_name: "",
   client: "",
   provider: "Bander Said Allehiany (BSA)",
@@ -221,6 +229,18 @@ export default function CampaignForm({ mode }) {
           day_end_hour: c.day_end_hour ?? 19,
           meter_model: c.meter_model || "",
           meter_serial: c.meter_serial || "",
+          calibrator_model: c.calibrator_model || "",
+          calibration_level_db: c.calibration_level_db ?? 94,
+          mic_height_m: c.mic_height_m ?? 1.5,
+          met_temp_max_c: c.met_temp_max_c ?? "",
+          met_temp_min_c: c.met_temp_min_c ?? "",
+          met_rh_max_pct: c.met_rh_max_pct ?? "",
+          met_rh_min_pct: c.met_rh_min_pct ?? "",
+          met_wind_max_ms: c.met_wind_max_ms ?? "",
+          met_wind_min_ms: c.met_wind_min_ms ?? "",
+          met_wind_mean_ms: c.met_wind_mean_ms ?? "",
+          met_wind_prevailing: c.met_wind_prevailing || "",
+          site_conditions_note: c.site_conditions_note || "",
           project_name: c.project_name || "",
           client: c.client || "",
           provider: c.provider || "",
@@ -283,6 +303,15 @@ export default function CampaignForm({ mode }) {
         ...form,
         day_start_hour: parseInt(form.day_start_hour, 10) || 7,
         day_end_hour: parseInt(form.day_end_hour, 10) || 19,
+        // Blank weather fields must arrive as null: an empty string is not
+        // a number, and the report omits the table when nothing was
+        // recorded rather than printing empty rows.
+        ...Object.fromEntries(
+          ["calibration_level_db", "mic_height_m", "met_temp_max_c",
+           "met_temp_min_c", "met_rh_max_pct", "met_rh_min_pct",
+           "met_wind_max_ms", "met_wind_min_ms", "met_wind_mean_ms"]
+            .map((k) => [k, form[k] === "" || form[k] === null
+              ? null : Number(form[k])])),
         latitude: parseFloat(form.latitude),
         facility_latitude: form.facility_latitude === "" || form.facility_latitude == null
           ? null : parseFloat(form.facility_latitude),
@@ -516,6 +545,63 @@ export default function CampaignForm({ mode }) {
           L Day and L Night are energy averages over the day period and its
           complement. The regulation's default of 07:00–19:00 is preset.
         </p>
+
+        <div className="grid gap-3 md:grid-cols-3 pt-1">
+          <div className="space-y-1.5">
+            <Label>Acoustic calibrator</Label>
+            <Input value={form.calibrator_model}
+                   onChange={(e) => setForm((f) => ({ ...f, calibrator_model: e.target.value }))}
+                   placeholder="Cirrus acoustic calibrator" />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Field check level (dB)</Label>
+            <Input type="number" step="0.1" value={form.calibration_level_db}
+                   onChange={(e) => setForm((f) => ({ ...f, calibration_level_db: e.target.value }))} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Microphone height (m)</Label>
+            <Input type="number" step="0.1" value={form.mic_height_m}
+                   onChange={(e) => setForm((f) => ({ ...f, mic_height_m: e.target.value }))} />
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label>Site conditions noted during the survey</Label>
+          <Input value={form.site_conditions_note}
+                 onChange={(e) => setForm((f) => ({ ...f, site_conditions_note: e.target.value }))}
+                 placeholder="Optional — sources present, activities, interruptions" />
+        </div>
+      </Section>
+      )}
+
+      {form.campaign_type === "noise" && (
+      <Section title="Meteorological conditions">
+        <p className="text-[11px] text-muted-foreground -mt-1">
+          A sound level meter carries no weather sensors, so these are
+          entered from the site record. Wind and temperature affect sound
+          propagation and the regulator's format carries them as a table.
+          Leave blank and the table is omitted from the report.
+        </p>
+        <div className="grid gap-3 md:grid-cols-4">
+          {[["met_temp_max_c", "Temperature max (°C)"],
+            ["met_temp_min_c", "Temperature min (°C)"],
+            ["met_rh_max_pct", "Humidity max (%)"],
+            ["met_rh_min_pct", "Humidity min (%)"],
+            ["met_wind_max_ms", "Wind speed max (m/s)"],
+            ["met_wind_min_ms", "Wind speed min (m/s)"],
+            ["met_wind_mean_ms", "Mean wind speed (m/s)"]].map(([k, lab]) => (
+            <div className="space-y-1.5" key={k}>
+              <Label>{lab}</Label>
+              <Input type="number" step="0.1" value={form[k]}
+                     onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))} />
+            </div>
+          ))}
+          <div className="space-y-1.5">
+            <Label>Prevailing wind direction</Label>
+            <Input value={form.met_wind_prevailing}
+                   onChange={(e) => setForm((f) => ({ ...f, met_wind_prevailing: e.target.value }))}
+                   placeholder="E" />
+          </div>
+        </div>
       </Section>
       )}
 
@@ -605,6 +691,38 @@ export default function CampaignForm({ mode }) {
             />
           </Field>
         </div>
+
+        {/* The date box shows mm/dd/yyyy, so 06/07 typed as "6 July" is
+            stored as 7 June — a whole month out, which then makes the
+            report's duration, capture and conclusion wrong while looking
+            perfectly plausible. Echo the dates in words so a slip is
+            visible before saving. */}
+        {(form.monitoring_start || form.monitoring_end) && (() => {
+          const fmt = (v) => {
+            if (!v) return "—";
+            const d = new Date(v);
+            return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString(
+              "en-GB", { day: "numeric", month: "long", year: "numeric",
+                         hour: "2-digit", minute: "2-digit" });
+          };
+          const a = form.monitoring_start ? new Date(form.monitoring_start) : null;
+          const b = form.monitoring_end ? new Date(form.monitoring_end) : null;
+          const hrs = a && b && !Number.isNaN(a) && !Number.isNaN(b)
+            ? (b - a) / 3600000 : null;
+          return (
+            <p className="text-[11px] text-muted-foreground">
+              Reads as <span className="text-foreground">{fmt(form.monitoring_start)}</span>
+              {" → "}<span className="text-foreground">{fmt(form.monitoring_end)}</span>
+              {hrs !== null && hrs > 0 && (
+                <span className={hrs > 24 * 14 ? "text-amber-600" : ""}>
+                  {"  ·  "}{hrs < 48 ? `${hrs.toFixed(1)} hours`
+                    : `${(hrs / 24).toFixed(1)} days`}
+                  {hrs > 24 * 14 ? " — check this is the window you meant" : ""}
+                </span>
+              )}
+            </p>
+          );
+        })()}
       </Section>
 
       <Section title="Report metadata">
