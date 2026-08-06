@@ -13,6 +13,7 @@ import UsersPage from "@/pages/UsersPage";
 import ReviewQueue from "@/pages/ReviewQueue";
 import StationsPage from "@/pages/StationsPage";
 import CoverPhotosPage from "@/pages/CoverPhotosPage";
+import FieldCapture from "@/pages/FieldCapture";
 import { getToken } from "@/lib/api";
 
 function RequireAuth({ children }) {
@@ -27,6 +28,14 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/share/:token" element={<PortalPage />} />
+          {/* Site capture runs outside the office shell — no navigation, no
+              side rail, its own dark theme — because it is used one-handed in
+              sunlight. Deleting these two lines and the page file removes the
+              feature entirely. */}
+          <Route
+            path="/field"
+            element={<RequireAuth><FieldCapture /></RequireAuth>}
+          />
           <Route
             element={
               <RequireAuth>
