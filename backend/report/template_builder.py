@@ -875,6 +875,11 @@ def _typeset(doc) -> dict:
 
         # a paragraph carrying an image must not be parted from the caption
         # that follows it
+        # The cover plate is the exception: it is anchored to the page, is
+        # the only thing on its page, and keep-with-next on it would drag the
+        # document control page up behind it.
+        if "{{ cover_plate }}" in text:
+            continue
         if "<pic:pic" in el.xml or "{{ fig_" in text or "{{ cover_hero" in text:
             para.paragraph_format.keep_with_next = True
             stats["figures_kept"] += 1
@@ -1057,242 +1062,33 @@ def build(out_path: str = OUT) -> str:
         return p
 
     # ------------------------------------------------------------------
-    # Cover: one full-bleed table on a single twelve-column grid.
+    # Cover: one full-bleed picture.
     #
-    # Every band of the cover — masthead, hero, value propositions, project
-    # card, footer — is a row of the same table, merged to whatever span it
-    # needs. Nothing is nested. Nested tables carry their own width, and a
-    # child whose fixed width disagrees with its parent cell overhangs the
-    # margin or collapses; twelve columns divide cleanly by 2, 3, 4 and 6, so
-    # every band lands on the same grid and the edges line up down the page.
-    # The cover section already has zero margins, so the grid spans the full
-    # 21 cm page.
+    # It replaces the twelve-column grid that built the masthead, hero band,
+    # value propositions, document control card and contact footer as
+    # separate rows. The whole cover is now drawn in report/cover_plate.py
+    # and arrives as a single 300 dpi image, because its wording sits against
+    # two diagonals and only works if it is measured against them — which
+    # cannot be done in a table.
+    #
+    # The picture is placed inline here and anchored to the page after the
+    # template is rendered; docxtpl has nothing to anchor until then.
+    #
+    # Note for whoever comes next: the accreditation badges that ran across
+    # the old masthead are no longer on the cover. Their certificate numbers
+    # appear nowhere else in the report, so if they are required they must be
+    # added to the document control page or drawn into the plate.
     # ------------------------------------------------------------------
-    # Fourteen columns: a narrow margin column at each edge, and twelve
-    # content columns between them. Twelve divides by 2, 3, 4 and 6, so the
-    # value propositions, the card and the footer all land on the same lines;
-    # the margin columns keep those bands off the paper edge while the hero
-    # and the footer band still bleed across the full page.
-    COLS = 14
-    MARGIN_W, CONTENT_W = 0.9, 19.2 / 12
-    COL_WIDTHS = [MARGIN_W] + [CONTENT_W] * 12 + [MARGIN_W]
-    C0, C1 = 1, 12                     # first and last content column
-    ROW_MASTHEAD, ROW_HERO, ROW_ICON, ROW_PROP = 0, 1, 2, 3
-    ROW_CARD = 4
-    ROW_FOOT_NAME, ROW_FOOT_LINKS = 9, 10
+    sec.header_distance = sec.footer_distance = Cm(0)
+    sec.gutter = Cm(0)
 
-    cov = doc.add_table(rows=11, cols=COLS)
-    _full_width(cov, COLS)
-    for row in cov.rows:
-        for i, c in enumerate(row.cells):
-            c.width = Cm(COL_WIDTHS[i])
-
-    def _span(r, a, b):
-        """Merge columns a..b of row r and return the resulting cell."""
-        cell = cov.cell(r, a)
-        if b > a:
-            cell = cell.merge(cov.cell(r, b))
-        for para in cell.paragraphs:
-            para.paragraph_format.space_after = Pt(0)
-        return cell
-
-    def _left_rule(cell, colour="DCE5EE"):
-        """Hairline on a cell's left edge — the dividers between the four
-        value propositions in the approved cover."""
-        tcPr = cell._tc.get_or_add_tcPr()
-        borders = tcPr.find(qn("w:tcBorders"))
-        if borders is None:
-            borders = OxmlElement("w:tcBorders")
-            tcPr.append(borders)
-        e = OxmlElement("w:left")
-        e.set(qn("w:val"), "single")
-        e.set(qn("w:sz"), "4")
-        e.set(qn("w:color"), colour)
-        borders.append(e)
-
-    # --- row 0: masthead — BSA mark, then the accreditation marks ----------
-    # A single strip image wins if present: certification bodies supply one
-    # artwork with the marks and captions already set. The individual slots
-    # remain for anyone who holds the marks separately, and a badge with no
-    # file is skipped — the row never claims an accreditation the lab does
-    # not hold.
-    #
-    # Both sides are vertically centred against each other, inset to the same
-    # 1.25 cm axis the project card and the footer use, and the mark is given
-    # more height than the accreditation strip so the masthead has an owner.
-    # A green hairline closes the band, giving the page a top edge instead of
-    # letting white run straight into the photograph.
-    strip = os.path.join(ASSETS, "badges.png")
-    badges = [] if os.path.exists(strip) else [
-        (f, cap) for f, cap in ACCREDITATION_BADGES
-        if os.path.exists(os.path.join(ASSETS, f))]
-
-    INSET = 1.25
-    BAND_PAD = 0.46
-
-    logo_span = 4 if (badges or os.path.exists(strip)) else C1
-    hl = _span(ROW_MASTHEAD, 0, logo_span)
-    _pad(hl, BAND_PAD, BAND_PAD, INSET, 0.2)
-    _vcenter(hl)
-    try:
-        _fit_picture(hl.paragraphs[0], os.path.join(ASSETS, "logo_left.png"),
-                     max_w_cm=5.2, max_h_cm=1.85)
-    except Exception:
-        r = hl.paragraphs[0].add_run("BSA.lab")
-        r.bold = True
-        r.font.size = Pt(22)
-        r.font.color.rgb = NAVY
-
-    if os.path.exists(strip):
-        sc = _span(ROW_MASTHEAD, logo_span + 1, COLS - 1)
-        _pad(sc, BAND_PAD, BAND_PAD, 0.2, INSET)
-        _vcenter(sc)
-        sp = sc.paragraphs[0]
-        sp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        # held below the logo's height so the accreditation artwork supports
-        # the mark rather than competing with it
-        _fit_picture(sp, strip, max_w_cm=11.4, max_h_cm=1.5)
-    elif badges:
-        first = logo_span + 1
-        each = max((COLS - first) // len(badges), 1)
-        for n, (fname, caption) in enumerate(badges):
-            a = first + n * each
-            b = COLS - 1 if n == len(badges) - 1 else min(a + each - 1, COLS - 1)
-            if a > COLS - 1:
-                break
-            cell = _span(ROW_MASTHEAD, a, b)
-            # equal padding on every badge: unequal insets were what made
-            # four marks of different proportions look scattered
-            _pad(cell, BAND_PAD, BAND_PAD, 0.10, 0.10)
-            _vcenter(cell)
-            ip = cell.paragraphs[0]
-            ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            ip.paragraph_format.space_after = Pt(2)
-            _fit_picture(ip, os.path.join(ASSETS, fname),
-                         max_w_cm=2.8, max_h_cm=1.05)
-            for i, line in enumerate(caption):
-                cp = cell.add_paragraph()
-                cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                cp.paragraph_format.space_after = Pt(0)
-                cp.paragraph_format.line_spacing = 1.0
-                rr = cp.add_run(line)
-                rr.font.size = Pt(5.5)
-                rr.bold = (i == 0)
-                rr.font.color.rgb = NAVY
-
-    # one continuous rule across the full page width, including the margin
-    # columns, so the band closes cleanly against the hero below it
-    for c in cov.rows[ROW_MASTHEAD].cells:
-        _cell_rules(c, {"bottom": (GREEN_RULE, 8)})
-
-    # --- row 1: hero band, full bleed --------------------------------------
-    hero_c = _span(ROW_HERO, 0, COLS - 1)
-    _pad(hero_c, 0, 0, 0, 0)
-    # Cell shading reaches the paper edge; an inline image does not — the
-    # renderer insets the text flow by about 3 mm. Filling the cell with the
-    # colour of the band's own left edge closes that strip, so the hero reads
-    # as full bleed exactly like the footer below it.
-    _fill(hero_c, HERO_EDGE_FILL)
-    hp = hero_c.paragraphs[0]
-    hp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    hp.paragraph_format.space_after = Pt(0)
-    # no indent of any kind, so the band bleeds evenly to both edges
-    hp.paragraph_format.left_indent = Cm(0)
-    hp.paragraph_format.right_indent = Cm(0)
-    hp.add_run("{{ cover_hero }}")
-
-    # --- rows 2-3: value propositions, three columns of the grid each ------
-    props = [
-        ("accurate", "ACCURATE", "Precision monitoring\nwith calibrated instruments"),
-        ("reliable", "RELIABLE", "Data you can trust,\nanytime, anywhere"),
-        ("compliant", "COMPLIANT", "Aligned with KSA NCEC\n& international standards"),
-        ("sustainable", "SUSTAINABLE", "Supporting a cleaner\nand healthier future"),
-    ]
-    for i, (icon, title, blurb) in enumerate(props):
-        a, b = C0 + i * 3, C0 + i * 3 + 2
-        top = _span(ROW_ICON, a, b)
-        bot = _span(ROW_PROP, a, b)
-        # the grid's margin columns already hold the band off the page edge,
-        # so the cells themselves only need even internal padding
-        _pad(top, 0.30, 0.06, 0.2, 0.2)
-        _pad(bot, 0.0, 0.26, 0.2, 0.2)
-        if i:                       # no rule to the left of the first column
-            _left_rule(top)
-            _left_rule(bot)
-        ip = top.paragraphs[0]
-        ip.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        ip.paragraph_format.space_after = Pt(3)
-        try:
-            ip.add_run().add_picture(
-                os.path.join(ASSETS, f"icon_{icon}.png"), height=Cm(0.9))
-        except Exception:
-            pass
-        _txt(bot, title, 9.5, bold=True, colour=GREEN_ACCENT, align="center",
-             after=2, first=True)
-        for line in blurb.split("\n"):
-            _txt(bot, line, 8, colour=DARK, align="center", after=0)
-
-    # --- rows 4-8: document control block -----------------------------------
-    # Rebuilt as a document table rather than a card. The grey label fill was
-    # opaque, so it punched holes in the watermark exactly as the zebra
-    # striping did, and boxing every cell on four sides produced a grid of
-    # small rectangles. Rules now run horizontally only, the labels sit on the
-    # same 1.25 cm left axis as the footer, and a fixed row height gives the
-    # block an even rhythm regardless of how long a value runs.
-    rows_ = [("Client", "{{ client }}"),
-             ("Monitoring station", "{{ site_name }}"),
-             ("Survey period", "{{ monitoring_window_text }}"),
-             ("Report number", "{{ report_number }}"),
-             ("Revision and issue date",
-              "{{ revision }}     \u00b7     {{ reporting_date }}")]
-    for i, (k, v) in enumerate(rows_):
-        r = ROW_CARD + i
-        kc = _span(r, C0, C0 + 2)          # three columns — 4.8 cm
-        vc = _span(r, C0 + 3, C1)          # nine columns — 14.4 cm
-        _pad(kc, 0.16, 0.16, 0.35, 0.25)
-        _pad(vc, 0.16, 0.16, 0.0, 0.35)
-        _vcenter(kc)
-        _vcenter(vc)
-        _row_height(cov.rows[r], 0.76)
-        rules = {"bottom": (RULE_GREY, 4)}
-        if i == 0:
-            rules["top"] = (GREEN_RULE, 8)
-        _cell_rules(kc, rules)
-        _cell_rules(vc, rules)
-        # label quiet and small, value dark and larger: the weight difference
-        # carries the hierarchy, so the labels no longer need to shout in caps
-        _txt(kc, k, 8.5, colour=MUTED_GREY, first=True)
-        _txt(vc, v, 10, colour=DARK, first=True)
-
-    # The approved concept carries no prepared-by block on the cover, and
-    # the same detail is already set out on the document control page. Its
-    # removal is also what lets the cover close on a single page now that the
-    # hero band is taller.
-
-    # --- rows 10-11: navy contact footer ------------------------------------
-    fn = _span(ROW_FOOT_NAME, 0, COLS - 1)
-    _fill(fn, NAVY_FILL)
-    _pad(fn, 0.34, 0.10, 1.25, 1.25)
-    _txt(fn, "{{ provider_legal_name }}", 10.5, bold=True, colour=WHITE,
-         first=True)
-
-    # uneven spans: the address is the longest item and was wrapping to a
-    # second line once the outer columns were inset for print safety
-    items = [("{{ provider_website }}", C0, C0 + 2),
-             ("{{ provider_email }}", C0 + 3, C0 + 5),
-             ("{{ provider_tel }}", C0 + 6, C0 + 7),
-             ("{{ provider_address }}", C0 + 8, C1)]
-    for edge in (0, COLS - 1):          # keep the navy bleeding to the edge
-        _fill(cov.cell(ROW_FOOT_LINKS, edge), NAVY_FILL)
-    for i, (item, a, b) in enumerate(items):
-        c = _span(ROW_FOOT_LINKS, a, b)
-        _fill(c, NAVY_FILL)
-        # the outer columns are inset to the same safe margin as the rest of
-        # the cover: on a full-bleed page the last contact item was ending
-        # 2.6 mm from the trim edge, close enough to be cut off in print
-        _pad(c, 0.04, 0.34, 0.15, 0.15)
-        _txt(c, item, 8.5, colour=RGBColor(0xC5, 0xDA, 0xEC),
-             align="center", first=True)
+    cp = doc.add_paragraph()
+    cp.paragraph_format.space_before = Pt(0)
+    cp.paragraph_format.space_after = Pt(0)
+    cp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    cp.paragraph_format.left_indent = Cm(0)
+    cp.paragraph_format.right_indent = Cm(0)
+    cp.add_run("{{ cover_plate }}")
 
     sec2 = doc.add_section(WD_SECTION.NEW_PAGE)
     sec2.page_width, sec2.page_height = Cm(21.0), Cm(29.7)

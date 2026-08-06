@@ -20,6 +20,9 @@ from models import Campaign, PollutantLimit, Reading
 from report.charts import generate_all_charts
 from report.context import build_context
 
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                      "assets")
+
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "master_template.docx")
 TEMPLATE_PATH_AR = os.path.join(os.path.dirname(__file__),
                                 "master_template_ar.docx")
@@ -146,6 +149,19 @@ def generate_report(
     tpl = DocxTemplate(template_path)
     ctx = build_context(campaign, summary, lang=lang)
 
+    def _period_lines(text):
+        """The monitoring window across two footer lines, split at "to" and
+        keeping the word on the first line so each line reads as a date.
+        Anything that does not contain "to" — the Arabic wording — is left
+        whole and the plate shrinks it to fit rather than cutting it."""
+        text = (text or "").strip()
+        if not text:
+            return ["—"]
+        if " to " in text:
+            a, b = text.split(" to ", 1)
+            return [f"{a.strip()} to", b.strip()]
+        return [text]
+
     def _inline(path, width_mm):
         """Every image enters the document through here. ``slim`` re-encodes
         photographs and scans, which were being stored as PNG and cost about
@@ -178,24 +194,61 @@ def generate_report(
             rows.append(pair)
     ctx["site_photo_rows"] = rows
 
-    # Cover hero band — drawn for this report so the project name is set at
-    # the right size and the operator's own photo can be used as the backdrop.
+    # Cover — one full-bleed plate carrying the whole page. Drawn for this
+    # report so the client, location, monitoring window and report number are
+    # measured against the cover's diagonals rather than poured into a table.
     try:
-        from report.cover import build_hero
-        hero_dir = charts_dir or os.path.join(os.path.dirname(
+        from report.cover_plate import date_range, render_cover
+        plate_dir = charts_dir or os.path.join(os.path.dirname(
             os.path.abspath(out_path)), "charts")
-        os.makedirs(hero_dir, exist_ok=True)
-        hero_png = os.path.join(hero_dir, f"cover_hero_{lang}.png")
-        build_hero(campaign.project_name, hero_png,
-                   photo_path=cover_photo_path, lang=lang,
-                   site_line=campaign.site_name)
-        # exactly the page width: at 212 mm the band was wider than the
-        # 210 mm page and sat 3 mm off-centre against the footer below it
-        ctx["cover_hero"] = _inline(hero_png, 210)
+        os.makedirs(plate_dir, exist_ok=True)
+        plate_png = os.path.join(plate_dir, f"cover_plate_{lang}.png")
+        render_cover(
+            plate_png,
+            report_type=("AIR QUALITY", "MONITORING", "REPORT"),
+            eyebrow="AMBIENT AIR QUALITY",
+            strapline=("Accurate Monitoring.", "Reliable Results.",
+                       "Healthier Environment."),
+            strapline_icons=("target", "shield", "leaf"),
+            survey_dates=[date_range(campaign.monitoring_start,
+                                     campaign.monitoring_end),
+                          date_range(campaign.monitoring_start,
+                                     campaign.monitoring_end, abbrev=True)],
+            survey_note=("24-hour attended", "air quality survey"),
+            location=(campaign.site_name or campaign.project_name or "—"),
+            client=campaign.client or "—",
+            report_number=campaign.report_number or "—",
+            revision_label="REVISION / DATE",
+            revision_value=f"Rev {campaign.revision or '00'}  |  "
+                           f"{ctx.get('reporting_date') or ''}".strip(),
+            third_label="MONITORING PERIOD",
+            third_lines=_period_lines(ctx.get("monitoring_window_text")),
+            green_stripe=False, navy_left_y=0.520, navy_right_y=0.700,
+            wave_x0=0.230, wave_rich=True, wave_style="airflow",
+            gas_symbols=("PM\u2082.\u2085", "PM\u2081\u2080", "NO\u2082",
+                         "SO\u2082", "O\u2083"),
+            pillars=[("target", "ACCURATE", "Precision monitoring",
+                      "with advanced instruments"),
+                     ("shield", "RELIABLE", "Delivering trusted",
+                      "results & insights"),
+                     ("chart", "COMPLIANT", "Aligned with KSA NCEC",
+                      "& international standards"),
+                     ("globe", "SUSTAINABLE", "Supporting cleaner",
+                      "and healthier future")],
+            contacts=[("mail", ctx.get("provider_email") or ""),
+                      ("phone", ctx.get("provider_tel") or ""),
+                      ("pin", ctx.get("provider_address") or "")],
+            photo_path=cover_photo_path,
+            logo_path=os.path.join(ASSETS, "logo_left.png")
+            if os.path.exists(os.path.join(ASSETS, "logo_left.png")) else None)
+        # Placed at the exact page size; anchored to the page after saving.
+        ctx["cover_plate"] = InlineImage(tpl, plate_png, width=Mm(210),
+                                         height=Mm(297))
     except Exception:  # noqa: BLE001
         import logging
-        logging.getLogger(__name__).warning("cover hero failed", exc_info=True)
-        ctx["cover_hero"] = ""
+        logging.getLogger(__name__).warning("cover plate failed",
+                                            exc_info=True)
+        ctx["cover_plate"] = ""
 
     # Wind rose laid over the satellite tile. Built here rather than in
     # charts.py because it needs the site map, which is fetched by the route.
@@ -266,6 +319,12 @@ def generate_report(
     tpl.render(ctx, autoescape=True)
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     tpl.save(out_path)
+
+    # The plate is inline until here: docxtpl has nothing to anchor before
+    # the template is rendered. Anchoring it to the page is what makes it
+    # bleed to all four edges instead of being clipped by its line box.
+    from report.cover_plate import bleed_first_picture
+    bleed_first_picture(out_path)
 
     # Write our own numbers into the saved file. Must run after render(),
     # because rendering is what expands the certificate/licence loops and so
