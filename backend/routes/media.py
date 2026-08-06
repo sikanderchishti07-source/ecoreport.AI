@@ -334,6 +334,88 @@ async def get_attachment_file(attachment_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Company documents — the environmental licence
+#
+# The licence belongs to BSA, not to a job, so it is held once here and every
+# report picks it up. Uploading it against each campaign meant it was
+# forgotten on some and stale on others. A campaign may still carry its own
+# licence attachment, which takes precedence.
+# ---------------------------------------------------------------------------
+@router.get("/company-documents", response_model=List[Attachment])
+async def list_company_documents(kind: str = "license"):
+    docs = await db.attachments.find(
+        {"kind": kind, "campaign_id": "", "station_id": None,
+         "source_id": None}, {"_id": 0}) \
+        .sort([("order", 1), ("uploaded_at", 1)]).to_list(length=50)
+    return [Attachment(**d) for d in docs]
+
+
+@router.post("/company-documents", status_code=status.HTTP_201_CREATED)
+async def upload_company_document(kind: str = Form("license"),
+                                  caption: Optional[str] = Form(None),
+                                  files: List[UploadFile] = File(...),
+                                  user: str = Depends(current_username)):
+    if kind not in ("license",):
+        raise HTTPException(status_code=422,
+                            detail="Only the environmental licence is held "
+                                   "as a company document")
+    dest_dir = os.path.join(MEDIA_DIR, "company", kind)
+    os.makedirs(dest_dir, exist_ok=True)
+    created: List[Attachment] = []
+    for up in files:
+        raw = await up.read()
+        if len(raw) > MAX_MB * 1024 * 1024:
+            raise HTTPException(status_code=413,
+                                detail=f"{up.filename} exceeds {MAX_MB} MB")
+        ext = os.path.splitext(up.filename or "")[1].lower()
+        stored: List[str] = []
+        if ext == ".pdf":
+            tmp = os.path.join(dest_dir, f"{uuid.uuid4().hex}.pdf")
+            with open(tmp, "wb") as fh:
+                fh.write(raw)
+            stored = _pdf_to_images(tmp, dest_dir)
+            if not stored:
+                raise HTTPException(status_code=422,
+                                    detail="Could not read that PDF")
+        elif ext in (".jpg", ".jpeg", ".png", ".webp"):
+            path = os.path.join(dest_dir, f"{uuid.uuid4().hex}{ext}")
+            with open(path, "wb") as fh:
+                fh.write(raw)
+            stored = [path]
+        else:
+            raise HTTPException(status_code=415,
+                                detail="Upload a PDF or an image")
+        for i, path in enumerate(stored):
+            att = Attachment(campaign_id="", station_id=None, kind=kind,
+                             filename=up.filename or os.path.basename(path),
+                             path=path, caption=caption, order=i,
+                             size_bytes=os.path.getsize(path),
+                             uploaded_by=user)
+            await db.attachments.insert_one(to_mongo(att.model_dump()))
+            created.append(att)
+    await audit("company.document", "attachment", kind, user,
+                {"files": len(created)})
+    return created
+
+
+@router.delete("/company-documents/{doc_id}", status_code=204)
+async def delete_company_document(doc_id: str,
+                                  user: str = Depends(current_username)
+                                  ) -> Response:
+    doc = await db.attachments.find_one({"id": doc_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        if doc.get("path") and os.path.exists(doc["path"]):
+            os.remove(doc["path"])
+    except OSError:
+        log.warning("could not remove %s", doc.get("path"))
+    await db.attachments.delete_one({"id": doc_id})
+    await audit("company.document.delete", "attachment", doc_id, user, {})
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
 # Cover-photo library
 #
 # The same few photographs are used across every campaign, so they are held
