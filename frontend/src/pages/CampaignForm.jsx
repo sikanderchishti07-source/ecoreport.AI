@@ -839,14 +839,28 @@ export default function CampaignForm({ mode }) {
           </Field>
         </div>
         <div className="grid grid-cols-3 gap-4">
+          {/* Assigned by the server when the first report is generated, so a
+              campaign that never produces one never consumes a number and the
+              date inside the number is the issue date. A number already on the
+              campaign stays editable — an old job entered late still needs its
+              own number typed in. */}
           <Field label="Report number">
-            <Input
-              data-testid={CAMPAIGN_FORM.reportNumber}
-              value={form.report_number}
-              onChange={set("report_number")}
-              placeholder="BR-M200425-140"
-              className="rounded-sm font-mono"
-            />
+            {form.report_number ? (
+              <Input
+                data-testid={CAMPAIGN_FORM.reportNumber}
+                value={form.report_number}
+                onChange={set("report_number")}
+                className="rounded-sm font-mono"
+              />
+            ) : (
+              <div
+                data-testid={CAMPAIGN_FORM.reportNumber}
+                className="flex h-9 items-center rounded-sm border border-input
+                           bg-muted px-3 text-sm text-muted-foreground"
+              >
+                Assigned when the first report is generated
+              </div>
+            )}
           </Field>
           <Field label="Revision">
             <Input
