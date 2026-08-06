@@ -464,9 +464,18 @@ class Instrument(BaseModel):
 
 
 class StationBase(BaseModel):
-    """A mobile laboratory: its standard instrument set, saved once and
-    loaded into any campaign."""
-    name: str                           # e.g. "Mobile Lab 2"
+    """A piece of monitoring equipment held in the library, saved once and
+    loaded into any campaign.
+
+    Two kinds share this record because everything about them is the same:
+    an instrument list, calibration certificates that belong to the
+    equipment rather than the job, and a photograph. An ``air`` station is a
+    mobile laboratory of analysers; a ``noise`` station is a sound level
+    meter and its calibrator. Keeping one registry means the certificate
+    selection, the audit trail and the storage paths are written once.
+    """
+    kind: str = "air"                   # "air" | "noise"
+    name: str                           # e.g. "Mobile Lab 2", "Cirrus CR:171B"
     code: Optional[str] = None          # plate / asset number
     notes: Optional[str] = None
     instruments: List[Instrument] = Field(default_factory=list)
@@ -483,6 +492,7 @@ class Station(StationBase):
 
 
 class StationUpdate(BaseModel):
+    kind: Optional[str] = None
     name: Optional[str] = None
     code: Optional[str] = None
     notes: Optional[str] = None
@@ -493,7 +503,7 @@ class StationUpdate(BaseModel):
 # Attachments — field photos, calibration certificates, licence, site map
 # ---------------------------------------------------------------------------
 ATTACHMENT_KINDS = ("site_photo", "calibration", "license", "site_map",
-                    "cover_photo")
+                    "cover_photo", "equipment_photo")
 
 
 class Attachment(BaseModel):
