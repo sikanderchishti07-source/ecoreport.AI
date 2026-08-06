@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Plus, Save, Trash2, Truck } from "lucide-react";
 import CertificatesPanel from "@/components/CertificatesPanel";
@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  createStation, deleteStation, listStations, updateStation,
+  createStation, deleteStation, listStationPhotos, listStations,
+  updateStation, uploadStationPhotos,
 } from "@/lib/api";
 
 const BLANK_ROW = { parameter: "", technique: "", sn: "", mdl_ugm3: "" };
@@ -16,6 +17,26 @@ function LabCard({ lab, onChanged }) {
   const [code, setCode] = useState(lab.code || "");
   const [rows, setRows] = useState(lab.instruments || []);
   const [busy, setBusy] = useState(false);
+  const [photos, setPhotos] = useState([]);
+  const isNoise = lab.kind === "noise";
+
+  useEffect(() => {
+    listStationPhotos(lab.id).then(setPhotos).catch(() => setPhotos([]));
+  }, [lab.id]);
+
+  const addPhotos = async (e) => {
+    const files = e.target.files;
+    if (!files?.length) return;
+    try {
+      await uploadStationPhotos(lab.id, files);
+      setPhotos(await listStationPhotos(lab.id));
+      toast.success("Photograph saved — it will appear in every report using this equipment");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Upload failed");
+    } finally {
+      e.target.value = "";
+    }
+  };
 
   const set = (i, k) => (e) =>
     setRows((r) => r.map((row, j) => (j === i ? { ...row, [k]: e.target.value } : row)));
@@ -48,11 +69,43 @@ function LabCard({ lab, onChanged }) {
     onChanged();
   };
 
+  const photoStrip = (
+    <div className="pt-2 border-t border-border">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          Equipment photographs
+        </span>
+        <label className="text-[11px] text-primary hover:underline cursor-pointer">
+          add
+          <input type="file" accept="image/*" multiple hidden
+                 onChange={addPhotos} />
+        </label>
+        {photos.length === 0 && (
+          <span className="text-[11px] text-muted-foreground">
+            none yet — printed in the report's methodology when added
+          </span>
+        )}
+      </div>
+      {photos.length > 0 && (
+        <div className="flex gap-2 mt-2 flex-wrap">
+          {photos.map((p) => (
+            <span key={p.id}
+                  className="text-[11px] font-mono border border-border rounded-sm px-2 py-1">
+              {p.filename}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="border border-border rounded-sm p-4 space-y-3">
       <div className="flex flex-wrap items-end gap-2">
         <div className="space-y-1.5">
-          <Label className="text-xs">Lab name</Label>
+          <Label className="text-xs">
+            {isNoise ? "Meter name" : "Lab name"}
+          </Label>
           <Input value={name} onChange={(e) => setName(e.target.value)}
                  className="rounded-sm h-9 w-[200px]" />
         </div>
@@ -107,6 +160,7 @@ function LabCard({ lab, onChanged }) {
       )}
 
       <CertificatesPanel lab={{ ...lab, name, instruments: rows }} />
+      {photoStrip}
     </div>
   );
 }
@@ -115,43 +169,73 @@ export default function StationsPage() {
   const [labs, setLabs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState("");
+  // One registry, two kinds. An air record is a mobile laboratory of
+  // analysers; a noise record is a sound level meter. They share the same
+  // certificate handling and storage, so splitting them into two systems
+  // would mean maintaining every fix twice.
+  const [kind, setKind] = useState("air");
 
-  const load = () =>
-    listStations().then(setLabs)
-      .catch(() => toast.error("Could not load labs"))
+  const load = useCallback(() => {
+    setLoading(true);
+    return listStations(kind).then(setLabs)
+      .catch(() => toast.error("Could not load equipment"))
       .finally(() => setLoading(false));
+  }, [kind]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const add = async () => {
     if (!newName.trim()) return;
-    await createStation({ name: newName.trim(), instruments: [] });
+    await createStation({ name: newName.trim(), kind, instruments: [] });
     setNewName("");
-    toast.success("Lab created");
+    toast.success(kind === "noise" ? "Meter added" : "Lab created");
     load();
   };
+
+  const isNoise = kind === "noise";
 
   return (
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-          <Truck className="w-5 h-5 text-primary" /> Mobile Labs
+          <Truck className="w-5 h-5 text-primary" /> Equipment
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Save each mobile laboratory once with its analysers and serial numbers.
-          Load a lab into any campaign and its instruments are printed in Table 4
-          of that report.
+          {isNoise
+            ? "Save each sound level meter once with its serial number, its calibration certificate and a photograph. Select it on a noise campaign and the report takes the meter details, the certificate and the photograph automatically."
+            : "Save each mobile laboratory once with its analysers and serial numbers. Load a lab into any campaign and its instruments are printed in Table 4 of that report."}
         </p>
       </header>
 
+      <div className="inline-flex rounded-sm border border-border overflow-hidden">
+        {[["air", "Air — mobile labs"], ["noise", "Noise — sound level meters"]]
+          .map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setKind(k)}
+            data-testid={`equipment-kind-${k}`}
+            className={`px-3 h-9 text-xs transition-colors ${
+              kind === k
+                ? "bg-primary text-primary-foreground"
+                : "bg-background hover:bg-secondary"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex items-end gap-2">
         <div className="space-y-1.5">
-          <Label className="text-xs">New lab name</Label>
+          <Label className="text-xs">
+            {isNoise ? "New meter name" : "New lab name"}
+          </Label>
           <Input value={newName} onChange={(e) => setNewName(e.target.value)}
-                 placeholder="Mobile Lab 1" className="rounded-sm h-9 w-[240px]" />
+                 placeholder={isNoise ? "Cirrus CR:171B" : "Mobile Lab 1"}
+                 className="rounded-sm h-9 w-[240px]" />
         </div>
         <Button className="rounded-sm h-9" onClick={add}>
-          <Plus className="w-4 h-4 mr-1.5" /> Add lab
+          <Plus className="w-4 h-4 mr-1.5" />
+          {isNoise ? "Add meter" : "Add lab"}
         </Button>
       </div>
 
@@ -159,7 +243,9 @@ export default function StationsPage() {
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : labs.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No labs yet — add your first one above.
+          {isNoise
+            ? "No sound level meters yet — add your first one above."
+            : "No labs yet — add your first one above."}
         </p>
       ) : (
         <div className="space-y-4">
