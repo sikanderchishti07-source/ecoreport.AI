@@ -57,6 +57,72 @@ const POLLUTANT_COLS = ["SO2", "NO", "NO2", "NOx", "CO", "H2S", "O3", "PM10", "P
 const MET_COLS = ["Temp", "RH", "Pressure", "WindSpeed", "WindDirection"];
 const NUMERIC_COLS = [...POLLUTANT_COLS, ...MET_COLS];
 
+
+// The monitoring window in words, and whether the data agrees with it.
+//
+// The window is the field most often entered wrong — the picker shows the
+// month first, so a day and a month get swapped — and until now this page did
+// not show it at all. A wrong window is not visible in the statistics either:
+// capture falls, but the figure is consistent with the dates, so the report
+// reads as though a long survey simply went badly.
+function describeWindow(campaign) {
+  const a = campaign?.monitoring_start ? new Date(campaign.monitoring_start) : null;
+  const b = campaign?.monitoring_end ? new Date(campaign.monitoring_end) : null;
+  if (!a || !b || Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) {
+    return { text: "Not set", hours: null };
+  }
+  const opts = { day: "numeric", month: "short", year: "numeric" };
+  const hours = (b - a) / 3600000;
+  return {
+    text: `${a.toLocaleDateString("en-GB", opts)} → ${b.toLocaleDateString("en-GB", opts)}`,
+    hours,
+    duration: hours < 48 ? `${hours.toFixed(0)} hours` : `${(hours / 24).toFixed(1)} days`,
+  };
+}
+
+// Compares the window against the record, and only when the comparison can be
+// trusted. Both reading lists are fetched with a limit, so a truncated list
+// would put the last reading earlier than it really is and invent a mismatch
+// that is not there — the span is used only when the whole record is loaded,
+// and otherwise the judgement falls back to capture, which the server
+// computes over every row.
+function windowMismatch(campaign, readings, noiseRows, noiseCount, noiseStats) {
+  const win = describeWindow(campaign);
+  if (win.hours === null || win.hours <= 48) return null;
+
+  const isNoise = campaign?.campaign_type === "noise";
+  const rows = isNoise ? noiseRows : readings;
+  const complete = isNoise
+    ? (noiseCount > 0 && noiseRows.length >= noiseCount)
+    : (readings.length > 0 && readings.length < 2000);
+
+  if (complete && rows.length > 1) {
+    const times = rows
+      .map((r) => new Date(isNoise ? r.timestamp : r.timestamp).getTime())
+      .filter((t) => !Number.isNaN(t));
+    if (times.length > 1) {
+      const spanH = (Math.max(...times) - Math.min(...times)) / 3600000;
+      if (win.hours - spanH > 24) {
+        const f = (t) => new Date(t).toLocaleDateString(
+          "en-GB", { day: "numeric", month: "short", year: "numeric" });
+        return {
+          data: `${f(Math.min(...times))} → ${f(Math.max(...times))}`,
+          spanText: spanH < 48 ? `${spanH.toFixed(0)} hours`
+                               : `${(spanH / 24).toFixed(1)} days`,
+          win,
+        };
+      }
+    }
+    return null;
+  }
+
+  const pct = noiseStats?.capture?.pct;
+  if (typeof pct === "number" && pct < 50) {
+    return { win, capturePct: pct };
+  }
+  return null;
+}
+
 function fmt(v) {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
   const n = Number(v);
@@ -221,6 +287,82 @@ export default function CampaignDetail() {
           </Button>
         </div>
       </div>
+
+      {campaign && (() => {
+        const win = describeWindow(campaign);
+        const mismatch = windowMismatch(
+          campaign, readings, noiseRows, noiseCount, noiseStats);
+        const isNoise = campaign.campaign_type === "noise";
+        const capture = noiseStats?.capture?.pct;
+        return (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-3 border border-border rounded-sm overflow-hidden">
+              <div className="px-4 py-2.5 border-b sm:border-b-0 sm:border-r border-border">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Monitoring window
+                </div>
+                <div className="text-[13px] font-medium mt-0.5">
+                  {win.text}
+                  {win.duration && (
+                    <span className={mismatch ? "text-amber-600" : "text-muted-foreground"}>
+                      {"  ·  "}{win.duration}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="px-4 py-2.5 border-b sm:border-b-0 sm:border-r border-border">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Report number
+                </div>
+                <div className="text-[13px] font-medium mt-0.5">
+                  {campaign.report_number || "—"}
+                  <span className="text-muted-foreground">
+                    {"  ·  Rev "}{campaign.revision || "00"}
+                  </span>
+                </div>
+              </div>
+              <div className="px-4 py-2.5">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  {isNoise ? "Data capture" : "Readings"}
+                </div>
+                <div className="text-[13px] font-medium mt-0.5">
+                  {isNoise
+                    ? (typeof capture === "number"
+                        ? <>{capture}%<span className="text-muted-foreground">
+                            {"  ·  "}{noiseCount.toLocaleString()} intervals</span></>
+                        : "No readings")
+                    : (readings.length
+                        ? `${(campaign.reading_count ?? readings.length).toLocaleString()} rows`
+                        : "No readings")}
+                </div>
+              </div>
+            </div>
+
+            {mismatch && (
+              <div
+                data-testid="window-data-mismatch"
+                className="rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-snug text-amber-900"
+              >
+                <span className="font-medium">The window does not match the data.</span>{" "}
+                {mismatch.data ? (
+                  <>Readings run {mismatch.data} ({mismatch.spanText}), but the
+                    campaign window is set to {mismatch.win.text}{" "}
+                    ({mismatch.win.duration}).</>
+                ) : (
+                  <>Data capture is {mismatch.capturePct}% because it is measured
+                    across the whole {mismatch.win.duration} of the window.</>
+                )}
+                {" "}
+                <span className="opacity-80">
+                  If the window is wrong, correct it in Edit and generate the
+                  report again — the duration, the capture and the conclusion all
+                  follow from it.
+                </span>
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList className="rounded-sm bg-secondary/60 border border-border p-1 h-auto">
