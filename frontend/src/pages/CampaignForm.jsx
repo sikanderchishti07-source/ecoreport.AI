@@ -42,6 +42,56 @@ const NOISE_CATEGORIES = [
   { value: "tbd", label: "To be determined by the consultant" },
 ];
 
+
+// The monitoring window decides the report's duration, its data capture and
+// therefore its conclusion, and it is the field most easily got wrong: the
+// picker shows the month first, so 06/07 typed as "6 July" is stored as
+// 7 June. That slip has produced 720-hour reports at 3% capture more than
+// once. Echoing the dates in words was not enough — a warning that can be
+// scrolled past is a warning that gets scrolled past — so an impossible
+// window now stops the save and an unusual one has to be read first.
+function checkWindow(startStr, endStr) {
+  const a = startStr ? new Date(startStr) : null;
+  const b = endStr ? new Date(endStr) : null;
+  if (!a || !b || Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) {
+    return { level: "none", hours: null };
+  }
+  const hours = (b - a) / 3600000;
+  if (hours <= 0) {
+    return {
+      level: "stop", hours,
+      message: "The window ends before it starts.",
+      fix: "Check which box holds which date — the picker shows the month first.",
+    };
+  }
+  // Confirmed rather than forbidden. The month-first slip lands on exactly
+  // 30.0 days, so a "longer than 30 days" rule misses the one case it was
+  // written for; and campaigns genuinely do run for weeks, so a hard limit
+  // would eventually block real work. Above a fortnight the length has to be
+  // acknowledged deliberately, which a mistyped month never is.
+  if (hours > 24 * 14) {
+    return {
+      level: "confirm", hours,
+      message: `This window is ${(hours / 24).toFixed(0)} days long.`,
+      fix: "A month entered in place of a day reads exactly like this. If the "
+         + "campaign really did run this long, confirm it below.",
+    };
+  }
+  if (hours > 48) {
+    return {
+      level: "warn", hours,
+      message: `This window covers ${(hours / 24).toFixed(1)} days, not the `
+             + "usual 24 hours.",
+      fix: "Data capture is measured against the whole window, so a short "
+         + "record inside a long window reports as low capture.",
+    };
+  }
+  return {
+    level: "ok", hours,
+    message: `A ${hours.toFixed(0)}-hour window, as expected for an attended survey.`,
+  };
+}
+
 const defaults = {
   campaign_type: "air",
   noise_category: "tbd",
@@ -214,6 +264,9 @@ export default function CampaignForm({ mode }) {
   const [form, setForm] = useState({ ...defaults, campaign_type: urlType });
   const [loading, setLoading] = useState(mode === "edit");
   const [saving, setSaving] = useState(false);
+  // Cleared whenever the window changes, so a confirmation cannot be
+  // inherited by a different set of dates.
+  const [longWindowOk, setLongWindowOk] = useState(false);
   const [pasted, setPasted] = useState("");
   const [pastedError, setPastedError] = useState(false);
 
@@ -297,6 +350,17 @@ export default function CampaignForm({ mode }) {
 
   const submit = async (e) => {
     e.preventDefault();
+    // Checked here as well as on the button: the form can still be submitted
+    // by pressing Enter in any field, which bypasses a disabled button.
+    const win = checkWindow(form.monitoring_start, form.monitoring_end);
+    if (win.level === "stop") {
+      toast.error(win.message);
+      return;
+    }
+    if (win.level === "confirm" && !longWindowOk) {
+      toast.error("Confirm the monitoring window length before saving.");
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -347,6 +411,9 @@ export default function CampaignForm({ mode }) {
 
   if (loading) return <div className="text-sm text-muted-foreground">Loading…</div>;
 
+  const windowCheck = checkWindow(form.monitoring_start, form.monitoring_end);
+  const windowBlocked = windowCheck.level === "stop"
+    || (windowCheck.level === "confirm" && !longWindowOk);
   const unitsMap = form.gas_units_map || {};
   const allUgm3 = GAS_UNIT_FIELDS.every((g) => (unitsMap[g.key] || "ugm3") === "ugm3");
 
@@ -675,7 +742,7 @@ export default function CampaignForm({ mode }) {
               data-testid={CAMPAIGN_FORM.monitoringStart}
               type="datetime-local"
               value={form.monitoring_start}
-              onChange={set("monitoring_start")}
+              onChange={(e) => { setLongWindowOk(false); set("monitoring_start")(e); }}
               required
               className="rounded-sm font-mono"
             />
@@ -685,18 +752,17 @@ export default function CampaignForm({ mode }) {
               data-testid={CAMPAIGN_FORM.monitoringEnd}
               type="datetime-local"
               value={form.monitoring_end}
-              onChange={set("monitoring_end")}
+              onChange={(e) => { setLongWindowOk(false); set("monitoring_end")(e); }}
               required
               className="rounded-sm font-mono"
             />
           </Field>
         </div>
 
-        {/* The date box shows mm/dd/yyyy, so 06/07 typed as "6 July" is
-            stored as 7 June — a whole month out, which then makes the
-            report's duration, capture and conclusion wrong while looking
-            perfectly plausible. Echo the dates in words so a slip is
-            visible before saving. */}
+        {/* Reads the window back in words, then says whether it is usable.
+            The wording is deliberately specific about what to do next: an
+            error that only reports a problem leaves the person guessing at
+            which of the two boxes is wrong. */}
         {(form.monitoring_start || form.monitoring_end) && (() => {
           const fmt = (v) => {
             if (!v) return "—";
@@ -705,22 +771,50 @@ export default function CampaignForm({ mode }) {
               "en-GB", { day: "numeric", month: "long", year: "numeric",
                          hour: "2-digit", minute: "2-digit" });
           };
-          const a = form.monitoring_start ? new Date(form.monitoring_start) : null;
-          const b = form.monitoring_end ? new Date(form.monitoring_end) : null;
-          const hrs = a && b && !Number.isNaN(a) && !Number.isNaN(b)
-            ? (b - a) / 3600000 : null;
+          const win = checkWindow(form.monitoring_start, form.monitoring_end);
+          const tone = {
+            stop: "border-rose-200 bg-rose-50 text-rose-800",
+            confirm: "border-rose-200 bg-rose-50 text-rose-800",
+            warn: "border-amber-200 bg-amber-50 text-amber-800",
+            ok: "border-emerald-200 bg-emerald-50 text-emerald-800",
+          }[win.level];
           return (
-            <p className="text-[11px] text-muted-foreground">
-              Reads as <span className="text-foreground">{fmt(form.monitoring_start)}</span>
-              {" → "}<span className="text-foreground">{fmt(form.monitoring_end)}</span>
-              {hrs !== null && hrs > 0 && (
-                <span className={hrs > 24 * 14 ? "text-amber-600" : ""}>
-                  {"  ·  "}{hrs < 48 ? `${hrs.toFixed(1)} hours`
-                    : `${(hrs / 24).toFixed(1)} days`}
-                  {hrs > 24 * 14 ? " — check this is the window you meant" : ""}
-                </span>
+            <>
+              <p className="text-[11px] text-muted-foreground">
+                Reads as <span className="text-foreground">{fmt(form.monitoring_start)}</span>
+                {" → "}<span className="text-foreground">{fmt(form.monitoring_end)}</span>
+                {win.hours > 0 && (
+                  <>{"  ·  "}{win.hours < 48 ? `${win.hours.toFixed(1)} hours`
+                    : `${(win.hours / 24).toFixed(1)} days`}</>
+                )}
+              </p>
+              {tone && (
+                <div
+                  data-testid="monitoring-window-check"
+                  className={`mt-2 rounded-sm border px-3 py-2 text-[12px] leading-snug ${tone}`}
+                >
+                  <span className="font-medium">
+                    {win.level === "stop" || win.level === "confirm"
+                      ? "Stop" : win.level === "warn" ? "Check" : "OK"}
+                  </span>
+                  {" — "}{win.message}
+                  {win.fix && (
+                    <span className="mt-1 block opacity-80">{win.fix}</span>
+                  )}
+                  {win.level === "confirm" && (
+                    <label className="mt-2 flex items-center gap-2 font-medium">
+                      <input
+                        type="checkbox"
+                        data-testid="monitoring-window-confirm"
+                        checked={longWindowOk}
+                        onChange={(e) => setLongWindowOk(e.target.checked)}
+                      />
+                      Yes, this campaign ran for {(win.hours / 24).toFixed(0)} days
+                    </label>
+                  )}
+                </div>
               )}
-            </p>
+            </>
           );
         })()}
       </Section>
@@ -785,7 +879,7 @@ export default function CampaignForm({ mode }) {
         </Button>
         <Button
           type="submit"
-          disabled={saving}
+          disabled={saving || windowBlocked}
           data-testid={CAMPAIGN_FORM.submitBtn}
           className="rounded-sm"
         >
