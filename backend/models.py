@@ -130,6 +130,25 @@ class CampaignBase(BaseModel):
     day_end_hour: int = 19             # Regulations; configurable per job
     meter_model: Optional[str] = None  # sound level meter, printed in
     meter_serial: Optional[str] = None # the methodology section
+    calibrator_model: Optional[str] = None
+    calibration_level_db: float = 94.0   # field check level
+    mic_height_m: float = 1.5            # microphone height above ground
+    # Meteorology during the survey. A sound level meter carries no weather
+    # sensors, so these are entered by the team exactly as they are in BSA's
+    # manual reports — wind and temperature affect propagation, and the
+    # regulator's format carries them as a table. Left blank, the table is
+    # omitted rather than printed empty.
+    met_temp_max_c: Optional[float] = None
+    met_temp_min_c: Optional[float] = None
+    met_rh_max_pct: Optional[float] = None
+    met_rh_min_pct: Optional[float] = None
+    met_wind_max_ms: Optional[float] = None
+    met_wind_min_ms: Optional[float] = None
+    met_wind_mean_ms: Optional[float] = None
+    met_wind_prevailing: Optional[str] = None
+    # Free text describing what was happening at the location during the
+    # survey — the "site conditions" the manual report records.
+    site_conditions_note: Optional[str] = None
 
 
 class CampaignCreate(CampaignBase):
@@ -167,6 +186,18 @@ class CampaignUpdate(BaseModel):
     day_end_hour: Optional[int] = None
     meter_model: Optional[str] = None
     meter_serial: Optional[str] = None
+    calibrator_model: Optional[str] = None
+    calibration_level_db: Optional[float] = None
+    mic_height_m: Optional[float] = None
+    met_temp_max_c: Optional[float] = None
+    met_temp_min_c: Optional[float] = None
+    met_rh_max_pct: Optional[float] = None
+    met_rh_min_pct: Optional[float] = None
+    met_wind_max_ms: Optional[float] = None
+    met_wind_min_ms: Optional[float] = None
+    met_wind_mean_ms: Optional[float] = None
+    met_wind_prevailing: Optional[str] = None
+    site_conditions_note: Optional[str] = None
 
 
 class Campaign(CampaignBase):
