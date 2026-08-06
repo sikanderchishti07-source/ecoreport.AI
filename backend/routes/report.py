@@ -257,6 +257,17 @@ async def create_report(campaign_id: str, lang: str = "en",
         return i if isinstance(i, dict) else i.model_dump()
     sn_map = {_as_dict(i).get("sn"): _as_dict(i)
               for i in (campaign.instruments or [])}
+    # Photographs of the equipment, held against the library record so every
+    # campaign using that meter gets them without re-uploading.
+    equipment_photos: list = []
+    if campaign.station_id:
+        eq = await db.attachments.find(
+            {"station_id": campaign.station_id, "kind": "equipment_photo"},
+            {"_id": 0}).sort([("order", 1), ("uploaded_at", 1)]) \
+            .to_list(length=20)
+        equipment_photos = [a["path"] for a in eq
+                            if os.path.exists(a.get("path", ""))]
+
     cal_items = []
     for a in by_kind.get("calibration", []):
         if not os.path.exists(a.get("path", "")):
@@ -638,8 +649,8 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
     try:
         await run_in_threadpool(
             generate_noise_report, campaign, summary, verdicts, figs,
-            out_path, site_map, site_photos, cover, cal_items, licence,
-            charts_dir)
+            out_path, site_map, site_photos, cover, equipment_photos,
+            cal_items, licence, charts_dir)
         from report.fields import build_indexes, populate_field_caches
         await run_in_threadpool(populate_field_caches, out_path)
         await run_in_threadpool(build_indexes, out_path, convert_to_pdf)
