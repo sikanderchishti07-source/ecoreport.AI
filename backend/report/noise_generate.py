@@ -412,8 +412,10 @@ def generate_noise_report(campaign, summary: NoiseSummary,
         plate = os.path.join(wd, "noise_cover_plate.png")
         render_cover(
             plate,
-            survey_dates=date_range(campaign.monitoring_start,
-                                    campaign.monitoring_end),
+            survey_dates=[date_range(campaign.monitoring_start,
+                                     campaign.monitoring_end),
+                          date_range(campaign.monitoring_start,
+                                     campaign.monitoring_end, abbrev=True)],
             location=(campaign.site_name or campaign.project_name or "—"),
             client=campaign.client or "—",
             report_number=campaign.report_number or "—",
