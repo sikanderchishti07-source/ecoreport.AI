@@ -373,6 +373,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
                           site_map_path: Optional[str] = None,
                           site_photo_paths: Optional[List[str]] = None,
                           cover_photo_path: Optional[str] = None,
+                          equipment_photo_paths: Optional[List[str]] = None,
                           calibration_items: Optional[List[dict]] = None,
                           license_image_paths: Optional[List[str]] = None,
                           work_dir: Optional[str] = None) -> str:
@@ -400,6 +401,15 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     def tnum() -> int:
         _tn["n"] += 1
         return _tn["n"]
+
+    _fg = {"n": 0}
+
+    def _fn() -> int:
+        """Figures counted in document order. Working the number out from
+        which optional blocks exist was fragile the moment another optional
+        figure — the equipment photograph — appeared before the charts."""
+        _fg["n"] += 1
+        return _fg["n"]
 
     from report.imaging import slim
     wd = work_dir or os.path.dirname(os.path.abspath(out_path))
@@ -659,7 +669,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     if site_map_path and os.path.exists(site_map_path):
         p = _tight(doc.add_paragraph(), 6, 0)
         pic(p, site_map_path, 150)
-        _caption(doc, "Figure 1 — Noise monitoring location")
+        _caption(doc, f"Figure {_fn()} — Noise monitoring location")
 
     if site_photo_paths:
         imgs = [p for p in site_photo_paths if p and os.path.exists(p)]
@@ -671,7 +681,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
                 cp = _tight(cell.paragraphs[0], 2, 2)
                 cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 pic(cp, path, 74)
-            _caption(doc, "Figure 2 — Noise monitoring at the site")
+            _caption(doc, f"Figure {_fn()} — Noise monitoring at the site")
 
     # ---- methodology -----------------------------------------------------
     _heading(doc, "3  Monitoring Methodology", 1)
@@ -704,6 +714,34 @@ def generate_noise_report(campaign, summary: NoiseSummary,
           f"A Class 1 sound level meter was used for the survey — "
           f"{meter}{serial} — conforming to IEC 61672-1 Class 1 and fitted "
           f"with a windscreen.")
+
+    # The instrument list comes from the equipment library, so the report
+    # names the meter that was actually selected rather than whatever was
+    # typed on the campaign.
+    inst_rows = []
+    for inst in (getattr(campaign, "instruments", None) or []):
+        get = (inst.get if isinstance(inst, dict)
+               else lambda k, d=None: getattr(inst, k, d))
+        inst_rows.append([get("parameter") or "—",
+                          get("technique") or "—",
+                          get("sn") or "—",
+                          get("calibration_date") or "—"])
+    if inst_rows:
+        _caption(doc, f"Table {tnum()} — Equipment used for the survey")
+        _table(doc, ["Instrument", "Make and model", "Serial number",
+                     "Calibrated"], inst_rows, [42, 62, 34, 26],
+               aligns=["left", "left", "center", "center"])
+
+    photos = [p for p in (equipment_photo_paths or [])
+              if p and os.path.exists(p)]
+    if photos:
+        t = doc.add_table(rows=1, cols=min(2, len(photos)))
+        t.alignment = WD_TABLE_ALIGNMENT.CENTER
+        for k, path in enumerate(photos[:2]):
+            cp = _tight(t.cell(0, k).paragraphs[0], 2, 2)
+            cp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            pic(cp, path, 74)
+        _caption(doc, f"Figure {_fn()} — Equipment used for the survey")
 
     _heading(doc, "3.3  Equipment measuring procedures", 2)
     height = getattr(campaign, "mic_height_m", None) or 1.5
@@ -828,9 +866,6 @@ def generate_noise_report(campaign, summary: NoiseSummary,
              f"{summary.data_capture_pct}"]],
            [36, 32, 32, 32, 32])
 
-    fig_no = 3 if (site_photo_paths and any(
-        os.path.exists(p) for p in (site_photo_paths or []))) else \
-        (2 if site_map_path and os.path.exists(site_map_path) else 1)
     for key, cap_text in (("hourly", "Hourly LAeq over the survey with the "
                                      "applicable day and night limits"),
                           ("daynight", "Day and night levels against the "
@@ -847,8 +882,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
             continue
         p = _tight(doc.add_paragraph(), 6, 0)
         pic(p, path, 164)
-        _caption(doc, f"Figure {fig_no} — {cap_text}")
-        fig_no += 1
+        _caption(doc, f"Figure {_fn()} — {cap_text}")
 
     # ---- assessment ------------------------------------------------------
     _heading(doc, "6  Discussion and Compliance", 1)
