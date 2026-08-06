@@ -318,3 +318,20 @@ export const listNoiseReadings = (campaignId, params = {}) =>
      .then((r) => r.data);
 export const noiseSummary = (campaignId) =>
   api.get(`/campaigns/${campaignId}/noise-summary`).then((r) => r.data);
+
+// ---- Company documents ----------------------------------------------------
+// The environmental licence belongs to BSA, not to any one job, so it is
+// held once and every report picks it up.
+export const listCompanyDocuments = (kind = "license") =>
+  api.get("/company-documents", { params: { kind } }).then((r) => r.data);
+export const uploadCompanyDocument = (files, kind = "license", caption) => {
+  const fd = new FormData();
+  [...files].forEach((f) => fd.append("files", f));
+  fd.append("kind", kind);
+  if (caption) fd.append("caption", caption);
+  return api.post("/company-documents", fd, {
+    headers: { "Content-Type": "multipart/form-data" },
+  }).then((r) => r.data);
+};
+export const deleteCompanyDocument = (id) =>
+  api.delete(`/company-documents/${id}`);
