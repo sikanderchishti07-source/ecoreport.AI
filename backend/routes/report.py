@@ -188,6 +188,13 @@ async def create_report(campaign_id: str, lang: str = "en",
         raise HTTPException(status_code=404, detail="Campaign not found")
     campaign = Campaign(**campaign_doc)
 
+    # The number is allocated here, at the first report, and not when the
+    # campaign was created: the date inside it is the issue date, and a
+    # campaign that never produces a report should never consume a number.
+    # Both report types pass through this point, so both are numbered.
+    from report_numbers import ensure_report_number
+    await ensure_report_number(campaign, campaign_id)
+
     # Noise campaigns take their own generator; everything downstream —
     # versioning, storage, the review workflow, the on-screen reader — is
     # shared because it operates on the produced file, not on how it was
