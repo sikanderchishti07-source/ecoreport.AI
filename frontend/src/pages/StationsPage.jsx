@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  createStation, deleteStation, listStationPhotos, listStations,
-  updateStation, uploadStationPhotos,
+  createStation, deleteCompanyDocument, deleteStation,
+  listCompanyDocuments, listStationCertificates, listStationPhotos,
+  listStations, updateStation, uploadCompanyDocument, uploadStationPhotos,
+  uploadStationCertificate,
 } from "@/lib/api";
 
 const BLANK_ROW = { parameter: "", technique: "", sn: "", mdl_ugm3: "" };
@@ -18,11 +20,36 @@ function LabCard({ lab, onChanged }) {
   const [rows, setRows] = useState(lab.instruments || []);
   const [busy, setBusy] = useState(false);
   const [photos, setPhotos] = useState([]);
+  const [certs, setCerts] = useState([]);
+  const [certNo, setCertNo] = useState("");
+  const [certDate, setCertDate] = useState("");
+  const [certDue, setCertDue] = useState("");
   const isNoise = lab.kind === "noise";
 
   useEffect(() => {
     listStationPhotos(lab.id).then(setPhotos).catch(() => setPhotos([]));
+    listStationCertificates(lab.id).then(setCerts).catch(() => setCerts([]));
   }, [lab.id]);
+
+  const addCert = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      await uploadStationCertificate(lab.id, file, {
+        cert_number: certNo,
+        cert_date: certDate,
+        cert_due_date: certDue,
+        cert_model_sn: rows[0]?.sn || lab.code || "",
+      });
+      setCerts(await listStationCertificates(lab.id));
+      setCertNo(""); setCertDate(""); setCertDue("");
+      toast.success("Certificate stored — reports using this equipment will include it");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Upload failed");
+    } finally {
+      e.target.value = "";
+    }
+  };
 
   const addPhotos = async (e) => {
     const files = e.target.files;
@@ -68,6 +95,57 @@ function LabCard({ lab, onChanged }) {
     toast.success("Deleted");
     onChanged();
   };
+
+  const certBlock = (
+    <div className="pt-2 border-t border-border space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+          Calibration certificates
+        </span>
+        <span className="text-[11px] text-muted-foreground">
+          {certs.length === 0
+            ? "none yet — the report prints them in the calibration appendix"
+            : `${certs.length} stored · a renewal is added, never replaced, so old reports stay reproducible`}
+        </span>
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="space-y-1">
+          <Label className="text-[11px]">Certificate number</Label>
+          <Input value={certNo} onChange={(e) => setCertNo(e.target.value)}
+                 placeholder="23-58393" className="rounded-sm h-8 w-[150px] text-xs" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-[11px]">Calibrated</Label>
+          <Input type="date" value={certDate}
+                 onChange={(e) => setCertDate(e.target.value)}
+                 className="rounded-sm h-8 w-[150px] text-xs" />
+        </div>
+        <div className="space-y-1">
+          <Label className="text-[11px]">Due</Label>
+          <Input type="date" value={certDue}
+                 onChange={(e) => setCertDue(e.target.value)}
+                 className="rounded-sm h-8 w-[150px] text-xs" />
+        </div>
+        <label className="text-xs border border-border rounded-sm h-8 px-3 inline-flex items-center cursor-pointer hover:bg-secondary">
+          Upload certificate (PDF or image)
+          <input type="file" accept="application/pdf,image/*" hidden
+                 onChange={addCert} />
+        </label>
+      </div>
+      {certs.length > 0 && (
+        <div className="flex gap-2 flex-wrap">
+          {certs.map((c) => (
+            <span key={c.id}
+                  className="text-[11px] font-mono border border-border rounded-sm px-2 py-1">
+              {c.cert_number || c.filename}
+              {c.cert_date ? ` · ${c.cert_date}` : ""}
+              {c.cert_due_date ? ` → ${c.cert_due_date}` : ""}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   const photoStrip = (
     <div className="pt-2 border-t border-border">
@@ -160,6 +238,7 @@ function LabCard({ lab, onChanged }) {
       )}
 
       <CertificatesPanel lab={{ ...lab, name, instruments: rows }} />
+      {certBlock}
       {photoStrip}
     </div>
   );
@@ -193,6 +272,31 @@ export default function StationsPage() {
   };
 
   const isNoise = kind === "noise";
+  const [licence, setLicence] = useState([]);
+
+  useEffect(() => {
+    listCompanyDocuments("license").then(setLicence).catch(() => setLicence([]));
+  }, []);
+
+  const addLicence = async (e) => {
+    const files = e.target.files;
+    if (!files?.length) return;
+    try {
+      await uploadCompanyDocument(files, "license");
+      setLicence(await listCompanyDocuments("license"));
+      toast.success("Licence stored — every report will include it");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Upload failed");
+    } finally {
+      e.target.value = "";
+    }
+  };
+
+  const dropLicence = async (id) => {
+    if (!window.confirm("Remove this page from the environmental licence?")) return;
+    await deleteCompanyDocument(id);
+    setLicence(await listCompanyDocuments("license"));
+  };
 
   return (
     <div className="space-y-6">
@@ -237,6 +341,36 @@ export default function StationsPage() {
           <Plus className="w-4 h-4 mr-1.5" />
           {isNoise ? "Add meter" : "Add lab"}
         </Button>
+      </div>
+
+      <div className="border border-border rounded-sm p-4 space-y-2">
+        <h3 className="text-sm font-semibold">
+          Environmental licence for the institution
+        </h3>
+        <p className="text-[11px] text-muted-foreground">
+          Uploaded once for the company, not per job. Every report — air and
+          noise — prints it as the environmental licence appendix. A campaign
+          that carries its own licence attachment overrides this.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs border border-border rounded-sm h-8 px-3 inline-flex items-center cursor-pointer hover:bg-secondary">
+            Upload licence (PDF or image)
+            <input type="file" accept="application/pdf,image/*" multiple hidden
+                   onChange={addLicence} />
+          </label>
+          {licence.length === 0 ? (
+            <span className="text-[11px] text-muted-foreground">
+              none stored — the appendix is omitted until one is added
+            </span>
+          ) : licence.map((d) => (
+            <span key={d.id}
+                  className="text-[11px] font-mono border border-border rounded-sm px-2 py-1 inline-flex items-center gap-2">
+              {d.filename}
+              <button onClick={() => dropLicence(d.id)}
+                      className="text-muted-foreground hover:text-destructive">×</button>
+            </span>
+          ))}
+        </div>
       </div>
 
       {loading ? (
