@@ -900,34 +900,74 @@ def render_cover(out_path: str,
                 (x - gap / 2, Y(contact_top - 0.012))],
                fill=(50, 74, 112), width=max(1, int(w * 0.0011)))
 
-    _icon(d, X(0.592), Y(lab_y + 0.0150), w * 0.015, "leaf", GREEN, ring=False)
-    gx = cur = X(0.628)
-    for txt, fnt, col in [("For a ", _font(_UI_REG, int(h * 0.0158)), WHITE),
-                          ("Sustainable", _font(_UI_BOLD, int(h * 0.0158)),
-                           GREEN_LT),
-                          (" Tomorrow", _font(_UI_REG, int(h * 0.0158)),
-                           WHITE)]:
+    # The strapline block begins where the columns actually finished, and is
+    # sized to the space that leaves. Carlito is not installed on the server,
+    # so the plate falls back to a wider face and anything positioned by
+    # assumption collides; the only safe reference is measurement.
+    right_x = max(X(0.560), x + X(0.012))
+    avail = X(0.968) - right_x - w * 0.030
+    tag_sz = int(h * 0.0158)
+    while tag_sz > int(h * 0.0090):
+        f_r, f_b = _font(_UI_REG, tag_sz), _font(_UI_BOLD, tag_sz)
+        if (d.textlength("For a ", font=f_r)
+                + d.textlength("Sustainable", font=f_b)
+                + d.textlength(" Tomorrow", font=f_r)) <= avail:
+            break
+        tag_sz -= 1
+    f_r, f_b = _font(_UI_REG, tag_sz), _font(_UI_BOLD, tag_sz)
+    _icon(d, right_x + w * 0.012, Y(lab_y + 0.0150), w * 0.015, "leaf", GREEN,
+          ring=False)
+    gx = cur = right_x + w * 0.030
+    for txt, fnt, col in [("For a ", f_r, WHITE),
+                          ("Sustainable", f_b, GREEN_LT),
+                          (" Tomorrow", f_r, WHITE)]:
         d.text((cur, Y(lab_y - 0.004)), txt, font=fnt, fill=col)
         cur += d.textlength(txt, font=fnt)
     # Pinned to the bottom of the footer band rather than to the labels
     # above, because the band is shorter when a contact bar sits under it and
     # the second line was running into the bar.
-    small = _font(_UI_REG, int(h * 0.0148))
+    comp_sz = int(h * 0.0148)
+    while comp_sz > int(h * 0.0088):
+        small = _font(_UI_REG, comp_sz)
+        if max(d.textlength(ln, font=small) for ln in company) <= avail:
+            break
+        comp_sz -= 1
+    small = _font(_UI_REG, comp_sz)
     comp_top = contact_top - 0.0180 * len(company) - 0.005
     for j, line in enumerate(company):
         d.text((gx, Y(comp_top + j * 0.0180)), line, font=small, fill=SUB)
 
     # --- contact bar -------------------------------------------------------
     if contacts:
+        # Measured, then spaced with whatever is left over. The address is the
+        # longest item and ran off the trim edge as soon as the font fell back
+        # to a wider face than this was designed against. The gap for each
+        # icon scales with the type: held at a fixed width it ate the space
+        # the shrinking was trying to recover.
         cy_ = (contact_top + 1.0) / 2
-        c_f = _font(_UI_REG, int(h * 0.0135))
-        span = 0.90 / len(contacts)
-        for i, (kind, text) in enumerate(contacts):
-            bx = X(0.050 + span * i)
-            _icon(d, bx + w * 0.010, Y(cy_), w * 0.0115, kind, GREEN_LT,
+        left, right = X(0.050), X(0.966)
+        c_sz = int(h * 0.0135)
+        while True:
+            c_f = _font(_UI_REG, c_sz)
+            icon_w = c_sz * 1.75
+            widths_c = [d.textlength(t, font=c_f) + icon_w
+                        for _, t in contacts]
+            if ((right - left) - sum(widths_c) >= 0
+                    or c_sz <= int(h * 0.0058)):
+                break
+            c_sz -= 1
+        c_f = _font(_UI_REG, c_sz)
+        icon_w = c_sz * 1.75
+        widths_c = [d.textlength(t, font=c_f) + icon_w for _, t in contacts]
+        gap_c = max(0.0, (right - left) - sum(widths_c)) / max(
+            1, len(contacts) - 1)
+        bx = left
+        for (kind, text), cw in zip(contacts, widths_c):
+            _icon(d, bx + icon_w * 0.34, Y(cy_), c_sz * 0.60, kind, GREEN_LT,
                   ring=False, w_px=int(w * 0.0013))
-            d.text((bx + w * 0.030, Y(cy_ - 0.0082)), text, font=c_f,
+            d.text((bx + icon_w, Y(cy_) - c_sz * 0.62), text, font=c_f,
                    fill=(214, 224, 236))
+            bx += cw + gap_c
 
     page.resize((W, H), Image.LANCZOS).save(out_path, "PNG", dpi=(DPI, DPI))
     return out_path
