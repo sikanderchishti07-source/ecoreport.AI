@@ -360,6 +360,13 @@ def _plan(doc) -> List[Tuple[object, List[Tuple[int, str, str]]]]:
     return [(a, buckets[id(a)]) for a in order if buckets[id(a)]]
 
 
+# The contents, figure and table indexes are set at the size BSA's own
+# reports use for theirs — 12 pt, one point under body text — rather than the
+# 10 pt they were built at, which made the front matter look like a different
+# document from the body.
+INDEX_PT = 12
+
+
 def _entry(doc, level: int, text: str, bookmark: str, right_tab_in: float):
     """One index line: text, dot leader, right-aligned page-number field."""
     from docx.enum.text import WD_TAB_ALIGNMENT, WD_TAB_LEADER
@@ -374,15 +381,17 @@ def _entry(doc, level: int, text: str, bookmark: str, right_tab_in: float):
     # few onto a second, nearly empty page. Single leading and a hairline gap
     # keep the list readable and fit it on one sheet.
     pf.space_before = Pt(0)
-    pf.space_after = Pt(1.5)
+    pf.space_after = Pt(3)
     pf.line_spacing = 1.0
     pf.tab_stops.add_tab_stop(Inches(right_tab_in), WD_TAB_ALIGNMENT.RIGHT,
                               WD_TAB_LEADER.DOTS)
     run = p.add_run(text)
-    run.font.size = Pt(10)
+    run.font.size = Pt(INDEX_PT)
     tab = p.add_run("\t")                  # dot leader to the right margin
-    tab.font.size = Pt(10)
-    cache = _pageref_field(p, bookmark)    # number resolved by the reader
+    tab.font.size = Pt(INDEX_PT)
+    # The page number has to be set to the same size explicitly: it is built
+    # from raw runs, so it does not inherit the size set on the runs above it.
+    cache = _pageref_field(p, bookmark, half_pt=str(int(INDEX_PT * 2)))
     return p, cache
 
 
