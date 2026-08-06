@@ -649,9 +649,12 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
     if not site_map:
         try:
             from report.sitemap import fetch_site_map
+            # The marker defaults to AAQMS — the air monitoring station —
+            # which is wrong on a noise report. The location is N1, the same
+            # site ID used in the results tables.
             site_map = await run_in_threadpool(
                 fetch_site_map, campaign.latitude, campaign.longitude,
-                os.path.join(out_dir, "site_map.png"))
+                os.path.join(out_dir, "site_map.png"), label="N1")
         except Exception:  # noqa: BLE001
             log.warning("site map unavailable for noise report",
                         exc_info=True)
