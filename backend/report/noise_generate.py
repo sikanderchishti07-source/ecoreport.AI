@@ -198,6 +198,18 @@ def _muted(doc, text, size=8):
     r.font.color.rgb = MUT
 
 
+def _bullets(doc, items):
+    """A numbered procedure an auditor can tick off, rather than prose —
+    the form BSA's manual reports use for method statements."""
+    for it in items:
+        p = doc.add_paragraph(it, style="List Bullet")
+        _tight(p, 0, 2)
+        for r in p.runs:
+            r.font.size = Pt(10.5)
+            r.font.name = "Times New Roman"
+    return doc
+
+
 def _body(doc, text):
     p = doc.add_paragraph(text)
     p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -379,6 +391,15 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     cap = doc.styles["Caption"]
     cap.font.name = "Times New Roman"
     cap.font.color.rgb = NAVY
+
+    # Table numbers are counted rather than written in, because optional
+    # content — meteorology here, a site map or photographs elsewhere —
+    # changes how many tables come before any given one.
+    _tn = {"n": 0}
+
+    def tnum() -> int:
+        _tn["n"] += 1
+        return _tn["n"]
 
     from report.imaging import slim
     wd = work_dir or os.path.dirname(os.path.abspath(out_path))
@@ -622,14 +643,14 @@ def generate_noise_report(campaign, summary: NoiseSummary,
           f"levels sampled and stored at {interval} intervals. The "
           f"continuous equivalent level (LAeq) over the day and night "
           f"periods was derived from the logged record by energy averaging.")
-    _caption(doc, "Table 1 — Time of monitoring")
+    _caption(doc, f"Table {tnum()} — Time of monitoring")
     dur = (campaign.monitoring_end - campaign.monitoring_start)
     _table(doc, ["Site ID", "Start", "End", "Duration (hrs)"],
            [["N1", _fmt_dt(campaign.monitoring_start),
              _fmt_dt(campaign.monitoring_end),
              f"{dur.total_seconds() / 3600:.0f}"]],
            [22, 56, 56, 30])
-    _caption(doc, "Table 2 — Coordinates of the noise monitoring location")
+    _caption(doc, f"Table {tnum()} — Coordinates of the noise monitoring location")
     _table(doc, ["Site", "Geographical Coordinates"],
            [["N1", f"N {campaign.latitude:.6f}   "
                    f"E {campaign.longitude:.6f}"]],
@@ -654,30 +675,100 @@ def generate_noise_report(campaign, summary: NoiseSummary,
 
     # ---- methodology -----------------------------------------------------
     _heading(doc, "3  Monitoring Methodology", 1)
-    _heading(doc, "3.1  Equipment", 2)
+
+    _heading(doc, "3.1  Monitoring Records", 2)
+    _heading(doc, "3.1.1  Site selection criteria", 3)
+    _body(doc,
+          "The monitoring location was selected so that it represents the "
+          "land-use pattern prescribed in the standard — industrial, "
+          "commercial, residential or silence zone — and so that the "
+          "measured levels are representative of background conditions at "
+          "the project site.")
+    _heading(doc, "3.1.2  Site conditions", 3)
+    _bullets(doc, [
+        "Site conditions and noise sources were recorded on a standard "
+        "record sheet throughout the survey.",
+        "Measurement was paused during periods of high intrusive noise "
+        "unrelated to the site, where practicable.",
+        "Meteorological information was used in the analysis of the noise "
+        "data.",
+    ])
+    if getattr(campaign, "site_conditions_note", None):
+        _body(doc, campaign.site_conditions_note)
+
+    _heading(doc, "3.2  Equipment used for measurements", 2)
     meter = campaign.meter_model or "Class 1 integrating sound level meter"
-    serial = f" (S/N {campaign.meter_serial})" if campaign.meter_serial \
-        else ""
+    serial = f", serial number {campaign.meter_serial}" \
+        if campaign.meter_serial else ""
     _body(doc,
-          f"Measurements were made with a {meter}{serial}, conforming to "
-          f"IEC 61672-1 Class 1, fitted with a windscreen and mounted on a "
-          f"tripod with the microphone approximately 1.5 m above ground "
-          f"level, away from reflecting surfaces.")
-    _heading(doc, "3.2  Calibration", 2)
+          f"A Class 1 sound level meter was used for the survey — "
+          f"{meter}{serial} — conforming to IEC 61672-1 Class 1 and fitted "
+          f"with a windscreen.")
+
+    _heading(doc, "3.3  Equipment measuring procedures", 2)
+    height = getattr(campaign, "mic_height_m", None) or 1.5
+    cal_db = getattr(campaign, "calibration_level_db", None) or 94
+    _bullets(doc, [
+        f"The sound level meter was mounted {height:g} m above ground "
+        f"level, away from reflecting surfaces.",
+        "The equipment was fixed on a tripod to prevent vibration.",
+        f"The instrument was calibrated with the acoustic calibrator at "
+        f"{cal_db:g} dB before the survey.",
+        "Logging was started and the location attended in shifts, with key "
+        "observations recorded.",
+        f"On completion of the monitoring period the calibration was "
+        f"checked again at {cal_db:g} dB and the stored data downloaded.",
+    ])
+
+    _heading(doc, "3.4  Calibration procedure", 2)
+    calibrator = getattr(campaign, "calibrator_model", None)
     _body(doc,
-          "The meter was field-calibrated with an acoustic calibrator "
-          "before and after the survey, and the laboratory calibration "
-          "certificate is reproduced in Appendix B. Data are invalidated "
-          "where calibration or instrument faults affected the record.")
-    _heading(doc, "3.3  Measurement Procedure", 2)
+          f"The meter was field-calibrated with an acoustic calibrator"
+          f"{f' ({calibrator})' if calibrator else ''} at {cal_db:g} dB "
+          f"immediately before and immediately after the survey. No "
+          f"significant drift was observed. The laboratory calibration "
+          f"certificate is reproduced in Appendix B. Data are invalidated "
+          f"where calibration or instrument faults affected the record.")
+
+    _heading(doc, "3.5  Measurement procedure", 2)
     _body(doc,
           f"The A-weighted equivalent level was logged continuously at "
-          f"{interval} intervals over the full survey period. The location "
-          "was manned in shifts and key observations — unusual sounds, "
-          "passing plant, wind conditions — were noted. Levels outside the "
-          "physically plausible range for an outdoor measurement are "
-          "flagged invalid on ingest and excluded from every statistic in "
-          "this report.")
+          f"{interval} intervals over the full survey period. Levels "
+          f"outside the physically plausible range for an outdoor "
+          f"measurement are flagged invalid on ingest and excluded from "
+          f"every statistic in this report.")
+
+    # Meteorology — printed only when the team recorded it, because an
+    # empty weather table is worse than none at all.
+    met_rows = []
+    for label, value, unit in (
+            ("Ambient temperature — hourly maximum",
+             getattr(campaign, "met_temp_max_c", None), "°C"),
+            ("Ambient temperature — hourly minimum",
+             getattr(campaign, "met_temp_min_c", None), "°C"),
+            ("Relative humidity — hourly maximum",
+             getattr(campaign, "met_rh_max_pct", None), "%"),
+            ("Relative humidity — hourly minimum",
+             getattr(campaign, "met_rh_min_pct", None), "%"),
+            ("Wind speed — hourly maximum",
+             getattr(campaign, "met_wind_max_ms", None), "m/s"),
+            ("Wind speed — hourly minimum",
+             getattr(campaign, "met_wind_min_ms", None), "m/s"),
+            ("Mean wind speed",
+             getattr(campaign, "met_wind_mean_ms", None), "m/s")):
+        if value is not None:
+            met_rows.append([label, f"{value:g} {unit}"])
+    prevailing = getattr(campaign, "met_wind_prevailing", None)
+    if prevailing:
+        met_rows.append(["Prevailing wind direction", prevailing])
+    if met_rows:
+        _heading(doc, "3.6  Meteorological conditions", 2)
+        _body(doc,
+              "Meteorological conditions recorded at the location over the "
+              "monitoring period, used in the analysis of the noise data.")
+        _caption(doc, f"Table {tnum()} — Monitored meteorological parameters")
+        _table(doc, ["Parameter", "Result"], met_rows, [110, 54],
+               aligns=["left", "center"])
 
     # ---- standards -------------------------------------------------------
     _heading(doc, "4  Environmental Noise Standards", 1)
@@ -686,8 +777,8 @@ def generate_noise_report(campaign, summary: NoiseSummary,
           "Regulations for Noise of the Environmental Law issued by Royal "
           "Decree No. (M/165), administered by the National Center for "
           "Environmental Compliance (NCEC).")
-    _caption(doc, "Table 3 — Noise limits for residential and commercial "
-                  "areas")
+    _caption(doc, f"Table {tnum()} — Noise limits for residential and "
+                  f"commercial areas")
     _table(doc, ["Category", "Description", "Daytime LAeq dB(A)",
                  "Night-time LAeq dB(A)"],
            [["A", "Sensitive zones — hospitals, schools", "50", "40"],
@@ -695,16 +786,17 @@ def generate_noise_report(campaign, summary: NoiseSummary,
             ["C", "Mixed residential and commercial", "60", "50"],
             ["D", "Commercial and business districts", "65", "55"]],
            [18, 74, 36, 36], aligns=["center", "left", "center", "center"])
-    _caption(doc, "Table 4 — Noise limits for roadsides")
+    _caption(doc, f"Table {tnum()} — Noise limits for roadsides")
     _table(doc, ["Zone", "Daytime LAeq dB(A)", "Night-time LAeq dB(A)"],
            [["Main roads and highways", "70", "65"]],
            [92, 36, 36], aligns=["left", "center", "center"])
-    _caption(doc, "Table 5 — Noise limits for industrial zones")
+    _caption(doc, f"Table {tnum()} — Noise limits for industrial zones")
     _table(doc, ["Zone", "Daytime LAeq dB(A)", "Night-time LAeq dB(A)"],
            [["Industrial zones", "70", "65"]],
            [92, 36, 36], aligns=["left", "center", "center"])
-    _caption(doc, "Table 6 — Corrections applied at construction work "
-                  "sites")
+    corrections_table = tnum()
+    _caption(doc, f"Table {corrections_table} — Corrections applied at "
+                  f"construction work sites")
     _table(doc, ["Period of construction activities",
                  "Correction to allowed level dB(A)"],
            [[p, f"+{c}"] for p, c in CONSTRUCTION_CORRECTIONS],
@@ -717,7 +809,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
           f"{interval} record by energy averaging. The full record, the "
           f"hourly profile and the statistical distribution are presented "
           f"in the figures that follow.")
-    _caption(doc, "Table 7 — Summary of measured noise levels")
+    _caption(doc, f"Table {tnum()} — Summary of measured noise levels")
     _table(doc, ["Site", "LAeq, T", "L Day", "L Night", "LA10", "LA50",
                  "LA90", "Lmax", "Lmin"],
            [["N1", _f(summary.laeq_t), _f(summary.l_day),
@@ -728,7 +820,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
            f"Values in dB(A). L Day and L Night are energy averages over "
            f"{summary.day_start_hour:02d}:00–{summary.day_end_hour:02d}:00 "
            f"and the complementary night period respectively.")
-    _caption(doc, f"Table 8 — Data capture ({interval} intervals)")
+    _caption(doc, f"Table {tnum()} — Data capture ({interval} intervals)")
     _table(doc, ["Expected intervals", "Recorded", "Valid", "Invalid",
                  "Capture %"],
            [[f"{summary.expected_records:,}", f"{summary.total_records:,}",
@@ -774,9 +866,11 @@ def generate_noise_report(campaign, summary: NoiseSummary,
         if campaign.noise_category == "construction" or any(
                 v.status == "over" for v in verdicts):
             _body(doc,
-                  "Where activities at the location constitute construction "
-                  "work, the corrections of Table 6 apply to the allowed "
-                  "levels according to the duration of the activity.")
+                  f"Where activities at the location constitute "
+                  f"construction "
+                  f"work, the corrections of Table {corrections_table} "
+                  f"apply to the allowed levels according to the duration "
+                  f"of the activity.")
     else:
         _body(doc,
               "The most appropriate national standard category for ambient "
