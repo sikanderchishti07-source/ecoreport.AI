@@ -146,7 +146,7 @@ def _borders(cell, **spec):
     tcPr.append(tb)
 
 
-def _cell(cell, text, size=9, bold=False, colour=INK, align="left"):
+def _cell(cell, text, size=11, bold=False, colour=INK, align="left"):
     p = cell.paragraphs[0]
     p.alignment = {"left": WD_ALIGN_PARAGRAPH.LEFT,
                    "center": WD_ALIGN_PARAGRAPH.CENTER,
@@ -160,7 +160,18 @@ def _cell(cell, text, size=9, bold=False, colour=INK, align="left"):
     return p
 
 
-def _table(doc, headers, rows, widths_mm, aligns=None, size=9):
+def _table(doc, headers, rows, widths_mm, aligns=None, size=None):
+    """Tables at the company's 11 pt, stepped down when a table is wide.
+
+    Their reports carry tables of two to four columns at 11-12 pt. This
+    report has a nine-column summary of measured levels, and 11 pt in a
+    nine-column table wraps every heading onto three lines. The size follows
+    the column count so the narrow tables match theirs and the wide ones stay
+    readable instead of matching a table that does not exist in their set.
+    """
+    if size is None:
+        n = len(headers)
+        size = 9.5 if n >= 8 else (10.5 if n >= 6 else 11)
     t = doc.add_table(rows=1 + len(rows), cols=len(headers))
     t.alignment = WD_TABLE_ALIGNMENT.CENTER
     t.autofit = False
@@ -232,13 +243,15 @@ def _caption(doc, text):
     p = doc.add_paragraph(text, style="Caption")
     _tight(p, 4, 8)
     for r in p.runs:
-        r.font.bold = True
-        r.font.size = Pt(9.5)
+        # Not bold: theirs are not, and at 13 pt a bold caption reads as a
+        # heading and competes with the section titles around it.
+        r.font.bold = False
+        r.font.size = Pt(13)
         r.font.color.rgb = NAVY
     return p
 
 
-def _muted(doc, text, size=8):
+def _muted(doc, text, size=10):
     p = _tight(doc.add_paragraph(), 0, 8)
     r = p.add_run(text)
     r.font.size = Pt(size)
@@ -253,7 +266,7 @@ def _bullets(doc, items):
         p = doc.add_paragraph(it, style="List Bullet")
         _tight(p, 0, 2)
         for r in p.runs:
-            r.font.size = Pt(10.5)
+            r.font.size = Pt(13)
             r.font.name = "Times New Roman"
     return doc
 
@@ -342,11 +355,15 @@ def generate_noise_report(campaign, summary: NoiseSummary,
                           work_dir: Optional[str] = None) -> str:
     doc = Document()
     st = doc.styles["Normal"]
+    # Sizes measured from BSA's own report (BR-R-220726-104) rather than
+    # chosen: body 13 pt, Heading 1 16 pt, Heading 2 14 pt, Heading 3 13 pt,
+    # captions 13 pt, single leading. The generated report previously ran at
+    # 11 pt on 1.15 leading, which is why it read as cramped beside theirs.
     st.font.name = "Times New Roman"
-    st.font.size = Pt(11)
+    st.font.size = Pt(13)
     st.paragraph_format.space_after = Pt(6)
-    st.paragraph_format.line_spacing = 1.15
-    for lvl, sz in (("Heading 1", 14), ("Heading 2", 12)):
+    st.paragraph_format.line_spacing = 1.0
+    for lvl, sz in (("Heading 1", 16), ("Heading 2", 14), ("Heading 3", 13)):
         h = doc.styles[lvl]
         h.font.name = "Times New Roman"
         h.font.size = Pt(sz)
