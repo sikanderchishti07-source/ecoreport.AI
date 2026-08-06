@@ -109,10 +109,58 @@ def _interval_phrase(seconds: float) -> str:
             else f"{mins:.1f}-minute")
 
 
+def _sub_lines(fig, sub: str, size: float) -> None:
+    """Draw the subtitle, wrapped to the plate rather than run off it.
+
+    The subtitle grows with the campaign — the applicable category, its two
+    limits and any correction are appended to it — so a line that fits one
+    report is cut off in the next. Words are measured and wrapped onto at
+    most two lines; only if two lines still will not hold it is the size
+    reduced.
+    """
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    usable = fig.get_size_inches()[0] * fig.dpi * 0.88
+
+    def width_of(text, fs):
+        t = fig.text(0, -1, text, fontsize=fs)
+        px = t.get_window_extent(renderer=renderer).width
+        t.remove()
+        return px
+
+    def wrap(text, fs):
+        """Greedy wrap on measured width, not on a character count."""
+        words, lines, cur = text.split(), [], ""
+        for word in words:
+            trial = f"{cur} {word}".strip()
+            if cur and width_of(trial, fs) > usable:
+                lines.append(cur)
+                cur = word
+            else:
+                cur = trial
+        if cur:
+            lines.append(cur)
+        return lines
+
+    fs = size
+    while fs > 5.0:
+        lines = wrap(sub, fs)
+        if len(lines) <= 2:
+            break
+        fs -= 0.3
+    else:
+        lines = wrap(sub, 5.0)[:2]
+        fs = 5.0
+    # 3.4 mm between the two lines: at a fraction of the point size they were
+    # drawn a third of a millimetre apart and printed on top of each other.
+    for i, line in enumerate(lines[:2]):
+        fig.text(0.055, _y(9.5 + i * 3.4), line, fontsize=fs, color=GREY)
+
+
 def _chrome(fig, title, sub, chips):
     fig.text(0.055, _y(4.8), title, fontsize=12.5, fontweight="bold",
              color=NAVY)
-    fig.text(0.055, _y(9.5), sub, fontsize=6.8, color=GREY)
+    _sub_lines(fig, sub, 6.8)
     x = 0.985
     for lab, val in reversed(chips):
         fig.text(x, _y(6.8), val, fontsize=10, fontweight="bold", color=NAVY,
@@ -266,17 +314,22 @@ def chart_categories(s: NoiseSummary, out: str,
         top = max(top, val)
         ax.axhline(val, color=col, lw=2 if col == BLUE else 1.6,
                    ls="-" if col == BLUE else (0, (5, 3)), zorder=5)
-        # Labels sit inside the plot on a white pad; placed outside they ran
-        # off the figure, and placed bare they collided with the bars.
-        ax.text(3.47, val + 1.1, f"{lab}  {val:.1f}", fontsize=6.6,
-                color=col, fontweight="bold", ha="right", zorder=7,
+        # Labels sit at the left, where the shortest bars are, and straddle
+        # their own line — day above it, night below. On the right they
+        # landed on the tallest bars and on each other, because the two
+        # measured levels are usually only a couple of decibels apart.
+        above = col == BLUE
+        ax.text(-0.55, val + (0.9 if above else -0.9),
+                f"{lab}  {val:.1f}", fontsize=6.6, color=col,
+                fontweight="bold", ha="left",
+                va="bottom" if above else "top", zorder=7,
                 bbox=dict(fc="white", ec="none", alpha=0.85, pad=1.2))
     ax.set_xticks(xx)
     ax.set_xticklabels(names, fontsize=6.6)
     ax.set_ylabel("LAeq dB(A)", fontsize=7)
     ax.set_ylim(0, top + 13)
     ax.set_xlim(-0.62, 3.62)
-    ax.legend(fontsize=6, frameon=False, loc="upper left", ncol=2)
+    ax.legend(fontsize=6, frameon=False, loc="upper right", ncol=2)
     sub = "Both measured levels drawn across the four land-use categories"
     lim = NOISE_LIMITS.get(category)
     if lim and lim.day_db is not None and category not in cats:
