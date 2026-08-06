@@ -29,7 +29,7 @@ from typing import Dict, List, Optional
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Mm, Pt, RGBColor
@@ -870,23 +870,31 @@ def generate_noise_report(campaign, summary: NoiseSummary,
              f"{summary.data_capture_pct}"]],
            [36, 32, 32, 32, 32])
 
-    for key, cap_text in (("hourly", "Hourly LAeq over the survey with the "
-                                     "applicable day and night limits"),
-                          ("daynight", "Day and night levels against the "
-                                       "applicable NCEC limit"),
-                          ("cats", "Measured levels against the four NCEC "
-                                   "land-use categories"),
-                          ("trace", f"Sound level record ({interval} "
-                                    f"resolution) with the LA90–LA10 "
-                                    f"statistical envelope"),
-                          ("dist", "Exceedance distribution of measured "
-                                   "levels with statistical percentiles")):
-        path = figs.get(key)
-        if not path or not os.path.exists(path):
-            continue
+    plates = [("hourly", "Hourly LAeq over the survey with the applicable "
+                         "day and night limits"),
+              ("daynight", "Day and night levels against the applicable "
+                           "NCEC limit"),
+              ("cats", "Measured levels against the four NCEC land-use "
+                       "categories"),
+              ("trace", f"Sound level record ({interval} resolution) with "
+                        f"the LA90–LA10 statistical envelope"),
+              ("dist", "Exceedance distribution of measured levels with "
+                       "statistical percentiles")]
+    present = [(k, c) for k, c in plates
+               if figs.get(k) and os.path.exists(figs[k])]
+
+    # Two charts to a page. At the old height three fitted, and three plots
+    # stacked with their captions read as a wall rather than as figures worth
+    # looking at. The break is placed rather than left to chance because
+    # whether a third fits depends on how much text precedes the first one.
+    for i, (key, cap_text) in enumerate(present):
         p = _tight(doc.add_paragraph(), 6, 0)
-        pic(p, path, 164)
+        pic(p, figs[key], 164)
+        p.paragraph_format.keep_with_next = True   # caption never orphaned
         _caption(doc, f"Figure {_fn()} — {cap_text}")
+        if i % 2 == 1 and i < len(present) - 1:
+            _tight(doc.add_paragraph(), 0, 0).add_run().add_break(
+                WD_BREAK.PAGE)
 
     # ---- assessment ------------------------------------------------------
     _heading(doc, "6  Discussion and Compliance", 1)
@@ -1004,3 +1012,4 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     doc.save(out_path)
     return out_path
+                            
