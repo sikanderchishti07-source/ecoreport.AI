@@ -57,12 +57,12 @@ class VerifyPayload(BaseModel):
 
 
 class CreateUserPayload(SetupPayload):
-    role: str = Field(default="member", pattern="^(admin|member)$")
+    role: str = Field(default="member", pattern="^(admin|member|field)$")
 
 
 class UpdateUserPayload(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=120)
-    role: Optional[str] = Field(default=None, pattern="^(admin|member)$")
+    role: Optional[str] = Field(default=None, pattern="^(admin|member|field)$")
     active: Optional[bool] = None
     password: Optional[str] = Field(default=None, min_length=8, max_length=200)
 
@@ -361,8 +361,11 @@ async def update_user(user_id: str, payload: UpdateUserPayload,
         updates["password_hash"] = hash_password(payload.password)
         changes["password"] = {"from": "•••", "to": "reset"}
     # Safety: never let the last active admin lock themselves out
-    if (updates.get("role") == "member" or updates.get("active") is False) \
-            and user["role"] == "admin":
+    # Any move away from admin counts, not only a move to member: with a
+    # third role, demoting the last admin to "field" would otherwise have
+    # walked past this check and locked everyone out of user management.
+    if (("role" in updates and updates["role"] != "admin")
+            or updates.get("active") is False) and user["role"] == "admin":
         n_admins = await db.users.count_documents(
             {"role": "admin", "active": True, "id": {"$ne": user_id}})
         if n_admins == 0:
