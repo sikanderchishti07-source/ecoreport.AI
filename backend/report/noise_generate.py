@@ -54,6 +54,54 @@ ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 # ---------------------------------------------------------------------------
 # small helpers
 # ---------------------------------------------------------------------------
+def _bleed(paragraph):
+    """Turn the paragraph's inline picture into a page-anchored one at 0,0.
+
+    An inline picture at full page height is laid out inside a line box, and
+    the line box aligns it to the baseline: the top is clipped and white is
+    left at the foot. Forcing the leading to the page depth does not fix it,
+    it only moves the clipping. Anchoring the picture to the page, behind the
+    text, takes it out of the line box altogether, which is how a full-bleed
+    cover is supposed to be built and how both Word and LibreOffice place it
+    identically.
+    """
+    inline = paragraph._p.find(
+        ".//" + qn("w:drawing") + "/" + qn("wp:inline"))
+    if inline is None:
+        return
+    anchor = OxmlElement("wp:anchor")
+    for k, v in (("distT", "0"), ("distB", "0"), ("distL", "0"),
+                 ("distR", "0"), ("simplePos", "0"), ("relativeHeight", "1"),
+                 ("behindDoc", "1"), ("locked", "0"), ("layoutInCell", "1"),
+                 ("allowOverlap", "1")):
+        anchor.set(k, v)
+    sp = OxmlElement("wp:simplePos")
+    sp.set("x", "0")
+    sp.set("y", "0")
+    anchor.append(sp)
+    for tag, rel in (("wp:positionH", "page"), ("wp:positionV", "page")):
+        pos = OxmlElement(tag)
+        pos.set("relativeFrom", rel)
+        off = OxmlElement("wp:posOffset")
+        off.text = "0"
+        pos.append(off)
+        anchor.append(pos)
+    for child in list(inline):
+        tag = child.tag.split("}")[-1]
+        if tag == "extent":
+            anchor.append(child)
+            eff = OxmlElement("wp:effectExtent")
+            for e in ("l", "t", "r", "b"):
+                eff.set(e, "0")
+            anchor.append(eff)
+            anchor.append(OxmlElement("wp:wrapNone"))
+        elif tag != "effectExtent":
+            anchor.append(child)
+    drawing = inline.getparent()
+    drawing.remove(inline)
+    drawing.append(anchor)
+
+
 def _tight(p, before=0, after=6):
     p.paragraph_format.space_before = Pt(before)
     p.paragraph_format.space_after = Pt(after)
@@ -279,91 +327,6 @@ def _date_only(dt: Optional[datetime]) -> str:
             else dt.strftime("%B %d, %Y"))
 
 
-def _render_hero(project_name: str, site_line: str, out: str,
-                 photo_path: Optional[str] = None) -> str:
-    """The cover band.
-
-    With a cover photograph selected on the campaign, the photograph becomes
-    the band and a navy scrim is laid over it so the title stays legible —
-    the same treatment the air report's cover uses, and what makes the
-    manual reports look like consultancy documents rather than forms.
-    Without one, the band is drawn: navy field and sound-wave arcs.
-    """
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import numpy as np
-    from matplotlib.patches import Polygon, Rectangle
-
-    W, H = 210 / 25.4, 150 / 25.4
-    fig = plt.figure(figsize=(W, H), dpi=200)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.axis("off")
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1)
-    photo_used = False
-    if photo_path and os.path.exists(photo_path):
-        try:
-            from PIL import Image
-            im = Image.open(photo_path).convert("RGB")
-            # centre-crop to the band's aspect so nothing is squashed
-            target = W / H
-            iw, ih = im.size
-            if iw / ih > target:
-                nw = int(ih * target)
-                im = im.crop(((iw - nw) // 2, 0, (iw + nw) // 2, ih))
-            else:
-                nh = int(iw / target)
-                im = im.crop((0, (ih - nh) // 2, iw, (ih + nh) // 2))
-            ax.imshow(np.asarray(im), extent=(0, 1, 0, 1), aspect="auto",
-                      zorder=0)
-            # navy scrim, heavier on the left where the wording sits
-            for i in range(120):
-                x = i / 120.0
-                ax.add_patch(Rectangle(
-                    (x, 0), 1 / 119, 1, lw=0, zorder=1,
-                    color=(0.055, 0.20, 0.38),
-                    alpha=max(0.30, 0.86 - 0.75 * x)))
-            photo_used = True
-        except Exception:  # noqa: BLE001
-            log.warning("cover photo unusable — drawing the band instead",
-                        exc_info=True)
-
-    if not photo_used:
-        gx = np.linspace(0, 1, 240)
-        for g in gx[:-1]:
-            ax.add_patch(Rectangle((g, 0), 1 / 239, 1,
-                         color=(0.055 + 0.05 * g, 0.20 + 0.06 * g,
-                                0.38 + 0.05 * g), lw=0))
-    th = np.linspace(-np.pi / 2.6, np.pi / 2.6, 120)
-    if not photo_used:
-        for r, a in [(0.34, 0.10), (0.44, 0.085), (0.54, 0.07),
-                     (0.64, 0.055), (0.74, 0.04)]:
-            ax.plot(0.78 + r * np.cos(th) * 0.62, 0.52 + r * np.sin(th),
-                    color="white", alpha=a, lw=5)
-        ax.plot([0.78, 0.78], [0.44, 0.60], color="white", alpha=0.13,
-                lw=7, solid_capstyle="round")
-    ax.text(0.065, 0.86, "ENVIRONMENTAL NOISE", fontsize=13, zorder=6,
-            color="#7fd39a", fontweight="bold")
-    ax.add_patch(Rectangle((0.065, 0.80), 0.055, 0.014, color="#2f9e5f",
-                           lw=0, zorder=6))
-    for i, t in enumerate(["NOISE", "MONITORING", "REPORT"]):
-        ax.text(0.062, 0.66 - i * 0.135, t, fontsize=40, color="white",
-                fontweight="bold", zorder=6)
-    ax.text(0.065, 0.24, "Accurate Monitoring.", fontsize=13, zorder=6,
-            color="#dbe4ef")
-    ax.text(0.065, 0.185, "Reliable Results.", fontsize=13, zorder=6,
-            color="#dbe4ef")
-    ax.text(0.065, 0.13, "Healthier Environment.", fontsize=13, zorder=6,
-            color="#7fd39a")
-    ax.add_patch(Polygon([(0, 0.02), (0.5, 0.10), (0.5, 0.0), (0, 0.0)],
-                         closed=True, color="#2f9e5f", lw=0, alpha=0.95,
-                         zorder=6))
-    fig.savefig(out, facecolor="#16406f")
-    plt.close(fig)
-    return out
-
-
 # ---------------------------------------------------------------------------
 # the document
 # ---------------------------------------------------------------------------
@@ -432,74 +395,79 @@ def generate_noise_report(campaign, summary: NoiseSummary,
         p.add_run().add_picture(slim(path, wd) or path, width=Mm(width_mm))
 
     # ---- cover -----------------------------------------------------------
+    # One full-bleed picture. Every field on it is repeated on the document
+    # control page, which is selectable text, so nothing is lost to search.
     sec = doc.sections[0]
     sec.page_width, sec.page_height = Mm(210), Mm(297)
-    sec.top_margin = sec.bottom_margin = Mm(10)
+    sec.top_margin = sec.bottom_margin = Mm(0)
     sec.left_margin = sec.right_margin = Mm(0)
+    sec.header_distance = sec.footer_distance = Mm(0)
+    sec.gutter = Mm(0)
 
     logo = os.path.join(ASSETS, "logo_left.png")
-    if os.path.exists(logo):
-        p = _tight(doc.add_paragraph(), 0, 2)
-        p.paragraph_format.left_indent = Mm(14)
-        p.add_run().add_picture(logo, width=Mm(34))
 
-    hero = os.path.join(wd, "noise_hero.png")
+    plate_done = False
     try:
-        _render_hero(campaign.project_name or "", campaign.site_name or "",
-                     hero, cover_photo_path)
+        from report.noise_cover import date_range, render_cover
+        plate = os.path.join(wd, "noise_cover_plate.png")
+        render_cover(
+            plate,
+            survey_dates=date_range(campaign.monitoring_start,
+                                    campaign.monitoring_end),
+            location=(campaign.site_name or campaign.project_name or "—"),
+            client=campaign.client or "—",
+            report_number=campaign.report_number or "—",
+            revision=campaign.revision or "00",
+            issue_date=_date_only(campaign.reporting_date),
+            photo_path=cover_photo_path,
+            logo_path=logo if os.path.exists(logo) else None)
         p = _tight(doc.add_paragraph(), 0, 0)
-        p.add_run().add_picture(hero, width=Mm(210))
+        p.add_run().add_picture(plate, width=Mm(210), height=Mm(297))
+        _bleed(p)
+        for r in p.runs:
+            r.font.size = Pt(1)
+        plate_done = True
     except Exception:  # noqa: BLE001
-        log.warning("noise hero failed", exc_info=True)
+        log.warning("cover plate failed — falling back to a plain cover",
+                    exc_info=True)
 
-    p = _tight(doc.add_paragraph(), 2, 1)
-    p.paragraph_format.left_indent = Mm(14)
-    r = p.add_run((campaign.project_name or "").upper())
-    r.font.size = Pt(15)
-    r.font.bold = True
-    r.font.color.rgb = NAVY
-    p = _tight(doc.add_paragraph(), 0, 4)
-    p.paragraph_format.left_indent = Mm(14)
-    r = p.add_run(f"{campaign.site_name or ''}  ·  24-hour attended noise "
-                  f"survey")
-    r.font.size = Pt(9)
-    r.font.color.rgb = MUT
-
-    info = [("Client", campaign.client or "—"),
-            ("Monitoring location", campaign.site_name or "—"),
-            ("Survey period",
-             f"{_fmt_dt(campaign.monitoring_start)} to "
-             f"{_fmt_dt(campaign.monitoring_end)}"),
-            ("Report number", campaign.report_number or "—"),
-            ("Revision and issue date",
-             f"{campaign.revision or '00'}    ·    "
-             f"{_date_only(campaign.reporting_date)}")]
-    t = doc.add_table(rows=len(info), cols=2)
-    t.alignment = WD_TABLE_ALIGNMENT.CENTER
-    t.autofit = False
-    _table_width(t, 180)
-    for i, (lab, val) in enumerate(info):
-        a, b = t.cell(i, 0), t.cell(i, 1)
-        a.width = Mm(52)
-        b.width = Mm(128)
-        _cell(a, lab, size=8.5, colour=MUT)
-        _cell(b, val, size=10, bold=True)
-        for c in (a, b):
-            _borders(c, bottom=(HAIR, 2))
-
-    # Push the band to the foot of the cover rather than leaving a third of
-    # the page blank under the document details.
-    for _ in range(9):
-        _tight(doc.add_paragraph(), 0, 0)
-    band = doc.add_table(rows=1, cols=1)
-    band.autofit = False
-    _table_width(band, 210)
-    c = band.cell(0, 0)
-    c.width = Mm(210)
-    _shade(c, NAVY_HEX)
-    _cell(c, "  Bander Said Allehiany for Environmental Consultancy",
-          size=10, bold=True, colour=RGBColor(255, 255, 255))
-    _borders(c)
+    if not plate_done:
+        # A plain cover carrying the same facts, so a rendering failure costs
+        # the design and not the document.
+        for _ in range(6):
+            _tight(doc.add_paragraph(), 0, 0)
+        for text, size, bold, colour in (
+                ("NOISE MONITORING REPORT", 26, True, NAVY),
+                (campaign.project_name or "", 15, True, NAVY),
+                (f"{campaign.site_name or ''}  ·  24-hour attended noise "
+                 f"survey", 10, False, MUT)):
+            p = _tight(doc.add_paragraph(), 0, 6)
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            r = p.add_run(text)
+            r.font.size = Pt(size)
+            r.font.bold = bold
+            r.font.color.rgb = colour
+        info = [("Client", campaign.client or "—"),
+                ("Monitoring location", campaign.site_name or "—"),
+                ("Survey period",
+                 f"{_fmt_dt(campaign.monitoring_start)} to "
+                 f"{_fmt_dt(campaign.monitoring_end)}"),
+                ("Report number", campaign.report_number or "—"),
+                ("Revision and issue date",
+                 f"{campaign.revision or '00'}    ·    "
+                 f"{_date_only(campaign.reporting_date)}")]
+        t = doc.add_table(rows=len(info), cols=2)
+        t.alignment = WD_TABLE_ALIGNMENT.CENTER
+        t.autofit = False
+        _table_width(t, 180)
+        for i, (lab, val) in enumerate(info):
+            a, b = t.cell(i, 0), t.cell(i, 1)
+            a.width = Mm(52)
+            b.width = Mm(128)
+            _cell(a, lab, size=8.5, colour=MUT)
+            _cell(b, val, size=10, bold=True)
+            for c in (a, b):
+                _borders(c, bottom=(HAIR, 2))
 
     # ---- body section ----------------------------------------------------
     body = doc.add_section(WD_SECTION.NEW_PAGE)
