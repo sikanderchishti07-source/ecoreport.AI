@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, Save, Trash2, Truck } from "lucide-react";
+import { Image as ImageIcon, Plus, Save, Trash2, Truck, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,7 +8,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  listStations, loadStationIntoCampaign, updateCampaign,
+  listStationPhotos, listStations, loadStationIntoCampaign, updateCampaign,
 } from "@/lib/api";
 
 const BLANK = { parameter: "", technique: "", sn: "", mdl_ugm3: "", calibration_date: "" };
@@ -18,6 +18,11 @@ export default function InstrumentsPanel({ campaign, onSaved }) {
   const [stations, setStations] = useState([]);
   const [stationId, setStationId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [photoCount, setPhotoCount] = useState(0);
+  // An air campaign picks a mobile laboratory of analysers; a noise campaign
+  // picks a sound level meter. Same library, filtered — showing the wrong
+  // kind is how a report ends up naming equipment that was never on site.
+  const isNoise = campaign?.campaign_type === "noise";
 
   useEffect(() => {
     setRows(campaign?.instruments?.length ? campaign.instruments : []);
@@ -25,8 +30,15 @@ export default function InstrumentsPanel({ campaign, onSaved }) {
   }, [campaign]);
 
   useEffect(() => {
-    listStations().then(setStations).catch(() => {});
-  }, []);
+    listStations(isNoise ? "noise" : "air").then(setStations).catch(() => {});
+  }, [isNoise]);
+
+  useEffect(() => {
+    if (!campaign?.station_id) { setPhotoCount(0); return; }
+    listStationPhotos(campaign.station_id)
+      .then((p) => setPhotoCount(p.length || 0))
+      .catch(() => setPhotoCount(0));
+  }, [campaign?.station_id]);
 
   const set = (i, key) => (e) =>
     setRows((r) => r.map((row, j) =>
@@ -40,7 +52,10 @@ export default function InstrumentsPanel({ campaign, onSaved }) {
     try {
       const data = await loadStationIntoCampaign(campaign.id, id);
       setRows(data.instruments || []);
-      toast.success(`Loaded ${data.station} — ${data.instruments.length} instruments`);
+      toast.success(
+        isNoise && data.meter_serial
+          ? `${data.station} selected — meter ${data.meter_serial}, its certificate and photograph will be used`
+          : `Loaded ${data.station} — ${(data.instruments || []).length} instruments`);
       onSaved?.();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not load the lab");
@@ -70,21 +85,27 @@ export default function InstrumentsPanel({ campaign, onSaved }) {
     <div className="border border-border rounded-sm p-4 space-y-4">
       <div>
         <h3 className="text-sm font-semibold flex items-center gap-2">
-          <Truck className="w-4 h-4 text-primary" /> Instruments (Table 4)
+          {isNoise
+            ? <Volume2 className="w-4 h-4 text-primary" />
+            : <Truck className="w-4 h-4 text-primary" />}
+          {isNoise ? "Sound level meter" : "Instruments (Table 4)"}
         </h3>
         <p className="text-xs text-muted-foreground mt-1">
-          These rows are printed in the report as the equipment used for this
-          campaign. Load one of your mobile labs, then edit if an analyser was
-          swapped.
+          {isNoise
+            ? "Select the meter used for this survey. Its model and serial number, its calibration certificate and its photograph are taken into the report automatically — the library is the record of what the instrument is, so selecting one overwrites anything typed on the campaign form."
+            : "These rows are printed in the report as the equipment used for this campaign. Load one of your mobile labs, then edit if an analyser was swapped."}
         </p>
       </div>
 
       <div className="flex flex-wrap items-end gap-2">
         <div className="space-y-1.5">
-          <Label className="text-xs">Load from mobile lab</Label>
+          <Label className="text-xs">
+            {isNoise ? "Select the sound level meter" : "Load from mobile lab"}
+          </Label>
           <Select value={stationId} onValueChange={loadLab}>
-            <SelectTrigger className="w-[240px] rounded-sm h-9">
-              <SelectValue placeholder="Select a mobile lab…" />
+            <SelectTrigger className="w-[260px] rounded-sm h-9">
+              <SelectValue placeholder={isNoise
+                ? "Select a sound level meter…" : "Select a mobile lab…"} />
             </SelectTrigger>
             <SelectContent>
               {stations.map((s) => (
@@ -103,10 +124,20 @@ export default function InstrumentsPanel({ campaign, onSaved }) {
         </Button>
       </div>
 
+      {stationId && (
+        <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+          <ImageIcon className="w-3.5 h-3.5" />
+          {photoCount > 0
+            ? `${photoCount} equipment photograph${photoCount > 1 ? "s" : ""} will be printed in the methodology.`
+            : "No equipment photograph stored — add one on the Equipment page and it appears in every report using this instrument."}
+        </p>
+      )}
+
       {rows.length === 0 ? (
         <p className="text-xs text-muted-foreground">
-          No instruments set — the report will fall back to the default list.
-          Load a mobile lab above to fix that.
+          {isNoise
+            ? "No meter selected yet — choose one above so the report names the instrument and attaches its certificate."
+            : "No instruments set — the report will fall back to the default list. Load a mobile lab above to fix that."}
         </p>
       ) : (
         <div className="space-y-2">
