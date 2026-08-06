@@ -8,7 +8,7 @@ from fastapi import APIRouter, FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from db import create_indexes, seed_pollutant_limits
-from auth import current_user, deny_field
+from auth import current_user
 from routes import auth_routes as auth_router
 from routes import campaigns as campaigns_router
 from routes import limits as limits_router
@@ -47,21 +47,16 @@ from fastapi import Depends as _Depends
 
 api.include_router(auth_router.router)  # open: setup/login
 _protected = [_Depends(current_user)]
-# A field account records surveys and uploads their data; everything else —
-# limits, report generation, review, history, media libraries, the client
-# portal — is closed to it. Applied here rather than inside each router so
-# that deleting these two words restores the previous behaviour exactly.
-_office = [_Depends(current_user), _Depends(deny_field)]
 api.include_router(campaigns_router.router, dependencies=_protected)
 api.include_router(readings_router.router, dependencies=_protected)
-api.include_router(limits_router.router, dependencies=_office)
+api.include_router(limits_router.router, dependencies=_protected)
 api.include_router(summary_router.router, dependencies=_protected)
-api.include_router(report_router.router, dependencies=_office)
-api.include_router(review_router.router, dependencies=_office)
-api.include_router(history_router.router, dependencies=_office)
-api.include_router(media_router.router, dependencies=_office)
+api.include_router(report_router.router, dependencies=_protected)
+api.include_router(review_router.router, dependencies=_protected)
+api.include_router(history_router.router, dependencies=_protected)
+api.include_router(media_router.router, dependencies=_protected)
 api.include_router(noise_router.router, dependencies=_protected)
-api.include_router(portal_router.router, dependencies=_office)
+api.include_router(portal_router.router, dependencies=_protected)
 # Client portal: intentionally open — access is granted by a signed,
 # expiring, revocable share token carried in the URL.
 api.include_router(portal_router.public)
