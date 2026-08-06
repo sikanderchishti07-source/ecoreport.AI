@@ -5,9 +5,19 @@ Sessions are stateless JWTs (12 h). Set JWT_SECRET in the backend .env for
 stable sessions across restarts; without it a random per-boot secret is used
 (everyone is logged out on restart) and a warning is logged.
 
-Roles: "admin" (manage users, delete campaigns) and "member" (everything
-else). The first account is created through /auth/setup while the users
+Roles: "admin" (manage users, delete campaigns), "member" (everything else)
+and "field" (a site operator: their own campaigns and readings, nothing
+more). The first account is created through /auth/setup while the users
 collection is empty.
+
+A field account signs in on a personal phone at a monitoring site. The
+twelve-hour session that suits an office laptop would ask that operator for
+a fresh authenticator code most working days, in the sun, possibly without
+signal — and an operator who cannot sign in does not record the survey, he
+goes back to WhatsApp. So the session lasts longer for that role only. The
+authenticator is still required; it is the frequency that changes, not the
+strength. Seven days rather than thirty because the phone is his own and
+leaves with him.
 
 Sign-in is in two steps. The password buys a short-lived challenge token,
 good only for proving a six-digit TOTP code; the session token is issued
@@ -102,15 +112,19 @@ def burn_password_time() -> None:
 # ---------------------------------------------------------------------------
 # Tokens
 # ---------------------------------------------------------------------------
+FIELD_TOKEN_HOURS = int(os.environ.get("FIELD_TOKEN_HOURS", str(24 * 7)))
+
+
 def create_token(user: dict) -> str:
     now = datetime.now(timezone.utc)
+    hours = FIELD_TOKEN_HOURS if user.get("role") == "field" else TOKEN_HOURS
     payload = {
         "sub": user["id"],
         "name": user["name"],
         "role": user["role"],
         "typ": "session",
         "iat": now,
-        "exp": now + timedelta(hours=TOKEN_HOURS),
+        "exp": now + timedelta(hours=hours),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
@@ -188,6 +202,22 @@ async def require_admin(user: dict = Depends(current_user)) -> dict:
     if user.get("role") != "admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN,
                             detail="Admin access required")
+    return user
+
+
+async def deny_field(user: dict = Depends(current_user)) -> dict:
+    """Shut a field account out of a whole router.
+
+    Applied where it is mounted rather than route by route, so the office
+    behaviour is untouched and removing the role later is one line in
+    server.py. A phone carried to a site is lost or borrowed far more often
+    than a laptop, and an account that can only record surveys is worth
+    little to whoever finds it.
+    """
+    if user.get("role") == "field":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Field accounts cannot use this part of the system")
     return user
 
 
