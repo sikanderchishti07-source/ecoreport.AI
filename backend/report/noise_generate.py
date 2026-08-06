@@ -425,7 +425,7 @@ def generate_noise_report(campaign, summary: NoiseSummary,
 
     plate_done = False
     try:
-        from report.noise_cover import date_range, render_cover
+        from report.cover_plate import date_range, render_cover
         plate = os.path.join(wd, "noise_cover_plate.png")
         render_cover(
             plate,
@@ -1012,4 +1012,3 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     doc.save(out_path)
     return out_path
-                            
