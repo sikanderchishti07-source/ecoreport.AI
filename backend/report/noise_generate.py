@@ -402,6 +402,20 @@ def generate_noise_report(campaign, summary: NoiseSummary,
         _tn["n"] += 1
         return _tn["n"]
 
+    # Appendix letters are settled before the body is written, because the
+    # methodology refers to the certificate appendix by letter long before
+    # that appendix is reached. Fixed letters left gaps — a report with no
+    # certificates began at Appendix C — and a letter worked out at the end
+    # cannot be quoted at the start.
+    _appendix: Dict[str, str] = {}
+    _next = 0
+    if calibration_items:
+        _appendix["certificates"] = chr(ord("A") + _next)
+        _next += 1
+    if license_image_paths:
+        _appendix["licence"] = chr(ord("A") + _next)
+        _next += 1
+
     _fg = {"n": 0}
 
     def _fn() -> int:
@@ -764,9 +778,12 @@ def generate_noise_report(campaign, summary: NoiseSummary,
           f"The meter was field-calibrated with an acoustic calibrator"
           f"{f' ({calibrator})' if calibrator else ''} at {cal_db:g} dB "
           f"immediately before and immediately after the survey. No "
-          f"significant drift was observed. The laboratory calibration "
-          f"certificate is reproduced in Appendix B. Data are invalidated "
-          f"where calibration or instrument faults affected the record.")
+          f"significant drift was observed."
+          + (f" The laboratory calibration certificate is reproduced in "
+             f"Appendix {_appendix['certificates']}."
+             if "certificates" in _appendix else "")
+          + " Data are invalidated where calibration or instrument faults "
+            "affected the record.")
 
     _heading(doc, "3.5  Measurement procedure", 2)
     _body(doc,
@@ -945,7 +962,8 @@ def generate_noise_report(campaign, summary: NoiseSummary,
     # ---- appendices ------------------------------------------------------
     if calibration_items:
         doc.add_page_break()
-        _heading(doc, "Appendix B — Calibration certificates", 1)
+        _heading(doc, f"Appendix {_appendix['certificates']} — "
+                      f"Calibration certificates", 1)
         _body(doc,
               "The laboratory calibration certificates covering the "
               "instrument used for this survey are reproduced below.")
@@ -966,8 +984,8 @@ def generate_noise_report(campaign, summary: NoiseSummary,
             pic(p, path, 165)
     if license_image_paths:
         doc.add_page_break()
-        _heading(doc, "Appendix C — Environmental licence for the "
-                      "institution", 1)
+        _heading(doc, f"Appendix {_appendix['licence']} — Environmental "
+                      f"license for the institution", 1)
         for i, path in enumerate(license_image_paths):
             if not (path and os.path.exists(path)):
                 continue
