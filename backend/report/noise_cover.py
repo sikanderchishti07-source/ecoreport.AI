@@ -107,7 +107,8 @@ def _font(candidates: List[str], size: int):
 # ---------------------------------------------------------------------------
 # wording helpers
 # ---------------------------------------------------------------------------
-def date_range(start: Optional[datetime], end: Optional[datetime]) -> str:
+def date_range(start: Optional[datetime], end: Optional[datetime],
+               abbrev: bool = False) -> str:
     """The survey window on one line, collapsing what the two dates share.
 
     Same month: 6 – 7 July 2026. Same year: 29 June – 2 July 2026. Otherwise
@@ -116,20 +117,22 @@ def date_range(start: Optional[datetime], end: Optional[datetime]) -> str:
     def day(d):
         return str(d.day)
 
+    mon = "%b" if abbrev else "%B"
+
     if not start and not end:
         return "—"
     if not end or (start and start.date() == end.date()):
         d = start or end
-        return f"{day(d)} {d.strftime('%B %Y')}"
+        return f"{day(d)} {d.strftime(mon + ' %Y')}"
     if not start:
-        return f"{day(end)} {end.strftime('%B %Y')}"
+        return f"{day(end)} {end.strftime(mon + ' %Y')}"
     if start.year == end.year and start.month == end.month:
-        return f"{day(start)} – {day(end)} {start.strftime('%B %Y')}"
+        return f"{day(start)} – {day(end)} {start.strftime(mon + ' %Y')}"
     if start.year == end.year:
-        return (f"{day(start)} {start.strftime('%B')} – "
-                f"{day(end)} {end.strftime('%B %Y')}")
-    return (f"{day(start)} {start.strftime('%B %Y')} – "
-            f"{day(end)} {end.strftime('%B %Y')}")
+        return (f"{day(start)} {start.strftime(mon)} – "
+                f"{day(end)} {end.strftime(mon + ' %Y')}")
+    return (f"{day(start)} {start.strftime(mon + ' %Y')} – "
+            f"{day(end)} {end.strftime(mon + ' %Y')}")
 
 
 def _wrap(draw, text: str, font, max_px: float, max_lines: int) -> List[str]:
@@ -239,7 +242,7 @@ def render_cover(out_path: str,
                  eyebrow: str = "ENVIRONMENTAL MONITORING",
                  strapline: Tuple[str, str] = ("Accurate Monitoring.",
                                                "Reliable Results."),
-                 survey_dates: str = "—",
+                 survey_dates="—",
                  survey_note: Tuple[str, str] = ("24-hour attended",
                                                  "noise survey"),
                  location: str = "—",
@@ -430,11 +433,29 @@ def render_cover(out_path: str,
     # row's own width limit is taken from the edge at its own height.
     def room(yf: float) -> float:
         return X(NAVY_FOOT_X * (yf - NAVY_LEFT_Y)
-                 / (FOOT_Y - NAVY_LEFT_Y)) - tx2 - X(0.030)
+                 / (FOOT_Y - NAVY_LEFT_Y)) - tx2 - X(0.022)
 
     icon(cx, Y(0.6635), w * 0.026, "cal")
-    d.text((tx2, Y(0.6485)), survey_dates, font=_font(_UI_BOLD, int(h * 0.0152)),
-           fill=WHITE)
+    # Fitted, not set, and never truncated. The navy plane is at its narrowest
+    # on this row, and a window can run from two days to across a year end.
+    # ``survey_dates`` may be a list of progressively shorter wordings — the
+    # first that fits is used, and only then is the size reduced. Dropping a
+    # year to make a date fit would be silent data loss on the cover.
+    cands = ([survey_dates] if isinstance(survey_dates, str)
+             else [c for c in survey_dates if c])
+    avail = room(0.663)
+    picked, df = cands[-1] if cands else "—", None
+    for size in range(int(h * 0.0152), int(h * 0.0104), -2):
+        font = _font(_UI_BOLD, size)
+        for cand in cands:
+            if d.textlength(cand, font=font) <= avail:
+                picked, df = cand, font
+                break
+        if df:
+            break
+    if df is None:
+        df = _font(_UI_BOLD, int(h * 0.0104))
+    d.text((tx2, Y(0.6485)), picked, font=df, fill=WHITE)
     d.text((tx2, Y(0.6685)), survey_note[0], font=sub_f, fill=SUB)
     d.text((tx2, Y(0.6855)), survey_note[1], font=sub_f, fill=SUB)
     d.line([(X(0.040), Y(0.7060)), (X(0.290), Y(0.7060))], fill=RULE,
@@ -458,16 +479,34 @@ def render_cover(out_path: str,
         d.text((tx2, Y(0.8115 + i * 0.0190)), line, font=cf, fill=WHITE)
 
     # -- footer wording ----------------------------------------------------
-    flab = _font(_UI_BOLD, int(h * 0.0112))
-    fval = _font(_UI_BOLD, int(h * 0.0168))
-    for fx, label, value in [(0.050, "REPORT NUMBER", report_number or "—"),
-                             (0.215, "REVISION", f"Rev {revision or '00'}"),
-                             (0.345, "ISSUE DATE", issue_date or "—")]:
-        _track(d, (X(fx), Y(0.9175)), label, flab, (128, 190, 112), w * 0.0016)
-        d.text((X(fx), Y(0.9395)), value, font=fval, fill=WHITE)
-    for dx in (0.186, 0.316, 0.520):
-        d.line([(X(dx), Y(0.9125)), (X(dx), Y(0.9555))], fill=(50, 74, 112),
-               width=max(1, int(w * 0.0011)))
+    # Laid out from measured widths. At fixed positions "REPORT NUMBER" ran
+    # under "REVISION" as soon as an issue date longer than "22 July 2026"
+    # widened the block, and the rules landed through the labels.
+    fields = [("REPORT NUMBER", report_number or "—"),
+              ("REVISION", f"Rev {revision or '00'}"),
+              ("ISSUE DATE", issue_date or "—")]
+    lab_sp = w * 0.0016
+    gap = X(0.024)
+    lab_sz, val_sz = int(h * 0.0112), int(h * 0.0168)
+    while True:
+        flab = _font(_UI_BOLD, lab_sz)
+        fval = _font(_UI_BOLD, val_sz)
+        widths = [max(sum(d.textlength(ch, font=flab) + lab_sp
+                          for ch in lab) - lab_sp,
+                      d.textlength(val, font=fval))
+                  for lab, val in fields]
+        if (X(0.050) + sum(widths) + gap * len(fields) <= X(0.545)
+                or lab_sz <= int(h * 0.0076)):
+            break
+        lab_sz -= 1
+        val_sz -= 2
+    x = X(0.050)
+    for (lab, val), cw in zip(fields, widths):
+        _track(d, (x, Y(0.9175)), lab, flab, (128, 190, 112), lab_sp)
+        d.text((x, Y(0.9395)), val, font=fval, fill=WHITE)
+        x += cw + gap
+        d.line([(x - gap / 2, Y(0.9125)), (x - gap / 2, Y(0.9555))],
+               fill=(50, 74, 112), width=max(1, int(w * 0.0011)))
 
     d.polygon([(X(0.555), Y(0.9355)), (X(0.582), Y(0.9245)),
                (X(0.608), Y(0.9265)), (X(0.580), Y(0.9385)),
