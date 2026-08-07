@@ -105,6 +105,53 @@ export default function FieldCapture() {
     () => localStorage.getItem(DATEFMT_KEY) || "long");
   useEffect(() => { localStorage.setItem(DATEFMT_KEY, dateFmt); }, [dateFmt]);
 
+  // While the field page is open it behaves like an application rather than a
+  // web page: no pinch-zoom, no double-tap zoom, no rubber-band scroll past
+  // the edges. All of it is undone on the way out — done globally in
+  // index.html it would also take pinch-zoom away from the office pages,
+  // where enlarging a results table on a phone is sometimes the only way to
+  // read a figure.
+  useEffect(() => {
+    const meta = document.querySelector('meta[name="viewport"]');
+    const before = meta ? meta.getAttribute("content") : null;
+    if (meta) {
+      meta.setAttribute(
+        "content",
+        "width=device-width, initial-scale=1, maximum-scale=1, "
+        + "user-scalable=no, viewport-fit=cover",
+      );
+    }
+    const html = document.documentElement;
+    const body = document.body;
+    const prevOverscroll = body.style.overscrollBehavior;
+    const prevTouch = body.style.touchAction;
+    const prevSelect = body.style.userSelect;
+    body.style.overscrollBehavior = "none";
+    body.style.touchAction = "manipulation";   // kills the double-tap zoom
+    body.style.userSelect = "none";            // long-press selects nothing
+    html.classList.add("bsa-field");
+
+    // Safari on iOS ignores user-scalable, so a two-finger gesture has to be
+    // refused outright. Single-finger scrolling is untouched.
+    const noPinch = (e) => { if (e.touches && e.touches.length > 1) e.preventDefault(); };
+    document.addEventListener("touchmove", noPinch, { passive: false });
+    document.addEventListener("gesturestart", noPinch, { passive: false });
+
+    return () => {
+      if (meta && before) meta.setAttribute("content", before);
+      body.style.overscrollBehavior = prevOverscroll;
+      body.style.touchAction = prevTouch;
+      body.style.userSelect = prevSelect;
+      html.classList.remove("bsa-field");
+      document.removeEventListener("touchmove", noPinch);
+      document.removeEventListener("gesturestart", noPinch);
+    };
+  }, []);
+
+  // A short buzz on the two moments that cannot be undone. Confirmation
+  // without looking, which matters wearing gloves in the sun.
+  const buzz = (ms) => { try { navigator.vibrate?.(ms); } catch { /* ignore */ } };
+
   // Dark by default, and dark after sunset regardless: this is read outdoors
   // in glare, and a white screen at a site at 42 °C is not readable.
   const [dark, setDark] = useState(() => {
@@ -231,6 +278,7 @@ export default function FieldCapture() {
         catch { toast.error("Equipment not linked — set it at home"); }
       }
       setV((s) => ({ ...s, step: 4, campaignId: c.id, monitoring_start: started }));
+      buzz([28, 40, 28]);
       toast.success("Survey started");
       if (photos.length) sendPhotos(c.id);
     } catch (e) {
@@ -267,6 +315,7 @@ export default function FieldCapture() {
       await updateCampaign(v.campaignId, { monitoring_end: ended });
       await sendPhotos(v.campaignId);
       setV((s) => ({ ...s, step: 5, monitoring_end: ended }));
+      buzz([40, 60, 90]);
       toast.success("Survey closed");
     } catch {
       toast.error("Could not close it — the start time is safe, try again");
@@ -335,11 +384,25 @@ export default function FieldCapture() {
 
   return (
     <div className={`min-h-screen ${T.shell}`}>
-      <div className="mx-auto w-full max-w-[430px] px-5 pb-10 pt-4">
-
+      {/* The padding follows the phone's safe areas so nothing sits under the
+          notch or the home indicator when this runs full-screen from the home
+          screen, and falls back to plain padding in a browser tab. */}
+      <div
+        className="mx-auto w-full max-w-[430px] px-5"
+        style={{
+          paddingTop: "calc(env(safe-area-inset-top, 0px) + 14px)",
+          paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 40px)",
+        }}
+      >
         <div className="flex items-center gap-2.5">
-          <span className="h-5 w-5 rounded-md bg-gradient-to-br from-emerald-300 to-emerald-600" />
-          <b className="text-[12.5px]">BSA.lab</b>
+          {/* Two files rather than a CSS filter: inverting the mark would
+              turn the leaf white as well, and the leaf is the half of it
+              anyone recognises. The light variant lifts only the wordmark. */}
+          <img
+            src={dark ? "/logo-mark-light.png" : "/logo-mark.png"}
+            alt="BSA.lab"
+            className="h-7 w-auto"
+          />
           <span className={`text-[10px] uppercase tracking-[.14em] ml-auto ${T.faint}`}>
             Field
           </span>
