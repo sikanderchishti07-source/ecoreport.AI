@@ -459,6 +459,12 @@ export default function FieldCapture() {
     <div className={`rounded-xl border px-3.5 py-2.5 text-[14px]
       ${sensed ? T.sensed : T.ctl}`}>{children}</div>
   );
+  // Which surveys this visit covers, and the shared class for a text input.
+  // Both were used throughout the screens below but never declared — a patch
+  // that did not apply, shipped without checking, which blanked the page.
+  const surveys = v.types;
+  const field = `w-full rounded-xl border px-3.5 py-2.5 text-[14px] outline-none ${T.ctl}`;
+
   const Btn = ({ children, onClick, tone = "solid", disabled }) => {
     const tones = {
       solid: "bg-gradient-to-b from-emerald-300 to-emerald-500 text-[#06121c] font-semibold",
