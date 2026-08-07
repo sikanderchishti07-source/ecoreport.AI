@@ -35,7 +35,7 @@ import {
 } from "@/lib/api";
 import FieldCamera, { DATE_FORMATS, cardinal } from "@/components/FieldCamera";
 
-const DRAFT_KEY = "bsa.field.visit";
+const DRAFT_KEY = "bsa.field.visits";
 const THEME_KEY = "bsa.field.theme";
 const DATEFMT_KEY = "bsa.field.datefmt";
 const OPERATOR_KEY = "bsa.field.operator";
@@ -83,8 +83,8 @@ const STEPS = ["Site", "Position", "Photographs", "Samples", "Start",
 
 const BLANK = {
   step: 0,
-  visitId: uid(),
-  operator: "",
+  id: "",
+  visitId: "",
   types: ["air"],          // air, noise, or both — both makes two campaigns
   campaignIds: {},         // { air: id, noise: id }
   project_name: "",
@@ -102,12 +102,46 @@ const BLANK = {
   monitoring_end: "",
 };
 
+function blankVisit() {
+  return { ...BLANK, id: uid(), visitId: uid() };
+}
+
 export default function FieldCapture() {
   const navigate = useNavigate();
-  const [v, setV] = useState(BLANK);
+  // Several surveys can be open at once: a site is set up, the next is set up
+  // an hour later, and both run for a day. So a visit is one of a list, and
+  // the page opens on that list rather than on an empty form.
+  const [visits, setVisits] = useState([]);
+  const [activeId, setActiveId] = useState(null);
+  const [operator, setOperator] = useState(
+    () => localStorage.getItem(OPERATOR_KEY) || "");
+  const v = visits.find((x) => x.id === activeId) || BLANK;
+  const setV = useCallback((updater) => {
+    setVisits((all) => all.map((x) => (x.id === activeId
+      ? (typeof updater === "function" ? updater(x) : { ...x, ...updater })
+      : x)));
+  }, [activeId]);
   const [busy, setBusy] = useState(false);
-  const [photos, setPhotos] = useState([]);   // { file, view, heading, survey }
-  const [samples, setSamples] = useState([]); // { kind, file, at, lat, lon, acc }
+  // Kept outside the saved visit: a File cannot be written to local storage,
+  // so anything not yet sent lives only while the page is open. Keyed by visit
+  // so two open surveys cannot mix their photographs.
+  const [media, setMedia] = useState({});
+  const photos = media[activeId]?.photos || [];
+  const samples = media[activeId]?.samples || [];
+  const setPhotos = useCallback((updater) => {
+    setMedia((m) => {
+      const cur = m[activeId] || { photos: [], samples: [] };
+      return { ...m, [activeId]: { ...cur,
+        photos: typeof updater === "function" ? updater(cur.photos) : updater } };
+    });
+  }, [activeId]);
+  const setSamples = useCallback((updater) => {
+    setMedia((m) => {
+      const cur = m[activeId] || { photos: [], samples: [] };
+      return { ...m, [activeId]: { ...cur,
+        samples: typeof updater === "function" ? updater(cur.samples) : updater } };
+    });
+  }, [activeId]);
   const [operators, setOperators] = useState([]);
   const sampleRef = useRef(null);
   const [stations, setStations] = useState([]);
@@ -183,17 +217,17 @@ export default function FieldCapture() {
   useEffect(() => {
     try {
       const raw = localStorage.getItem(DRAFT_KEY);
-      if (raw) setV({ ...BLANK, ...JSON.parse(raw) });
-      const op = localStorage.getItem(OPERATOR_KEY);
-      if (op) setV((s) => ({ ...s, operator: s.operator || op }));
-    } catch { /* a corrupt draft is not worth failing over */ }
+      const list = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(list)) setVisits(list);
+    } catch { /* a corrupt store is not worth failing over */ }
   }, []);
   useEffect(() => {
-    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(v)); } catch { /* full */ }
-  }, [v]);
+    try { localStorage.setItem(DRAFT_KEY, JSON.stringify(visits)); }
+    catch { /* full */ }
+  }, [visits]);
   useEffect(() => {
-    if (v.operator) localStorage.setItem(OPERATOR_KEY, v.operator);
-  }, [v.operator]);
+    if (operator) localStorage.setItem(OPERATOR_KEY, operator);
+  }, [operator]);
 
   // ---- lists the operator picks from, rather than typing ------------------
   useEffect(() => {
@@ -219,18 +253,26 @@ export default function FieldCapture() {
 
   // the running clock
   useEffect(() => {
-    if (v.step !== 5 || !v.monitoring_start) return undefined;
+    if (!visits.some((x) => x.step === 5)) return undefined;
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
-  }, [v.step, v.monitoring_start]);
+  }, [visits]);
 
   // Steps 4 and 5 are after Start: the survey exists on the server and its
   // time is fixed, so going back to edit the form would be a lie about what
   // was recorded. Back is simply not offered there.
-  const canGoBack = v.step > 0 && v.step < 5;
+  // Before Start, back walks the steps. From the first step, or once a survey
+  // is running, it returns to the list and leaves the survey running — it must
+  // never look like a way to undo a survey that has already begun.
+  const canGoBack = activeId != null;
   const back = useCallback(() => {
-    setV((s) => ({ ...s, step: Math.max(0, s.step - 1) }));
-  }, []);
+    const cur = visits.find((x) => x.id === activeId);
+    if (cur && cur.step > 0 && cur.step < 5) {
+      setV((s) => ({ ...s, step: s.step - 1 }));
+    } else {
+      setActiveId(null);
+    }
+  }, [visits, activeId, setV]);
 
   // The phone's own back gesture moves a step rather than leaving the app.
   // Without this, one swipe from step 3 closes a half-filled visit.
@@ -290,7 +332,7 @@ export default function FieldCapture() {
 
   // ---- Start: the campaign is created here, at the instrument ------------
   const start = async () => {
-    if (!v.operator) { toast.error("Choose who is recording this"); go(0); return; }
+    if (!operator) { toast.error("Choose who is recording this"); go(0); return; }
     if (!v.project_name.trim() || !v.client.trim()) {
       toast.error("Project and client are needed first"); go(0); return;
     }
@@ -324,7 +366,7 @@ export default function FieldCapture() {
           site_conditions_note: v.site_conditions || null,
           met_wind_mean_ms: v.met_wind_speed ? Number(v.met_wind_speed) : null,
           met_wind_prevailing: v.met_wind_dir || null,
-          prepared_by: v.operator,
+          prepared_by: operator,
         });
         made[type] = c.id;
         // station_id is not part of the creation model, so it follows as an
@@ -390,7 +432,7 @@ export default function FieldCapture() {
           longitude: s.lon || undefined,
           accuracy_m: s.acc || undefined,
           taken_at: s.at,
-          recorded_by: v.operator,
+          recorded_by: operator,
         }, s.file || undefined);
         sent.push(s);
       }
@@ -421,14 +463,19 @@ export default function FieldCapture() {
     }
   };
 
-  const reset = () => {
-    localStorage.removeItem(DRAFT_KEY);
-    setPhotos([]);
-    setSamples([]);
-    // A new visit identifier, and the operator kept: he is the same person on
-    // the next site, and asking again would be the sort of small friction that
-    // gets an app abandoned.
-    setV({ ...BLANK, visitId: uid(), operator: v.operator });
+  /** A new visit joins the list and becomes the open one. */
+  const newVisit = () => {
+    const fresh = blankVisit();
+    setVisits((all) => [...all, fresh]);
+    setActiveId(fresh.id);
+  };
+
+  /** Takes a finished visit off the phone. The campaigns and anything already
+   *  sent stay where they are; only the local copy goes. */
+  const closeVisit = (id) => {
+    setVisits((all) => all.filter((x) => x.id !== id));
+    setMedia((m) => { const n = { ...m }; delete n[id]; return n; });
+    setActiveId((cur) => (cur === id ? null : cur));
   };
 
   // ---- appearance ---------------------------------------------------------
@@ -545,8 +592,67 @@ export default function FieldCapture() {
           ))}
         </div>
 
+        {/* The list of open visits. Several can run at once — a site is set
+            up, the next an hour later, both running for a day — so the app
+            opens here, and a running survey is never more than one tap away. */}
+        {activeId == null && (
+          <section>
+            <h1 className="text-[21px] font-semibold tracking-tight">
+              {operator ? `Hello, ${operator.split(" ")[0]}` : "Site visits"}
+            </h1>
+            <p className={`text-[12.5px] mb-4 ${T.sub}`}>
+              {visits.length
+                ? `${visits.filter((x) => x.step === 5).length} running`
+                : "Nothing open. Start a visit when you reach the site."}
+            </p>
+
+            {visits.map((x) => {
+              const running = x.step === 5;
+              const done = x.step === 6;
+              const m = media[x.id] || { photos: [], samples: [] };
+              const waiting = m.photos.length + m.samples.length;
+              return (
+                <button key={x.id} type="button" onClick={() => setActiveId(x.id)}
+                  className={`w-full text-left rounded-xl border px-3.5 py-3 mb-2.5
+                    ${running ? "border-amber-400/30 bg-amber-400/10"
+                      : done ? T.sensed : T.ctl}`}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[14px] font-semibold">
+                      {x.site_name || x.project_name || "Untitled visit"}
+                    </span>
+                    <span className={`ml-auto text-[10px] uppercase tracking-[.12em]
+                      ${running ? "text-amber-400"
+                        : done ? "text-emerald-400" : T.faint}`}>
+                      {running ? "Running" : done ? "Closed" : `Step ${x.step + 1}`}
+                    </span>
+                  </div>
+                  <div className={`text-[11.5px] mt-1 ${T.sub}`}>
+                    {running ? (
+                      <span className="tabular-nums">
+                        {elapsed(x.monitoring_start)} · started{" "}
+                        {words(x.monitoring_start)}
+                        <span className="hidden">{tick}</span>
+                      </span>
+                    ) : done ? "Data file still to upload at home"
+                      : (x.client || "Not started")}
+                  </div>
+                  {waiting > 0 && (
+                    <div className={`text-[10.5px] mt-1 ${T.faint}`}>
+                      {m.photos.length} photograph{m.photos.length === 1 ? "" : "s"}
+                      {" · "}{m.samples.length} sample{m.samples.length === 1 ? "" : "s"}
+                      {" waiting to send"}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+
+            <Btn onClick={newVisit}>Start a new site visit</Btn>
+          </section>
+        )}
+
         {/* 0 — what and where */}
-        {v.step === 0 && (
+        {activeId != null && v.step === 0 && (
           <section>
             <p className="text-[10px] uppercase tracking-[.16em] text-emerald-400 mb-1.5">
               Step 1 of 5
@@ -559,7 +665,8 @@ export default function FieldCapture() {
             <div className="mb-2.5">
               <Label>Recorded by</Label>
               {operators.length ? (
-                <select value={v.operator} onChange={set("operator")}
+                <select value={operator}
+                  onChange={(e) => setOperator(e.target.value)}
                   className={`w-full rounded-xl border px-3.5 py-2.5 text-[14px] outline-none ${T.ctl}`}>
                   <option value="">Choose your name</option>
                   {operators.map((o) => (
@@ -570,7 +677,8 @@ export default function FieldCapture() {
                 /* Only when the list could not be fetched — offline, or no
                    accounts yet. Choosing from a known set is the point, so
                    this is a fallback and not the normal path. */
-                <input value={v.operator} onChange={set("operator")}
+                <input value={operator}
+                  onChange={(e) => setOperator(e.target.value)}
                   placeholder="Your name"
                   className={`w-full rounded-xl border px-3.5 py-2.5 text-[14px] outline-none ${T.ctl}`} />
               )}
@@ -637,7 +745,7 @@ export default function FieldCapture() {
         )}
 
         {/* 1 — position and equipment */}
-        {v.step === 1 && (
+        {activeId != null && v.step === 1 && (
           <section>
             <p className="text-[10px] uppercase tracking-[.16em] text-emerald-400 mb-1.5">
               Step 2 of 5
@@ -691,7 +799,7 @@ export default function FieldCapture() {
         )}
 
         {/* 2 — photographs and conditions */}
-        {v.step === 2 && (
+        {activeId != null && v.step === 2 && (
           <section>
             <p className="text-[10px] uppercase tracking-[.16em] text-emerald-400 mb-1.5">
               Step 3 of 5
@@ -766,7 +874,7 @@ export default function FieldCapture() {
         )}
 
         {/* 3 — samples */}
-        {v.step === 3 && (
+        {activeId != null && v.step === 3 && (
           <section>
             <p className="text-[10px] uppercase tracking-[.16em] text-emerald-400 mb-1.5">
               Step 4 of 5
@@ -845,7 +953,7 @@ export default function FieldCapture() {
         )}
 
         {/* 4 — weather, then start */}
-        {v.step === 4 && (
+        {activeId != null && v.step === 4 && (
           <section>
             <p className="text-[10px] uppercase tracking-[.16em] text-emerald-400 mb-1.5">
               Step 5 of 5
@@ -879,7 +987,7 @@ export default function FieldCapture() {
                 </div>
               ))}
               <div className={`text-[11px] mt-1.5 ${T.faint}`}>
-                {v.operator || "—"} · {photos.length} photograph{photos.length === 1 ? "" : "s"}
+                {operator || "—"} · {photos.length} photograph{photos.length === 1 ? "" : "s"}
                 {" · "}{samples.length} sample{samples.length === 1 ? "" : "s"}
               </div>
             </div>
@@ -892,7 +1000,7 @@ export default function FieldCapture() {
         )}
 
         {/* 5 — running */}
-        {v.step === 5 && (
+        {activeId != null && v.step === 5 && (
           <section>
             <p className="text-[10px] uppercase tracking-[.16em] text-amber-400 mb-1.5">
               In progress
@@ -922,12 +1030,15 @@ export default function FieldCapture() {
             </div>
 
             <Btn tone="quiet" onClick={() => go(3)}>Add a sample</Btn>
+            <Btn tone="quiet" onClick={() => setActiveId(null)}>
+              Leave it running — start another site
+            </Btn>
             <Btn tone="stop" onClick={stop}>Stop survey</Btn>
           </section>
         )}
 
         {/* 6 — done */}
-        {v.step === 6 && (
+        {activeId != null && v.step === 6 && (
           <section>
             <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full
               border border-emerald-400/40 bg-emerald-400/10 text-emerald-300">
@@ -968,12 +1079,12 @@ export default function FieldCapture() {
 
             <Btn tone="dark" onClick={() => {
               const id = Object.values(v.campaignIds)[0];
-              reset();
+              closeVisit(v.id);
               navigate(id ? `/campaigns/${id}` : "/campaigns");
             }}>
               Open the campaign
             </Btn>
-            <Btn tone="quiet" onClick={reset}>Start another site</Btn>
+            <Btn tone="quiet" onClick={() => closeVisit(v.id)}>Done with this one</Btn>
           </section>
         )}
       </div>
