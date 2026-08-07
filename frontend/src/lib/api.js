@@ -359,4 +359,9 @@ export const createSiteSample = (fields, photo) => {
 export const updateSiteSample = (id, payload) =>
   api.patch(`/site-samples/${id}`, payload).then((r) => r.data);
 export const deleteSiteSample = (id) => api.delete(`/site-samples/${id}`);
-export const siteSamplePhotoUrl = (id) => `${API_BASE}/site-samples/${id}/photo`;
+// Fetched through the app's client, not as a plain <img src>: the route sits
+// behind the Bearer token, and a browser fetching an image never sends it.
+export async function fetchSiteSamplePhotoBlob(id) {
+  const res = await api.get(`/site-samples/${id}/photo`, { responseType: "blob" });
+  return res.data;
+}
