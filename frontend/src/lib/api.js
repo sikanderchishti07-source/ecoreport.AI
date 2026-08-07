@@ -335,3 +335,24 @@ export const uploadCompanyDocument = (files, kind = "license", caption) => {
 };
 export const deleteCompanyDocument = (id) =>
   api.delete(`/company-documents/${id}`);
+
+// --- Site samples (water and soil) ----------------------------------------
+// Multipart because a sample carries its photograph. The fields are appended
+// one at a time so an empty value is simply absent rather than being sent as
+// the string "undefined", which the server would then store.
+export const listSiteSamples = (params = {}) =>
+  api.get("/site-samples", { params }).then((r) => r.data);
+export const createSiteSample = (fields, photo) => {
+  const fd = new FormData();
+  Object.entries(fields).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") fd.append(k, v);
+  });
+  if (photo) fd.append("photo", photo);
+  return api.post("/site-samples", fd, {
+    headers: { "Content-Type": "multipart/form-data" }, timeout: 120000,
+  }).then((r) => r.data);
+};
+export const updateSiteSample = (id, payload) =>
+  api.patch(`/site-samples/${id}`, payload).then((r) => r.data);
+export const deleteSiteSample = (id) => api.delete(`/site-samples/${id}`);
+export const siteSamplePhotoUrl = (id) => `${API_BASE}/site-samples/${id}/photo`;
