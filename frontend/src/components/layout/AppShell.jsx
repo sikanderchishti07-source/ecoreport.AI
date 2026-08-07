@@ -133,7 +133,7 @@ export default function AppShell() {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <header className="sticky top-0 z-30 border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto max-w-[1400px] px-4 md:px-6 h-16 flex items-center justify-between">
+        <div className="mx-auto max-w-[1400px] px-4 md:px-6 h-16 flex items-center gap-1">
           {/* A brand lockup rather than a word among the links: the real mark
               at its own proportions, then a rule before the navigation.
               "Phase 1" is gone — it stopped being true months ago, and a label
@@ -160,7 +160,7 @@ export default function AppShell() {
               Live
             </span>
           </div>
-          <nav className="flex items-center gap-1">
+          <nav className="flex items-center gap-0.5">
 
             <NavLink
               to="/campaigns"
@@ -222,6 +222,7 @@ export default function AppShell() {
                 )}
               </NavLink>
             )}
+            <span className="flex-1" />
             <div className="relative" ref={bellRef}>
               <button
                 onClick={() => { setOpenBell((v) => !v); if (!openBell) loadNotes(); }}
