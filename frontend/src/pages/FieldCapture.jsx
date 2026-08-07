@@ -26,8 +26,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  ArrowRight, Camera, Check, ChevronLeft, Droplets, Loader2, MapPin, Moon,
-  Mountain, Sun, Trash2,
+  ArrowRight, Camera, Check, ChevronLeft, Droplets, Images, Loader2, MapPin,
+  Moon, Mountain, Sun, Trash2,
 } from "lucide-react";
 import {
   createCampaign, createSiteSample, listCampaigns, listOperators,
@@ -143,7 +143,8 @@ export default function FieldCapture() {
     });
   }, [activeId]);
   const [operators, setOperators] = useState([]);
-  const sampleRef = useRef(null);
+  const sampleCamRef = useRef(null);
+  const sampleGalRef = useRef(null);
   const [stations, setStations] = useState([]);
   const [known, setKnown] = useState({ projects: [], clients: [] });
   const [locating, setLocating] = useState(false);
@@ -981,14 +982,29 @@ export default function FieldCapture() {
                 <div className="grid grid-cols-2 gap-2 mt-2.5">
                   <button type="button"
                     onClick={() => {
-                      sampleRef.current.dataset.kind = k;
-                      sampleRef.current.click();
+                      sampleCamRef.current.dataset.kind = k;
+                      sampleCamRef.current.click();
                     }}
                     className={`rounded-xl border px-3 py-2.5 text-[12.5px]
                       flex items-center justify-center gap-1.5 ${T.sensed}`}>
-                    <Camera className="w-3.5 h-3.5" /> Add one
+                    <Camera className="w-3.5 h-3.5" /> Camera
                   </button>
 
+                  {/* Photographs already taken — with his own timestamp
+                      camera, or before the app was opened. Each picture
+                      becomes one sample, so choosing four adds four. */}
+                  <button type="button"
+                    onClick={() => {
+                      sampleGalRef.current.dataset.kind = k;
+                      sampleGalRef.current.click();
+                    }}
+                    className={`rounded-xl border px-3 py-2.5 text-[12.5px]
+                      flex items-center justify-center gap-1.5 ${T.ctl}`}>
+                    <Images className="w-3.5 h-3.5" /> Gallery
+                  </button>
+                </div>
+
+                <div className="mt-2">
                   {/* Counting, for samples already taken or when there is no
                       time to photograph each. */}
                   <div className={`rounded-xl border flex items-center
@@ -1008,22 +1024,38 @@ export default function FieldCapture() {
             ))}
 
             <p className={`text-[10.5px] mt-1 ${T.faint}`}>
-              <b>Add one</b> takes a photograph and its own position.
-              <b> + </b> just counts: the site position and this moment are
-              recorded instead, and the sample is marked as counted. Both are
-              sent when you stop, and listed under Site Samples.
+              <b>Camera</b> and <b>Gallery</b> each add one sample per
+              photograph, with a position read now. <b>+</b> just counts: the
+              site position and this moment are recorded, and the sample is
+              marked as counted. All are sent when you stop, and listed under
+              Site Samples.
             </p>
 
             {/* The phone's own camera here, not the stamped one: a sample
                 photograph records the container, not a bearing, and fewer taps
                 at this point is worth more than a stamp. */}
-            <input ref={sampleRef} type="file" accept="image/*" capture="environment"
-              className="hidden"
+            <input ref={sampleCamRef} type="file" accept="image/*"
+              capture="environment" className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0] || null;
                 const kind = e.target.dataset.kind || "water";
                 e.target.value = "";
                 addSample(kind, f);
+              }} />
+
+            {/* No capture attribute, so the gallery opens rather than the
+                camera. Several at once: each picture is its own sample, and
+                they all take the position read now — the pictures were taken
+                earlier, so their own position is not something we know. */}
+            <input ref={sampleGalRef} type="file" accept="image/*" multiple
+              className="hidden"
+              onChange={async (e) => {
+                const files = Array.from(e.target.files || []);
+                const kind = e.target.dataset.kind || "water";
+                e.target.value = "";
+                for (const f of files) {
+                  await addSample(kind, f);
+                }
               }} />
 
             <Btn tone="dark" onClick={() => go(4)}>Continue</Btn>
