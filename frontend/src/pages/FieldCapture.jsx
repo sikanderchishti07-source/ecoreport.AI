@@ -26,17 +26,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  ArrowRight, Camera, Check, ChevronLeft, Loader2, MapPin, Moon, Sun,
+  ArrowRight, Camera, Check, ChevronLeft, Droplets, Loader2, MapPin, Moon,
+  Mountain, Sun, Trash2,
 } from "lucide-react";
 import {
-  createCampaign, listCampaigns, listStations, updateCampaign,
-  uploadAttachments,
+  createCampaign, createSiteSample, listCampaigns, listOperators,
+  listStations, updateCampaign, uploadAttachments,
 } from "@/lib/api";
 import FieldCamera, { DATE_FORMATS, cardinal } from "@/components/FieldCamera";
 
 const DRAFT_KEY = "bsa.field.visit";
 const THEME_KEY = "bsa.field.theme";
 const DATEFMT_KEY = "bsa.field.datefmt";
+const OPERATOR_KEY = "bsa.field.operator";
+
+function uid() {
+  try { return crypto.randomUUID(); }
+  catch { return `v-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+}
 
 // Four fixed views, so the same record is made at every site and nothing is
 // left out because the operator was in a hurry. The compass writes the bearing
@@ -71,13 +78,18 @@ function elapsed(fromStamp) {
   return `${p(Math.floor(s / 3600))}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}`;
 }
 
+const STEPS = ["Site", "Position", "Photographs", "Samples", "Start",
+  "Running", "Done"];
+
 const BLANK = {
   step: 0,
-  campaignId: null,
+  visitId: uid(),
+  operator: "",
+  types: ["air"],          // air, noise, or both — both makes two campaigns
+  campaignIds: {},         // { air: id, noise: id }
   project_name: "",
   client: "",
   site_name: "",
-  campaign_type: "air",
   latitude: "",
   longitude: "",
   accuracy: null,
@@ -94,13 +106,16 @@ export default function FieldCapture() {
   const navigate = useNavigate();
   const [v, setV] = useState(BLANK);
   const [busy, setBusy] = useState(false);
-  const [photos, setPhotos] = useState([]);          // File objects, not yet sent
+  const [photos, setPhotos] = useState([]);   // { file, view, heading, survey }
+  const [samples, setSamples] = useState([]); // { kind, file, at, lat, lon, acc }
+  const [operators, setOperators] = useState([]);
+  const sampleRef = useRef(null);
   const [stations, setStations] = useState([]);
   const [known, setKnown] = useState({ projects: [], clients: [] });
   const [locating, setLocating] = useState(false);
   const [tick, setTick] = useState(0);
   const fileRef = useRef(null);
-  const [camFor, setCamFor] = useState(null);      // which view is being shot
+  const [camFor, setCamFor] = useState(null);  // { view, survey }
   const [dateFmt, setDateFmt] = useState(
     () => localStorage.getItem(DATEFMT_KEY) || "long");
   useEffect(() => { localStorage.setItem(DATEFMT_KEY, dateFmt); }, [dateFmt]);
@@ -169,11 +184,16 @@ export default function FieldCapture() {
     try {
       const raw = localStorage.getItem(DRAFT_KEY);
       if (raw) setV({ ...BLANK, ...JSON.parse(raw) });
+      const op = localStorage.getItem(OPERATOR_KEY);
+      if (op) setV((s) => ({ ...s, operator: s.operator || op }));
     } catch { /* a corrupt draft is not worth failing over */ }
   }, []);
   useEffect(() => {
     try { localStorage.setItem(DRAFT_KEY, JSON.stringify(v)); } catch { /* full */ }
   }, [v]);
+  useEffect(() => {
+    if (v.operator) localStorage.setItem(OPERATOR_KEY, v.operator);
+  }, [v.operator]);
 
   // ---- lists the operator picks from, rather than typing ------------------
   useEffect(() => {
@@ -185,19 +205,21 @@ export default function FieldCapture() {
           clients: [...new Set(cs.map((c) => c.client).filter(Boolean))],
         });
       } catch { /* offline: the fields still accept typing */ }
+      try { setOperators(await listOperators()); } catch { setOperators([]); }
     })();
   }, []);
   useEffect(() => {
     (async () => {
       try {
-        setStations(await listStations(v.campaign_type === "noise" ? "noise" : "air"));
+        setStations(await listStations(
+          v.types.length === 1 && v.types[0] === "noise" ? "noise" : "air"));
       } catch { setStations([]); }
     })();
-  }, [v.campaign_type]);
+  }, [v.types]);
 
   // the running clock
   useEffect(() => {
-    if (v.step !== 4 || !v.monitoring_start) return undefined;
+    if (v.step !== 5 || !v.monitoring_start) return undefined;
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, [v.step, v.monitoring_start]);
@@ -205,7 +227,7 @@ export default function FieldCapture() {
   // Steps 4 and 5 are after Start: the survey exists on the server and its
   // time is fixed, so going back to edit the form would be a lie about what
   // was recorded. Back is simply not offered there.
-  const canGoBack = v.step > 0 && v.step < 4;
+  const canGoBack = v.step > 0 && v.step < 5;
   const back = useCallback(() => {
     setV((s) => ({ ...s, step: Math.max(0, s.step - 1) }));
   }, []);
@@ -225,103 +247,157 @@ export default function FieldCapture() {
   const go = (step) => setV((s) => ({ ...s, step }));
 
   // ---- the phone's own reading -------------------------------------------
-  const locate = useCallback(() => {
-    if (!navigator.geolocation) {
-      toast.error("This phone will not share its position");
-      return;
-    }
-    setLocating(true);
+  const readPosition = useCallback(() => new Promise((resolve) => {
+    if (!navigator.geolocation) { resolve(null); return; }
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocating(false);
-        setV((s) => ({
-          ...s,
-          latitude: pos.coords.latitude.toFixed(6),
-          longitude: pos.coords.longitude.toFixed(6),
-          // Kept and shown. A coordinate without its accuracy is a guess
-          // wearing a suit, and between buildings a phone can be 40 m out.
-          accuracy: Math.round(pos.coords.accuracy),
-        }));
-      },
-      () => {
-        setLocating(false);
-        toast.error("Could not get a position — enter it by hand if needed");
-      },
+      (pos) => resolve({
+        latitude: pos.coords.latitude.toFixed(6),
+        longitude: pos.coords.longitude.toFixed(6),
+        // Kept and shown. A coordinate without its accuracy is a guess wearing
+        // a suit, and between buildings a phone can be 40 m out.
+        accuracy: Math.round(pos.coords.accuracy),
+      }),
+      () => resolve(null),
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
     );
-  }, []);
+  }), []);
+
+  const locate = useCallback(async () => {
+    setLocating(true);
+    const p = await readPosition();
+    setLocating(false);
+    if (!p) {
+      toast.error("Could not get a position — enter it by hand if needed");
+      return;
+    }
+    setV((s) => ({ ...s, ...p }));
+  }, [readPosition]);
   useEffect(() => { if (v.step === 1 && !v.latitude) locate(); }, [v.step]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const addSample = async (kind, file) => {
+    // Its own position, not the station's: a sample is often taken some way
+    // from the instrument, and that distance is the whole point of recording
+    // where it came from.
+    const p = await readPosition();
+    setSamples((all) => [...all, {
+      kind, file: file || null, at: localStamp(),
+      lat: p?.latitude || v.latitude, lon: p?.longitude || v.longitude,
+      acc: p?.accuracy ?? v.accuracy,
+    }]);
+    buzz(18);
+  };
+  const countOf = (kind) => samples.filter((s) => s.kind === kind).length;
 
   // ---- Start: the campaign is created here, at the instrument ------------
   const start = async () => {
+    if (!v.operator) { toast.error("Choose who is recording this"); go(0); return; }
     if (!v.project_name.trim() || !v.client.trim()) {
-      toast.error("Project and client are needed first");
-      go(0);
-      return;
+      toast.error("Project and client are needed first"); go(0); return;
     }
+    if (!v.types.length) { toast.error("Choose air, noise, or both"); go(0); return; }
     // The campaign cannot exist without coordinates, so this is caught here
     // rather than failing after Start has been pressed at the instrument.
     if (!v.latitude || !v.longitude) {
-      toast.error("A position is needed — read it, or type it in");
-      go(1);
-      return;
+      toast.error("A position is needed — read it, or type it in"); go(1); return;
     }
+
     setBusy(true);
     const started = localStamp();
+    const made = {};
     try {
-      const payload = {
-        project_name: v.project_name.trim(),
-        client: v.client.trim(),
-        site_name: v.site_name.trim() || v.project_name.trim(),
-        campaign_type: v.campaign_type,
-        latitude: v.latitude ? Number(v.latitude) : null,
-        longitude: v.longitude ? Number(v.longitude) : null,
-        inlet_height_m: v.inlet_height ? Number(v.inlet_height) : 5.0,
-        monitoring_start: started,
-        // The model requires an end, and the survey has not finished. It is
-        // set equal to the start rather than guessed at start + 24 h: a
-        // zero-length window is obviously unfinished and the campaign form
-        // refuses to save it, whereas a guessed end would look like a real
-        // one and could reach a report. Stop replaces it with the true time.
-        monitoring_end: started,
-        site_conditions_note: v.site_conditions || null,
-        met_wind_mean_ms: v.met_wind_speed ? Number(v.met_wind_speed) : null,
-        met_wind_prevailing: v.met_wind_dir || null,
-      };
-      const c = await createCampaign(payload);
-      // station_id is not part of the creation model, so it follows as an
-      // update rather than being dropped silently.
-      if (v.station_id) {
-        try { await updateCampaign(c.id, { station_id: v.station_id }); }
-        catch { toast.error("Equipment not linked — set it at home"); }
+      for (const type of v.types) {
+        const c = await createCampaign({
+          project_name: v.project_name.trim(),
+          client: v.client.trim(),
+          site_name: v.site_name.trim() || v.project_name.trim(),
+          campaign_type: type,
+          latitude: Number(v.latitude),
+          longitude: Number(v.longitude),
+          inlet_height_m: v.inlet_height ? Number(v.inlet_height) : 5.0,
+          monitoring_start: started,
+          // The model requires an end, and the survey has not finished. It is
+          // set equal to the start rather than guessed at start + 24 h: a
+          // zero-length window is obviously unfinished and the campaign form
+          // refuses to save it, whereas a guessed end would look like a real
+          // one and could reach a report. Stop replaces it with the true time.
+          monitoring_end: started,
+          site_conditions_note: v.site_conditions || null,
+          met_wind_mean_ms: v.met_wind_speed ? Number(v.met_wind_speed) : null,
+          met_wind_prevailing: v.met_wind_dir || null,
+          prepared_by: v.operator,
+        });
+        made[type] = c.id;
+        // station_id is not part of the creation model, so it follows as an
+        // update rather than being dropped silently.
+        if (v.station_id) {
+          try { await updateCampaign(c.id, { station_id: v.station_id }); }
+          catch { /* set it at home */ }
+        }
       }
-      setV((s) => ({ ...s, step: 4, campaignId: c.id, monitoring_start: started }));
+      setV((s) => ({ ...s, step: 5, campaignIds: made, monitoring_start: started }));
       buzz([28, 40, 28]);
-      toast.success("Survey started");
-      if (photos.length) sendPhotos(c.id);
-    } catch (e) {
+      toast.success(v.types.length > 1 ? "Two campaigns started" : "Survey started");
+      sendPhotos(made);
+    } catch {
       toast.error("Could not start — nothing was lost, try again when you have signal");
     } finally {
       setBusy(false);
     }
   };
 
-  /** Sent as ordinary campaign attachments of kind "site_photo", so they
-   *  appear on the campaign's Attachments tab with everything else — there is
-   *  no separate field album to go looking in. The caption carries the view
-   *  and the bearing, so the record survives the file being renamed. */
-  const sendPhotos = async (campaignId) => {
-    if (!photos.length) return;
+  /** Photographs go to the campaign they belong to, as ordinary attachments of
+   *  kind "site_photo" — so they appear on that campaign's Attachments tab
+   *  with everything else, and there is no separate field album to hunt in.
+   *  The caption carries the view and the bearing, so the record survives the
+   *  file being renamed. Whatever fails to send stays on the phone. */
+  const sendPhotos = async (ids) => {
+    const map = ids || v.campaignIds;
+    const pending = photos.filter((p) => map[p.survey]);
+    if (!pending.length) return;
+    const sent = [];
     try {
-      for (const p of photos) {
+      for (const p of pending) {
         const bits = [p.view, p.heading == null ? null
           : `facing ${String(p.heading).padStart(3, "0")}° ${cardinal(p.heading)}`];
-        await uploadAttachments(campaignId, "site_photo", [p.file],
+        await uploadAttachments(map[p.survey], "site_photo", [p.file],
           { caption: bits.filter(Boolean).join(" · ") });
+        sent.push(p);
       }
-      setPhotos([]);
     } catch {
-      toast.error("Photographs are still on the phone — they will need sending again");
+      toast.error("Some photographs are still on the phone");
+    } finally {
+      setPhotos((all) => all.filter((p) => !sent.includes(p)));
+    }
+  };
+
+  /** Samples are sent at the end rather than as they are taken: at a site
+   *  there is often no signal, and a failed send mid-visit would leave the
+   *  operator unsure which had gone. They go together, and whatever fails
+   *  stays. They belong to the visit, not to either campaign — which is why
+   *  they carry the visit's own identifier and nothing else. */
+  const sendSamples = async () => {
+    if (!samples.length) return;
+    const sent = [];
+    try {
+      for (const s of samples) {
+        await createSiteSample({
+          visit_id: v.visitId,
+          kind: s.kind,
+          project_name: v.project_name,
+          client: v.client,
+          site_name: v.site_name,
+          latitude: s.lat || undefined,
+          longitude: s.lon || undefined,
+          accuracy_m: s.acc || undefined,
+          taken_at: s.at,
+          recorded_by: v.operator,
+        }, s.file || undefined);
+        sent.push(s);
+      }
+    } catch {
+      toast.error("Some samples are still on the phone");
+    } finally {
+      setSamples((all) => all.filter((s) => !sent.includes(s)));
     }
   };
 
@@ -330,9 +406,12 @@ export default function FieldCapture() {
     setBusy(true);
     const ended = localStamp();
     try {
-      await updateCampaign(v.campaignId, { monitoring_end: ended });
-      await sendPhotos(v.campaignId);
-      setV((s) => ({ ...s, step: 5, monitoring_end: ended }));
+      for (const id of Object.values(v.campaignIds)) {
+        await updateCampaign(id, { monitoring_end: ended });
+      }
+      await sendPhotos();
+      await sendSamples();
+      setV((s) => ({ ...s, step: 6, monitoring_end: ended }));
       buzz([40, 60, 90]);
       toast.success("Survey closed");
     } catch {
@@ -345,7 +424,11 @@ export default function FieldCapture() {
   const reset = () => {
     localStorage.removeItem(DRAFT_KEY);
     setPhotos([]);
-    setV(BLANK);
+    setSamples([]);
+    // A new visit identifier, and the operator kept: he is the same person on
+    // the next site, and asking again would be the sort of small friction that
+    // gets an app abandoned.
+    setV({ ...BLANK, visitId: uid(), operator: v.operator });
   };
 
   // ---- appearance ---------------------------------------------------------
@@ -397,8 +480,6 @@ export default function FieldCapture() {
       </button>
     );
   };
-
-  const steps = ["Site", "Position", "Photographs", "Start", "Running", "Done"];
 
   return (
     <div className={`min-h-screen ${T.shell}`}>
@@ -452,7 +533,7 @@ export default function FieldCapture() {
         </div>
 
         <div className="flex gap-1.5 mt-4 mb-5">
-          {steps.map((s, i) => (
+          {STEPS.map((s, i) => (
             <i key={s} className={`h-[3px] flex-1 rounded-full
               ${i === v.step ? T.railOn : i < v.step ? "bg-emerald-500/50" : T.rail}`} />
           ))}
@@ -468,6 +549,56 @@ export default function FieldCapture() {
             <p className={`text-[12.5px] mb-4 ${T.sub}`}>
               Nothing typed that the phone already knows.
             </p>
+
+            <div className="mb-2.5">
+              <Label>Recorded by</Label>
+              {operators.length ? (
+                <select value={v.operator} onChange={set("operator")}
+                  className={`w-full rounded-xl border px-3.5 py-2.5 text-[14px] outline-none ${T.ctl}`}>
+                  <option value="">Choose your name</option>
+                  {operators.map((o) => (
+                    <option key={o.id} value={o.name}>{o.name}</option>
+                  ))}
+                </select>
+              ) : (
+                /* Only when the list could not be fetched — offline, or no
+                   accounts yet. Choosing from a known set is the point, so
+                   this is a fallback and not the normal path. */
+                <input value={v.operator} onChange={set("operator")}
+                  placeholder="Your name"
+                  className={`w-full rounded-xl border px-3.5 py-2.5 text-[14px] outline-none ${T.ctl}`} />
+              )}
+            </div>
+
+            <div className="mb-2.5">
+              <Label>Surveys at this site</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {[["air", "Air quality"], ["noise", "Noise"]].map(([k, lbl]) => {
+                  const on = v.types.includes(k);
+                  return (
+                    <button key={k} type="button"
+                      onClick={() => setV((s) => ({
+                        ...s,
+                        types: on ? s.types.filter((t) => t !== k) : [...s.types, k],
+                        station_id: "",
+                      }))}
+                      className={`rounded-xl border px-3 py-2.5 text-[13.5px]
+                        flex items-center gap-2 ${on ? T.sensed : T.ctl}`}>
+                      <span className={`grid h-4 w-4 place-items-center rounded border
+                        ${on ? "bg-emerald-400 border-emerald-400" : T.ctl}`}>
+                        {on && <Check className="h-3 w-3 text-[#06121c]" />}
+                      </span>
+                      {lbl}
+                    </button>
+                  );
+                })}
+              </div>
+              {v.types.length > 1 && (
+                <p className={`text-[10.5px] mt-1.5 ${T.faint}`}>
+                  Two campaigns, one window. Photographs kept separate.
+                </p>
+              )}
+            </div>
 
             <div className="mb-2.5">
               <Label>Project</Label>
@@ -492,19 +623,6 @@ export default function FieldCapture() {
               <input value={v.site_name} onChange={set("site_name")}
                 placeholder="Site name"
                 className={`w-full rounded-xl border px-3.5 py-2.5 text-[14px] outline-none ${T.ctl}`} />
-            </div>
-            <div className="mb-2.5">
-              <Label>Survey type</Label>
-              <div className="grid grid-cols-2 gap-2">
-                {[["air", "Air quality"], ["noise", "Noise"]].map(([k, lbl]) => (
-                  <button key={k} type="button"
-                    onClick={() => setV((s) => ({ ...s, campaign_type: k, station_id: "" }))}
-                    className={`rounded-xl border px-3 py-2.5 text-[13.5px]
-                      ${v.campaign_type === k ? T.sensed : T.ctl}`}>
-                    {lbl}
-                  </button>
-                ))}
-              </div>
             </div>
             <Btn tone="dark" onClick={() => go(1)}>
               Continue <ArrowRight className="inline w-4 h-4 ml-1" />
@@ -577,34 +695,43 @@ export default function FieldCapture() {
               Taken now, sent with the visit.
             </p>
 
-            <div className="grid grid-cols-2 gap-2.5">
-              {VIEWS.map((name) => {
-                const shot = photos.find((p) => p.view === name);
-                return (
-                  <button key={name} type="button" onClick={() => setCamFor(name)}
-                    className={`rounded-xl border px-3 py-3 text-left
-                      ${shot ? T.sensed : T.ctl}`}>
-                    <span className="flex items-center gap-2 text-[13.5px] font-medium">
-                      {shot ? <Check className="w-4 h-4 text-emerald-400" />
-                            : <Camera className="w-4 h-4 opacity-60" />}
-                      {name}
-                    </span>
-                    <span className={`block text-[10.5px] mt-1 ${T.faint}`}>
-                      {shot
-                        ? (shot.heading == null ? "From gallery"
-                          : `${String(shot.heading).padStart(3, "0")}° ${cardinal(shot.heading)}`)
-                        : "Not taken"}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <button type="button" onClick={() => setCamFor("Extra")}
-              className={`mt-2.5 w-full rounded-xl border border-dashed px-3 py-2.5
-                text-[12.5px] ${T.ctl} ${T.sub}`}>
-              Another photograph
-            </button>
+            {surveys.map((survey) => (
+              <div key={survey} className="mb-4">
+                {surveys.length > 1 && (
+                  <Label>{survey === "air" ? "Air quality" : "Noise"}</Label>
+                )}
+                <div className="grid grid-cols-2 gap-2.5">
+                  {VIEWS.map((name) => {
+                    const shot = photos.find(
+                      (p) => p.view === name && p.survey === survey);
+                    return (
+                      <button key={name} type="button"
+                        onClick={() => setCamFor({ view: name, survey })}
+                        className={`rounded-xl border px-3 py-3 text-left
+                          ${shot ? T.sensed : T.ctl}`}>
+                        <span className="flex items-center gap-2 text-[13.5px] font-medium">
+                          {shot ? <Check className="w-4 h-4 text-emerald-400" />
+                                : <Camera className="w-4 h-4 opacity-60" />}
+                          {name}
+                        </span>
+                        <span className={`block text-[10.5px] mt-1 ${T.faint}`}>
+                          {shot
+                            ? (shot.heading == null ? "From gallery"
+                              : `${String(shot.heading).padStart(3, "0")}° ${cardinal(shot.heading)}`)
+                            : "Not taken"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button type="button"
+                  onClick={() => setCamFor({ view: "Extra", survey })}
+                  className={`mt-2.5 w-full rounded-xl border border-dashed px-3 py-2.5
+                    text-[12.5px] ${T.ctl} ${T.sub}`}>
+                  Another photograph
+                </button>
+              </div>
+            ))}
 
             <div className="mt-3">
               <Label>Date shown on the photograph</Label>
@@ -632,11 +759,90 @@ export default function FieldCapture() {
           </section>
         )}
 
-        {/* 3 — weather, then start */}
+        {/* 3 — samples */}
         {v.step === 3 && (
           <section>
             <p className="text-[10px] uppercase tracking-[.16em] text-emerald-400 mb-1.5">
               Step 4 of 5
+            </p>
+            <h1 className="text-[21px] font-semibold tracking-tight">Samples taken</h1>
+            <p className={`text-[12.5px] mb-4 ${T.sub}`}>
+              Each keeps its own time and position. Skip if there are none.
+            </p>
+
+            {samples.length > 0 && (
+              <div className="mb-3 space-y-2">
+                {samples.map((sm, i) => {
+                  const n = samples.filter((x, j) => x.kind === sm.kind && j <= i).length;
+                  const Icon = sm.kind === "water" ? Droplets : Mountain;
+                  return (
+                    <div key={i} className={`rounded-xl border px-3 py-2.5 ${T.ctl}`}>
+                      <div className="flex items-center gap-2">
+                        <Icon className={`w-4 h-4 ${sm.kind === "water"
+                          ? "text-sky-400" : "text-amber-500"}`} />
+                        <span className="text-[13.5px] font-medium capitalize">
+                          {sm.kind} {n}
+                        </span>
+                        <button type="button" aria-label="Remove"
+                          onClick={() => setSamples((all) => all.filter((_, j) => j !== i))}
+                          className={`ml-auto ${T.faint}`}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className={`text-[10.5px] mt-1 ${T.faint}`}>
+                        {words(sm.at)}
+                        {sm.lat ? ` · ${sm.lat}, ${sm.lon}` : " · no position"}
+                        {sm.file ? " · photo" : " · no photo"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2.5">
+              {[["water", "Water", Droplets, "text-sky-400"],
+                ["soil", "Soil", Mountain, "text-amber-500"]].map(([k, lbl, Icon, tone]) => (
+                <button key={k} type="button"
+                  onClick={() => {
+                    sampleRef.current.dataset.kind = k;
+                    sampleRef.current.click();
+                  }}
+                  className={`rounded-xl border px-3 py-3 text-left ${T.ctl}`}>
+                  <span className="flex items-center gap-2 text-[13.5px] font-medium">
+                    <Icon className={`w-4 h-4 ${tone}`} /> {lbl}
+                  </span>
+                  <span className={`block text-[10.5px] mt-1 ${T.faint}`}>
+                    {countOf(k)} recorded
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className={`text-[10.5px] mt-2 ${T.faint}`}>
+              Sent when you stop the survey, and listed under Site Samples.
+            </p>
+
+            {/* The phone's own camera here, not the stamped one: a sample
+                photograph records the container, not a bearing, and fewer taps
+                at this point is worth more than a stamp. */}
+            <input ref={sampleRef} type="file" accept="image/*" capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0] || null;
+                const kind = e.target.dataset.kind || "water";
+                e.target.value = "";
+                addSample(kind, f);
+              }} />
+
+            <Btn tone="dark" onClick={() => go(4)}>Continue</Btn>
+          </section>
+        )}
+
+        {/* 4 — weather, then start */}
+        {v.step === 4 && (
+          <section>
+            <p className="text-[10px] uppercase tracking-[.16em] text-emerald-400 mb-1.5">
+              Step 5 of 5
             </p>
             <h1 className="text-[21px] font-semibold tracking-tight">Begin the survey</h1>
             <p className={`text-[12.5px] mb-4 ${T.sub}`}>
@@ -656,6 +862,22 @@ export default function FieldCapture() {
                   className={`w-full rounded-xl border px-3 py-2.5 text-[14px] outline-none ${T.ctl}`} /></div>
             </div>
 
+            <div className={`rounded-xl border px-3.5 py-3 ${T.ctl}`}>
+              <div className={`text-[10px] uppercase tracking-[.13em] ${T.faint} mb-1.5`}>
+                About to create
+              </div>
+              {surveys.map((t) => (
+                <div key={t} className="text-[13px] flex items-center gap-2">
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  {v.project_name || "—"} — {t === "air" ? "Air quality" : "Noise"}
+                </div>
+              ))}
+              <div className={`text-[11px] mt-1.5 ${T.faint}`}>
+                {v.operator || "—"} · {photos.length} photograph{photos.length === 1 ? "" : "s"}
+                {" · "}{samples.length} sample{samples.length === 1 ? "" : "s"}
+              </div>
+            </div>
+
             <Btn onClick={start}>Start now</Btn>
             <p className={`text-[11px] mt-3 text-center ${T.faint}`}>
               The moment is recorded on the server, not on this phone.
@@ -663,8 +885,8 @@ export default function FieldCapture() {
           </section>
         )}
 
-        {/* 4 — running */}
-        {v.step === 4 && (
+        {/* 5 — running */}
+        {v.step === 5 && (
           <section>
             <p className="text-[10px] uppercase tracking-[.16em] text-amber-400 mb-1.5">
               In progress
@@ -683,18 +905,23 @@ export default function FieldCapture() {
               <p className={`text-[11.5px] ${T.sub}`}>Started {words(v.monitoring_start)}</p>
             </div>
 
-            {photos.length > 0 && (
-              <p className={`text-[11.5px] mt-3 ${T.sub}`}>
-                {photos.length} photograph{photos.length > 1 ? "s" : ""} waiting to send.
-              </p>
-            )}
+            <div className={`rounded-xl border px-3.5 py-2.5 mt-3 ${T.ctl}`}>
+              {[["Campaigns", Object.keys(v.campaignIds).length],
+                ["Photographs waiting", photos.length],
+                ["Samples waiting", samples.length]].map(([k, n]) => (
+                <div key={k} className="flex justify-between text-[12.5px] py-1">
+                  <span className={T.sub}>{k}</span><b>{n}</b>
+                </div>
+              ))}
+            </div>
 
+            <Btn tone="quiet" onClick={() => go(3)}>Add a sample</Btn>
             <Btn tone="stop" onClick={stop}>Stop survey</Btn>
           </section>
         )}
 
-        {/* 5 — done */}
-        {v.step === 5 && (
+        {/* 6 — done */}
+        {v.step === 6 && (
           <section>
             <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full
               border border-emerald-400/40 bg-emerald-400/10 text-emerald-300">
@@ -719,12 +946,25 @@ export default function FieldCapture() {
               </Ctl>
             </div>
             <div className="mb-2.5">
+              <Label>Created</Label>
+              <Ctl>
+                {Object.keys(v.campaignIds).map((t) => (
+                  <div key={t} className="text-[13px]">
+                    {v.project_name} — {t === "air" ? "Air quality" : "Noise"}
+                  </div>
+                ))}
+              </Ctl>
+            </div>
+            <div className="mb-2.5">
               <Label>Still needed at home</Label>
               <Ctl>The instrument&rsquo;s data file</Ctl>
             </div>
 
-            <Btn tone="dark"
-              onClick={() => { const id = v.campaignId; reset(); navigate(`/campaigns/${id}`); }}>
+            <Btn tone="dark" onClick={() => {
+              const id = Object.values(v.campaignIds)[0];
+              reset();
+              navigate(id ? `/campaigns/${id}` : "/campaigns");
+            }}>
               Open the campaign
             </Btn>
             <Btn tone="quiet" onClick={reset}>Start another site</Btn>
@@ -734,17 +974,23 @@ export default function FieldCapture() {
 
       <FieldCamera
         open={!!camFor}
-        view={camFor}
-        site={v.site_name || v.project_name}
+        view={camFor?.view}
+        site={[v.site_name || v.project_name,
+          surveys.length > 1
+            ? (camFor?.survey === "air" ? "Air" : "Noise") : null]
+          .filter(Boolean).join(" · ")}
         coords={{ latitude: v.latitude, longitude: v.longitude, accuracy: v.accuracy }}
         dateFormat={dateFmt}
         onClose={() => setCamFor(null)}
-        onCapture={(file, meta) =>
+        onCapture={(file, meta) => {
+          const survey = camFor?.survey;
           setPhotos((p) => [
-            // one photograph per view: taking it again replaces the first
-            ...p.filter((x) => x.view !== meta.view || meta.view === "Extra"),
-            { file, view: meta.view, heading: meta.heading },
-          ])}
+            // one photograph per view per survey: taking it again replaces it
+            ...p.filter((x) => !(x.view === meta.view && x.survey === survey)
+              || meta.view === "Extra"),
+            { file, view: meta.view, heading: meta.heading, survey },
+          ]);
+        }}
       />
     </div>
   );
