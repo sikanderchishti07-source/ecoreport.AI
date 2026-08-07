@@ -32,9 +32,16 @@ import {
   createCampaign, listCampaigns, listStations, updateCampaign,
   uploadAttachments,
 } from "@/lib/api";
+import FieldCamera, { DATE_FORMATS, cardinal } from "@/components/FieldCamera";
 
 const DRAFT_KEY = "bsa.field.visit";
 const THEME_KEY = "bsa.field.theme";
+const DATEFMT_KEY = "bsa.field.datefmt";
+
+// Four fixed views, so the same record is made at every site and nothing is
+// left out because the operator was in a hurry. The compass writes the bearing
+// he actually faced, which is why the label and the reading are kept apart.
+const VIEWS = ["Station", "North", "East", "South"];
 
 /** A local wall-clock stamp in the form the campaign form itself uses.
  *  Deliberately not ISO/UTC: every timestamp in this system is naive local
@@ -93,6 +100,10 @@ export default function FieldCapture() {
   const [locating, setLocating] = useState(false);
   const [tick, setTick] = useState(0);
   const fileRef = useRef(null);
+  const [camFor, setCamFor] = useState(null);      // which view is being shot
+  const [dateFmt, setDateFmt] = useState(
+    () => localStorage.getItem(DATEFMT_KEY) || "long");
+  useEffect(() => { localStorage.setItem(DATEFMT_KEY, dateFmt); }, [dateFmt]);
 
   // Dark by default, and dark after sunset regardless: this is read outdoors
   // in glare, and a white screen at a site at 42 °C is not readable.
@@ -229,10 +240,19 @@ export default function FieldCapture() {
     }
   };
 
+  /** Sent as ordinary campaign attachments of kind "site_photo", so they
+   *  appear on the campaign's Attachments tab with everything else — there is
+   *  no separate field album to go looking in. The caption carries the view
+   *  and the bearing, so the record survives the file being renamed. */
   const sendPhotos = async (campaignId) => {
     if (!photos.length) return;
     try {
-      await uploadAttachments(campaignId, "site_photo", photos);
+      for (const p of photos) {
+        const bits = [p.view, p.heading == null ? null
+          : `facing ${String(p.heading).padStart(3, "0")}° ${cardinal(p.heading)}`];
+        await uploadAttachments(campaignId, "site_photo", [p.file],
+          { caption: bits.filter(Boolean).join(" · ") });
+      }
       setPhotos([]);
     } catch {
       toast.error("Photographs are still on the phone — they will need sending again");
@@ -463,27 +483,50 @@ export default function FieldCapture() {
               Taken now, sent with the visit.
             </p>
 
-            <div className="grid grid-cols-4 gap-2">
-              {photos.map((f, i) => (
-                <div key={i}
-                  className={`aspect-square rounded-xl border grid place-items-center
-                    text-[9.5px] ${T.sensed}`}>
-                  <Check className="w-4 h-4 text-emerald-400" />
-                  {i + 1}
-                </div>
-              ))}
-              <button type="button" onClick={() => fileRef.current?.click()}
-                className={`aspect-square rounded-xl border border-dashed grid place-items-center
-                  ${T.ctl} ${T.sub}`}>
-                <Camera className="w-4 h-4" />
-              </button>
+            <div className="grid grid-cols-2 gap-2.5">
+              {VIEWS.map((name) => {
+                const shot = photos.find((p) => p.view === name);
+                return (
+                  <button key={name} type="button" onClick={() => setCamFor(name)}
+                    className={`rounded-xl border px-3 py-3 text-left
+                      ${shot ? T.sensed : T.ctl}`}>
+                    <span className="flex items-center gap-2 text-[13.5px] font-medium">
+                      {shot ? <Check className="w-4 h-4 text-emerald-400" />
+                            : <Camera className="w-4 h-4 opacity-60" />}
+                      {name}
+                    </span>
+                    <span className={`block text-[10.5px] mt-1 ${T.faint}`}>
+                      {shot
+                        ? (shot.heading == null ? "From gallery"
+                          : `${String(shot.heading).padStart(3, "0")}° ${cardinal(shot.heading)}`)
+                        : "Not taken"}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-            <input ref={fileRef} type="file" accept="image/*" capture="environment"
-              multiple className="hidden"
-              onChange={(e) => {
-                setPhotos((p) => [...p, ...Array.from(e.target.files || [])]);
-                e.target.value = "";
-              }} />
+
+            <button type="button" onClick={() => setCamFor("Extra")}
+              className={`mt-2.5 w-full rounded-xl border border-dashed px-3 py-2.5
+                text-[12.5px] ${T.ctl} ${T.sub}`}>
+              Another photograph
+            </button>
+
+            <div className="mt-3">
+              <Label>Date shown on the photograph</Label>
+              <div className="grid grid-cols-3 gap-2">
+                {Object.entries(DATE_FORMATS).map(([k, f]) => (
+                  <button key={k} type="button" onClick={() => setDateFmt(k)}
+                    className={`rounded-xl border px-2 py-2 text-[12px] tabular-nums
+                      ${dateFmt === k ? T.sensed : T.ctl}`}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              <p className={`text-[10.5px] mt-1.5 ${T.faint}`}>
+                The time itself is taken from the phone and cannot be changed.
+              </p>
+            </div>
 
             <div className="mt-4 mb-2.5">
               <Label>Site conditions</Label>
@@ -602,6 +645,21 @@ export default function FieldCapture() {
           </section>
         )}
       </div>
+
+      <FieldCamera
+        open={!!camFor}
+        view={camFor}
+        site={v.site_name || v.project_name}
+        coords={{ latitude: v.latitude, longitude: v.longitude, accuracy: v.accuracy }}
+        dateFormat={dateFmt}
+        onClose={() => setCamFor(null)}
+        onCapture={(file, meta) =>
+          setPhotos((p) => [
+            // one photograph per view: taking it again replaces the first
+            ...p.filter((x) => x.view !== meta.view || meta.view === "Extra"),
+            { file, view: meta.view, heading: meta.heading },
+          ])}
+      />
     </div>
   );
 }
