@@ -13,6 +13,7 @@ import UsersPage from "@/pages/UsersPage";
 import ReviewQueue from "@/pages/ReviewQueue";
 import StationsPage from "@/pages/StationsPage";
 import CoverPhotosPage from "@/pages/CoverPhotosPage";
+import SiteSamplesPage from "@/pages/SiteSamplesPage";
 import FieldCapture from "@/pages/FieldCapture";
 import { getToken } from "@/lib/api";
 
@@ -52,6 +53,7 @@ export default function App() {
             <Route path="/limits" element={<LimitsPage />} />
             <Route path="/labs" element={<StationsPage />} />
             <Route path="/cover-photos" element={<CoverPhotosPage />} />
+            <Route path="/site-samples" element={<SiteSamplesPage />} />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/review" element={<ReviewQueue />} />
             <Route path="*" element={<Navigate to="/campaigns" replace />} />
