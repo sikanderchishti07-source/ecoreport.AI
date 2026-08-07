@@ -545,6 +545,15 @@ export default function FieldCapture() {
   // that did not apply, shipped without checking, which blanked the page.
   const surveys = v.types;
   const field = `w-full rounded-xl border px-3.5 py-2.5 text-[14px] outline-none ${T.ctl}`;
+  // A native select's option list is drawn by the operating system, not by the
+  // page, so every class on the element is ignored and the names came out
+  // near-invisible in dark mode. colorScheme is the one thing the browser does
+  // listen to; the explicit option colours are for the Android builds that
+  // keep a white list regardless.
+  const selectStyle = { colorScheme: dark ? "dark" : "light" };
+  const optionStyle = dark
+    ? { backgroundColor: "#101d2d", color: "#eef3f8" }
+    : { backgroundColor: "#ffffff", color: "#0f172a" };
 
   const Btn = ({ children, onClick, tone = "solid", disabled }) => {
     const tones = {
@@ -569,7 +578,12 @@ export default function FieldCapture() {
   };
 
   return (
-    <div className={`min-h-screen ${T.shell}`}>
+    // colorScheme is set on the whole page, not on each control: the project
+    // and client suggestion lists, the file picker and the scrollbars are all
+    // drawn by the operating system too, and they were all going to be as
+    // unreadable in dark mode as the name list was.
+    <div className={`min-h-screen ${T.shell}`}
+      style={{ colorScheme: dark ? "dark" : "light" }}>
       {/* The padding follows the phone's safe areas so nothing sits under the
           notch or the home indicator when this runs full-screen from the home
           screen, and falls back to plain padding in a browser tab. */}
@@ -699,12 +713,14 @@ export default function FieldCapture() {
             <div className="mb-2.5">
               <Label>Recorded by</Label>
               {operators.length ? (
-                <select value={operator}
+                <select value={operator} style={selectStyle}
                   onChange={(e) => setOperator(e.target.value)}
                   className={`w-full rounded-xl border px-3.5 py-2.5 text-[14px] outline-none ${T.ctl}`}>
-                  <option value="">Choose your name</option>
+                  <option value="" style={optionStyle}>Choose your name</option>
                   {operators.map((o) => (
-                    <option key={o.id} value={o.name}>{o.name}</option>
+                    <option key={o.id} value={o.name} style={optionStyle}>
+                      {o.name}
+                    </option>
                   ))}
                 </select>
               ) : (
@@ -813,10 +829,11 @@ export default function FieldCapture() {
             <div className="mb-2.5">
               <Label>Equipment</Label>
               <select value={v.station_id} onChange={set("station_id")}
+                style={selectStyle}
                 className={`w-full rounded-xl border px-3.5 py-2.5 text-[14px] outline-none ${T.ctl}`}>
-                <option value="">Not selected</option>
+                <option value="" style={optionStyle}>Not selected</option>
                 {stations.map((s) => (
-                  <option key={s.id} value={s.id}>
+                  <option key={s.id} value={s.id} style={optionStyle}>
                     {s.name}{s.serial ? ` · ${s.serial}` : ""}
                   </option>
                 ))}
