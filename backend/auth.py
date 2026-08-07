@@ -1,401 +1,418 @@
-"""Phase 7 — authentication & user-management endpoints.
+"""Phase 7 — authentication core.
 
-/auth/status        -> {setup_required}
-/auth/setup         -> create the first admin account (only while none exist)
-/auth/login         -> password step; returns a challenge, never a session
-/auth/login/verify  -> code step; returns {token, user}
-/auth/me            -> current user
-/auth/users         -> admin: list / create / update / deactivate / reset 2FA
+Users are stored in the `users` collection with bcrypt password hashes.
+Sessions are stateless JWTs (12 h). Set JWT_SECRET in the backend .env for
+stable sessions across restarts; without it a random per-boot secret is used
+(everyone is logged out on restart) and a warning is logged.
 
-Sign-in is two steps. The password returns a challenge token good for five
-minutes and nothing else; the session is issued only once a six-digit code is
-proved. Every failure — wrong password, wrong code, unknown username — counts
-towards the same limit, and five of them lock the name for fifteen minutes.
+Roles: "admin" (manage users, delete campaigns), "member" (everything else)
+and "field" (a site operator: their own campaigns and readings, nothing
+more). The first account is created through /auth/setup while the users
+collection is empty.
 
-Messages never distinguish a wrong password from an unknown username. Saying
-which was wrong halves the work of guessing the pair.
+A field account signs in on a personal phone at a monitoring site. The
+twelve-hour session that suits an office laptop would ask that operator for
+a fresh authenticator code most working days, in the sun, possibly without
+signal — and an operator who cannot sign in does not record the survey, he
+goes back to WhatsApp. So the session lasts longer for that role only. The
+authenticator is still required; it is the frequency that changes, not the
+strength. Seven days rather than thirty because the phone is his own and
+leaves with him.
+
+Sign-in is in two steps. The password buys a short-lived challenge token,
+good only for proving a six-digit TOTP code; the session token is issued
+after that. Failed passwords AND failed codes are counted per username in
+`login_attempts` and the name is locked once the limit is reached — six
+digits is a million combinations, which is guessable in minutes if nothing
+throttles it.
 """
 from __future__ import annotations
 
-import math
-from typing import List, Optional
+import base64
+import io
+import logging
+import os
+import secrets
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+import bcrypt
+import jwt
+import pyotp
+import qrcode
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from audit import audit
-from auth import (LOCKOUT_MINUTES, SECRET_FIELDS, burn_password_time,
-                  clear_failed_attempts, consume_recovery_code,
-                  create_challenge_token, create_token, current_user,
-                  generate_recovery_codes, hash_password,
-                  hash_recovery_codes, lockout_seconds_remaining,
-                  new_totp_secret, new_user_doc, otpauth_uri, public_user,
-                  qr_data_uri, record_failed_attempt, require_admin,
-                  user_from_challenge, verify_password, verify_totp)
-from db import db, to_mongo
+from db import db
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+log = logging.getLogger(__name__)
 
-BAD_CREDENTIALS = "Incorrect username or password"
-BAD_CODE = "That code is not right. Check the app and try again."
+JWT_SECRET = os.environ.get("JWT_SECRET")
+if not JWT_SECRET:
+    JWT_SECRET = secrets.token_hex(32)
+    log.warning("JWT_SECRET not set — using a random per-boot secret; "
+                "all sessions expire on every server restart. Set JWT_SECRET "
+                "in backend/.env for production.")
 
+JWT_ALG = "HS256"
+TOKEN_HOURS = 12
 
-class SetupPayload(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    username: str = Field(min_length=3, max_length=60)
-    password: str = Field(min_length=8, max_length=200)
+# The password step buys only this long to produce a code. Long enough to
+# find the phone, short enough that a stolen challenge is worthless.
+CHALLENGE_MINUTES = 5
 
+# What the authenticator app shows above the code.
+TOTP_ISSUER = "EcoReport AI"
 
-class LoginPayload(BaseModel):
-    username: str
-    password: str
+# Codes are accepted one step either side of now, so a phone whose clock is
+# half a minute out still works.
+TOTP_VALID_WINDOW = 1
+TOTP_PERIOD = 30
 
+RECOVERY_CODE_COUNT = 8
 
-class VerifyPayload(BaseModel):
-    challenge: str
-    code: str = Field(min_length=4, max_length=20)
+# ---------------------------------------------------------------------------
+# Sign-in throttling
+# ---------------------------------------------------------------------------
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
+ATTEMPT_WINDOW_MINUTES = 15
 
+# A real bcrypt hash of a value nobody holds. When the username does not
+# exist we verify against this instead of returning immediately: bcrypt takes
+# a measurable time, so an early return would let someone time the response
+# and learn which usernames are real.
+_DUMMY_HASH = bcrypt.hashpw(b"not-a-real-password", bcrypt.gensalt()).decode()
 
-class CreateUserPayload(SetupPayload):
-    role: str = Field(default="member", pattern="^(admin|member|field)$")
+# Fields that must never leave the server.
+SECRET_FIELDS = {"password_hash": 0, "totp_secret": 0,
+                 "totp_pending_secret": 0, "recovery_code_hashes": 0}
 
-
-class UpdateUserPayload(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
-    role: Optional[str] = Field(default=None, pattern="^(admin|member|field)$")
-    active: Optional[bool] = None
-    password: Optional[str] = Field(default=None, min_length=8, max_length=200)
-
-
-def _client_ip(request: Request) -> str:
-    """Best available caller address.
-
-    Render sits behind a proxy, so the socket address is the proxy's. The
-    first entry of X-Forwarded-For is the original caller. It is caller-
-    supplied and therefore not trustworthy for access decisions — it is
-    recorded for the audit trail only, never used to allow or deny.
-    """
-    fwd = request.headers.get("x-forwarded-for", "")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return request.client.host if request.client else ""
-
-
-def _lockout_detail(seconds: int) -> str:
-    minutes = max(1, math.ceil(seconds / 60))
-    unit = "minute" if minutes == 1 else "minutes"
-    return f"Too many failed sign-in attempts. Try again in {minutes} {unit}."
+_bearer = HTTPBearer(auto_error=False)
 
 
-def _locked_error(seconds: int) -> HTTPException:
-    return HTTPException(status_code=429, detail=_lockout_detail(seconds),
-                         headers={"Retry-After": str(seconds)})
+def hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
 
 
-@router.get("/status")
-async def auth_status():
-    n = await db.users.count_documents({})
-    return {"setup_required": n == 0}
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except ValueError:
+        return False
 
 
-@router.post("/setup", status_code=status.HTTP_201_CREATED)
-async def first_time_setup(payload: SetupPayload):
-    """Create the first admin.
+def burn_password_time() -> None:
+    """Spend the same time a real check would, for an unknown username."""
+    verify_password("not-a-real-password", _DUMMY_HASH)
 
-    Returns a challenge rather than a session: the very first account enrols
-    in two-factor immediately, like every other one.
-    """
-    if await db.users.count_documents({}) > 0:
-        raise HTTPException(status_code=409,
-                            detail="Setup already completed — please sign in")
-    user = new_user_doc(payload.name, payload.username, payload.password,
-                        role="admin")
-    secret = new_totp_secret()
-    user["totp_pending_secret"] = secret
-    await db.users.insert_one(to_mongo(dict(user)))
-    await audit("user.create", "user", user["id"], user["name"],
-                {"username": user["username"], "role": "admin",
-                 "first_setup": True})
-    uri = otpauth_uri(secret, user["username"])
-    return {
-        "stage": "enroll",
-        "challenge": create_challenge_token(user),
-        "qr": qr_data_uri(uri),
-        "secret": secret,
+
+# ---------------------------------------------------------------------------
+# Tokens
+# ---------------------------------------------------------------------------
+FIELD_TOKEN_HOURS = int(os.environ.get("FIELD_TOKEN_HOURS", str(24 * 7)))
+
+
+def create_token(user: dict) -> str:
+    now = datetime.now(timezone.utc)
+    hours = FIELD_TOKEN_HOURS if user.get("role") == "field" else TOKEN_HOURS
+    payload = {
+        "sub": user["id"],
         "name": user["name"],
+        "role": user["role"],
+        "typ": "session",
+        "iat": now,
+        "exp": now + timedelta(hours=hours),
     }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 
-@router.post("/login")
-async def login(payload: LoginPayload, request: Request):
-    username = payload.username.strip().lower()
-    ip = _client_ip(request)
+def create_challenge_token(user: dict) -> str:
+    """Proof that the password was right — and nothing else.
 
-    # A locked name is refused before the password is even looked at, so a
-    # lockout cannot be worked around by continuing to guess.
-    locked = await lockout_seconds_remaining(username)
-    if locked > 0:
-        raise _locked_error(locked)
+    Marked with its own type so it can never be presented as a session: a
+    half-finished sign-in must not reach any campaign data.
+    """
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": user["id"],
+        "typ": "2fa",
+        "iat": now,
+        "exp": now + timedelta(minutes=CHALLENGE_MINUTES),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
-    user = await db.users.find_one({"username": username}, {"_id": 0})
 
-    if not user:
-        burn_password_time()
-        count, locked_seconds = await record_failed_attempt(username, ip)
-        await audit("auth.login_failed", "auth", username, username,
-                    {"reason": "unknown username", "attempt": count, "ip": ip})
-        if locked_seconds:
-            await audit("auth.login_locked", "auth", username, username,
-                        {"minutes": LOCKOUT_MINUTES, "ip": ip})
-            raise _locked_error(locked_seconds)
-        raise HTTPException(status_code=401, detail=BAD_CREDENTIALS)
+async def user_from_challenge(token: str) -> dict:
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            detail="That took too long — please sign in again")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            detail="Invalid sign-in attempt — please start again")
+    if payload.get("typ") != "2fa":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            detail="Invalid sign-in attempt — please start again")
+    user = await db.users.find_one({"id": payload.get("sub")}, {"_id": 0})
+    if not user or not user.get("active", True):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            detail="Account not found or deactivated")
+    return user
 
-    if not verify_password(payload.password, user.get("password_hash", "")):
-        count, locked_seconds = await record_failed_attempt(username, ip)
-        await audit("auth.login_failed", "auth", user["id"], user["name"],
-                    {"reason": "wrong password", "username": username,
-                     "attempt": count, "ip": ip})
-        if locked_seconds:
-            await audit("auth.login_locked", "auth", user["id"], user["name"],
-                        {"username": username, "minutes": LOCKOUT_MINUTES,
-                         "ip": ip})
-            raise _locked_error(locked_seconds)
-        raise HTTPException(status_code=401, detail=BAD_CREDENTIALS)
 
-    if not user.get("active", True):
-        await record_failed_attempt(username, ip)
-        await audit("auth.login_failed", "auth", user["id"], user["name"],
-                    {"reason": "account deactivated", "username": username,
-                     "ip": ip})
-        raise HTTPException(status_code=403, detail="Account is deactivated")
+async def _user_from_token(token: str) -> dict:
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            detail="Session expired — please sign in again")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            detail="Invalid session — please sign in")
+    # a challenge token is not a session, however valid its signature
+    if payload.get("typ") == "2fa":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            detail="Sign-in not completed — please sign in")
+    user = await db.users.find_one({"id": payload.get("sub")}, {"_id": 0})
+    if not user or not user.get("active", True):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            detail="Account not found or deactivated")
+    return user
 
-    # Password proved. Nothing else is granted yet.
-    if user.get("totp_enabled") and user.get("totp_secret"):
-        return {"stage": "totp", "challenge": create_challenge_token(user),
-                "name": user["name"]}
 
-    # Not enrolled — issue a fresh secret every time this screen is reached,
-    # so an abandoned enrolment leaves nothing usable behind.
-    secret = new_totp_secret()
-    await db.users.update_one({"id": user["id"]},
-                              {"$set": {"totp_pending_secret": secret}})
-    uri = otpauth_uri(secret, user["username"])
+async def current_user(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> dict:
+    if creds is None or not creds.credentials:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            detail="Not signed in")
+    return await _user_from_token(creds.credentials)
+
+
+async def current_username(user: dict = Depends(current_user)) -> str:
+    """Convenience dependency used by the audit trail."""
+    return user["name"]
+
+
+async def require_admin(user: dict = Depends(current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            detail="Admin access required")
+    return user
+
+
+async def deny_field(user: dict = Depends(current_user)) -> dict:
+    """Shut a field account out of a whole router.
+
+    Applied where it is mounted rather than route by route, so the office
+    behaviour is untouched and removing the role later is one line in
+    server.py. A phone carried to a site is lost or borrowed far more often
+    than a laptop, and an account that can only record surveys is worth
+    little to whoever finds it.
+    """
+    if user.get("role") == "field":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Field accounts cannot use this part of the system")
+    return user
+
+
+def new_user_doc(name: str, username: str, password: str,
+                 role: str = "member") -> dict:
     return {
-        "stage": "enroll",
-        "challenge": create_challenge_token(user),
-        "qr": qr_data_uri(uri),
-        "secret": secret,
-        "name": user["name"],
-    }
-
-
-@router.post("/login/verify")
-async def login_verify(payload: VerifyPayload, request: Request):
-    """Second step: prove a six-digit code, or spend a recovery code."""
-    user = await user_from_challenge(payload.challenge)
-    username = user.get("username", "")
-    ip = _client_ip(request)
-
-    locked = await lockout_seconds_remaining(username)
-    if locked > 0:
-        raise _locked_error(locked)
-
-    async def _fail(reason: str, detail: str):
-        count, locked_seconds = await record_failed_attempt(username, ip)
-        await audit("auth.2fa_failed", "auth", user["id"], user["name"],
-                    {"reason": reason, "username": username,
-                     "attempt": count, "ip": ip})
-        if locked_seconds:
-            await audit("auth.login_locked", "auth", user["id"], user["name"],
-                        {"username": username, "minutes": LOCKOUT_MINUTES,
-                         "ip": ip})
-            raise _locked_error(locked_seconds)
-        raise HTTPException(status_code=401, detail=detail)
-
-    # ---- enrolment ------------------------------------------------------
-    if not user.get("totp_enabled"):
-        secret = user.get("totp_pending_secret")
-        if not secret:
-            raise HTTPException(status_code=409,
-                                detail="Setup expired — please sign in again")
-        ok, step = verify_totp(secret, payload.code,
-                               last_step=user.get("totp_last_step", 0))
-        if not ok:
-            await _fail("enrolment code wrong", BAD_CODE)
-
-        codes = generate_recovery_codes()
-        await db.users.update_one({"id": user["id"]}, {"$set": {
-            "totp_enabled": True,
-            "totp_secret": secret,
-            "totp_pending_secret": None,
-            "totp_last_step": step,
-            "recovery_code_hashes": hash_recovery_codes(codes),
-        }})
-        await clear_failed_attempts(username)
-        await audit("auth.2fa_enrolled", "user", user["id"], user["name"],
-                    {"username": username, "ip": ip})
-        fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0})
-        return {
-            "token": create_token(fresh),
-            "user": public_user(fresh),
-            # shown once and never again — the only copy is the one the
-            # person writes down on this screen
-            "recovery_codes": codes,
-        }
-
-    # ---- normal sign-in --------------------------------------------------
-    ok, step = verify_totp(user.get("totp_secret", ""), payload.code,
-                           last_step=user.get("totp_last_step", 0))
-    if ok:
-        await db.users.update_one({"id": user["id"]},
-                                  {"$set": {"totp_last_step": step}})
-        await clear_failed_attempts(username)
-        await audit("auth.login", "auth", user["id"], user["name"],
-                    {"username": username, "method": "totp", "ip": ip})
-        return {"token": create_token(user), "user": public_user(user)}
-
-    # a recovery code is the other accepted answer here
-    idx = consume_recovery_code(payload.code,
-                                user.get("recovery_code_hashes", []))
-    if idx is not None:
-        remaining = list(user.get("recovery_code_hashes", []))
-        remaining.pop(idx)
-        await db.users.update_one({"id": user["id"]},
-                                  {"$set": {"recovery_code_hashes": remaining}})
-        await clear_failed_attempts(username)
-        await audit("auth.login", "auth", user["id"], user["name"],
-                    {"username": username, "method": "recovery code",
-                     "codes_left": len(remaining), "ip": ip})
-        return {"token": create_token(user), "user": public_user(user),
-                "recovery_codes_remaining": len(remaining)}
-
-    await _fail("wrong code", BAD_CODE)
-
-
-@router.get("/me")
-async def me(user: dict = Depends(current_user)):
-    return public_user(user)
-
-
-@router.get("/operators")
-async def list_operators(_: dict = Depends(current_user)) -> List[dict]:
-    """Just the names, for the field app's "recorded by" list.
-
-    /auth/users is admin-only and returns the whole record. An operator
-    signing in on a phone needs neither: only a list of names to choose from,
-    so that the value is always one of a known set rather than something typed
-    into a box at a site. Nothing here identifies an account — no username, no
-    role, no dates — so exposing it to any signed-in user costs nothing.
-    """
-    docs = await db.users.find(
-        {"active": True}, {"_id": 0, "id": 1, "name": 1}) \
-        .sort("name", 1).to_list(length=200)
-    return [d for d in docs if d.get("name")]
-
-
-@router.get("/users")
-async def list_users(_: dict = Depends(require_admin)) -> List[dict]:
-    projection = {"_id": 0} | SECRET_FIELDS
-    docs = await db.users.find({}, projection) \
-        .sort("created_at", 1).to_list(length=500)
-    return docs
-
-
-@router.post("/users", status_code=status.HTTP_201_CREATED)
-async def create_user(payload: CreateUserPayload,
-                      admin: dict = Depends(require_admin)):
-    exists = await db.users.find_one(
-        {"username": payload.username.strip().lower()})
-    if exists:
-        raise HTTPException(status_code=409, detail="Username already taken")
-    user = new_user_doc(payload.name, payload.username, payload.password,
-                        role=payload.role)
-    await db.users.insert_one(to_mongo(dict(user)))
-    await audit("user.create", "user", user["id"], admin["name"],
-                {"username": user["username"], "role": user["role"]})
-    return public_user(user)
-
-
-@router.post("/users/{user_id}/unlock")
-async def unlock_user(user_id: str, admin: dict = Depends(require_admin)):
-    """Clear a lockout early.
-
-    Someone who mistypes five times should not wait a quarter of an hour when
-    an admin is standing next to them.
-    """
-    user = await db.users.find_one({"id": user_id}, {"_id": 0})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    await clear_failed_attempts(user.get("username", ""))
-    await audit("auth.unlock", "user", user_id, admin["name"],
-                {"username": user.get("username")})
-    return {"unlocked": True, "username": user.get("username")}
-
-
-@router.post("/users/{user_id}/reset-2fa")
-async def reset_two_factor(user_id: str, admin: dict = Depends(require_admin)):
-    """Wipe someone's authenticator setup — the lost-phone path.
-
-    Their next sign-in shows a fresh QR code and issues new recovery codes.
-    The old secret and the old codes stop working immediately.
-    """
-    user = await db.users.find_one({"id": user_id}, {"_id": 0})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    await db.users.update_one({"id": user_id}, {"$set": {
+        "id": str(uuid.uuid4()),
+        "name": name.strip(),
+        "username": username.strip().lower(),
+        "password_hash": hash_password(password),
+        "role": role,
+        "active": True,
+        # every account enrols in two-factor at its first sign-in
         "totp_enabled": False,
         "totp_secret": None,
         "totp_pending_secret": None,
         "totp_last_step": 0,
         "recovery_code_hashes": [],
-    }})
-    await clear_failed_attempts(user.get("username", ""))
-    await audit("auth.2fa_reset", "user", user_id, admin["name"],
-                {"username": user.get("username")})
-    return {"reset": True, "username": user.get("username")}
+        "created_at": datetime.now(timezone.utc),
+    }
 
 
-@router.patch("/users/{user_id}")
-async def update_user(user_id: str, payload: UpdateUserPayload,
-                      admin: dict = Depends(require_admin)):
-    user = await db.users.find_one({"id": user_id}, {"_id": 0})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    updates: dict = {}
-    changes: dict = {}
-    if payload.name is not None and payload.name != user["name"]:
-        updates["name"] = payload.name.strip()
-        changes["name"] = {"from": user["name"], "to": updates["name"]}
-    if payload.role is not None and payload.role != user["role"]:
-        updates["role"] = payload.role
-        changes["role"] = {"from": user["role"], "to": payload.role}
-    if payload.active is not None and payload.active != user.get("active", True):
-        updates["active"] = payload.active
-        changes["active"] = {"from": user.get("active", True),
-                             "to": payload.active}
-    if payload.password:
-        updates["password_hash"] = hash_password(payload.password)
-        changes["password"] = {"from": "•••", "to": "reset"}
-    # Safety: never let the last active admin lock themselves out
-    # Any move away from admin counts, not only a move to member: with a
-    # third role, demoting the last admin to "field" would otherwise have
-    # walked past this check and locked everyone out of user management.
-    if (("role" in updates and updates["role"] != "admin")
-            or updates.get("active") is False) and user["role"] == "admin":
-        n_admins = await db.users.count_documents(
-            {"role": "admin", "active": True, "id": {"$ne": user_id}})
-        if n_admins == 0:
-            raise HTTPException(
-                status_code=409,
-                detail="Cannot demote or deactivate the last active admin")
-    if updates:
-        await db.users.update_one({"id": user_id}, {"$set": to_mongo(updates)})
-        await audit("user.update", "user", user_id, admin["name"],
-                    {"username": user["username"], "changes": changes})
-        # A password reset should not leave the person locked out by the
-        # attempts that prompted the reset.
-        if payload.password:
-            await clear_failed_attempts(user.get("username", ""))
-    projection = {"_id": 0} | SECRET_FIELDS
-    fresh = await db.users.find_one({"id": user_id}, projection)
-    return fresh
+def public_user(user: dict) -> dict:
+    return {k: user.get(k) for k in
+            ("id", "name", "username", "role", "active", "created_at")} | {
+        "totp_enabled": bool(user.get("totp_enabled")),
+    }
+
+
+# ---------------------------------------------------------------------------
+# TOTP
+# ---------------------------------------------------------------------------
+def new_totp_secret() -> str:
+    return pyotp.random_base32()
+
+
+def otpauth_uri(secret: str, username: str) -> str:
+    """The string the QR code encodes."""
+    return pyotp.TOTP(secret, interval=TOTP_PERIOD).provisioning_uri(
+        name=username, issuer_name=TOTP_ISSUER)
+
+
+def qr_data_uri(uri: str) -> str:
+    """Render the otpauth URI as a PNG the browser can show inline.
+
+    Returned as a data URI rather than a file so the secret never touches
+    disk and no extra route has to be protected.
+    """
+    img = qrcode.make(uri)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def verify_totp(secret: str, code: str,
+                last_step: int = 0) -> Tuple[bool, int]:
+    """Check a six-digit code and return (ok, the step it belonged to).
+
+    The step is returned so the caller can store it and refuse the same code
+    twice. Without that, a code shouted across a room — or read off a
+    shoulder — stays usable for the rest of its thirty seconds.
+    """
+    code = (code or "").strip().replace(" ", "")
+    if not code.isdigit() or len(code) != 6 or not secret:
+        return False, 0
+    totp = pyotp.TOTP(secret, interval=TOTP_PERIOD)
+    now_step = int(time.time()) // TOTP_PERIOD
+    for step in range(now_step - TOTP_VALID_WINDOW,
+                      now_step + TOTP_VALID_WINDOW + 1):
+        if secrets.compare_digest(totp.at(step * TOTP_PERIOD), code):
+            if step <= int(last_step or 0):
+                return False, step          # already spent
+            return True, step
+    return False, 0
+
+
+# ---------------------------------------------------------------------------
+# Recovery codes
+# ---------------------------------------------------------------------------
+def generate_recovery_codes(n: int = RECOVERY_CODE_COUNT) -> List[str]:
+    """Human-copyable one-time codes, e.g. 'K7QD-2M4X'.
+
+    The alphabet omits I, O, 0 and 1 — these get written on paper and read
+    back later, and those four are what people mistype.
+    """
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    out = []
+    for _ in range(n):
+        raw = "".join(secrets.choice(alphabet) for _ in range(8))
+        out.append(f"{raw[:4]}-{raw[4:]}")
+    return out
+
+
+def hash_recovery_codes(codes: List[str]) -> List[str]:
+    return [hash_password(_normalise_recovery(c)) for c in codes]
+
+
+def _normalise_recovery(code: str) -> str:
+    return (code or "").strip().upper().replace(" ", "").replace("-", "")
+
+
+def consume_recovery_code(code: str, hashes: List[str]) -> Optional[int]:
+    """Index of the hash this code matches, or None.
+
+    The caller removes that entry: a recovery code works exactly once.
+    """
+    candidate = _normalise_recovery(code)
+    if not candidate:
+        return None
+    for i, h in enumerate(hashes or []):
+        if verify_password(candidate, h):
+            return i
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Failed-attempt tracking
+#
+# Kept against the username string rather than the user record, so an attempt
+# on a name that does not exist is counted too. Counting only real accounts
+# would let someone probe for valid usernames without ever being throttled.
+# ---------------------------------------------------------------------------
+def _as_dt(value) -> Optional[datetime]:
+    """Read a stored timestamp back as an aware datetime.
+
+    db.to_mongo writes datetimes as ISO-8601 strings, so what comes back is a
+    string on a fresh read and a datetime if the driver has already coerced
+    it. Accept either rather than assuming.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+async def lockout_seconds_remaining(username: str) -> int:
+    """Seconds left on a lock, or 0 when the name is not locked."""
+    key = (username or "").strip().lower()
+    if not key:
+        return 0
+    rec = await db.login_attempts.find_one({"username": key}, {"_id": 0})
+    if not rec:
+        return 0
+    until = _as_dt(rec.get("locked_until"))
+    if not until:
+        return 0
+    remaining = (until - datetime.now(timezone.utc)).total_seconds()
+    return int(remaining) if remaining > 0 else 0
+
+
+async def record_failed_attempt(username: str,
+                                ip: Optional[str] = None) -> Tuple[int, int]:
+    """Count one failure. Returns (attempts_used, seconds_locked).
+
+    seconds_locked is 0 unless this failure tripped the limit.
+    """
+    key = (username or "").strip().lower()
+    now = datetime.now(timezone.utc)
+    rec = await db.login_attempts.find_one({"username": key}, {"_id": 0})
+
+    count = 0
+    if rec:
+        last = _as_dt(rec.get("last_failed_at"))
+        # a failure long ago is not evidence about this one
+        if last and (now - last) <= timedelta(minutes=ATTEMPT_WINDOW_MINUTES):
+            count = int(rec.get("count", 0))
+
+    count += 1
+    doc = {
+        "username": key,
+        "count": count,
+        "last_failed_at": now.isoformat(),
+        "last_ip": ip or "",
+    }
+
+    locked_seconds = 0
+    if count >= MAX_FAILED_ATTEMPTS:
+        until = now + timedelta(minutes=LOCKOUT_MINUTES)
+        doc["locked_until"] = until.isoformat()
+        locked_seconds = LOCKOUT_MINUTES * 60
+    else:
+        doc["locked_until"] = None
+
+    await db.login_attempts.update_one({"username": key}, {"$set": doc},
+                                       upsert=True)
+    return count, locked_seconds
+
+
+async def clear_failed_attempts(username: str) -> None:
+    """Wipe the record after a successful sign-in."""
+    key = (username or "").strip().lower()
+    if key:
+        await db.login_attempts.delete_one({"username": key})
