@@ -202,6 +202,24 @@ export default function FieldCapture() {
     return () => clearInterval(id);
   }, [v.step, v.monitoring_start]);
 
+  // Steps 4 and 5 are after Start: the survey exists on the server and its
+  // time is fixed, so going back to edit the form would be a lie about what
+  // was recorded. Back is simply not offered there.
+  const canGoBack = v.step > 0 && v.step < 4;
+  const back = useCallback(() => {
+    setV((s) => ({ ...s, step: Math.max(0, s.step - 1) }));
+  }, []);
+
+  // The phone's own back gesture moves a step rather than leaving the app.
+  // Without this, one swipe from step 3 closes a half-filled visit.
+  useEffect(() => {
+    if (!canGoBack) return undefined;
+    window.history.pushState({ fieldStep: v.step }, "");
+    const onPop = () => setV((s) => ({ ...s, step: Math.max(0, s.step - 1) }));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [v.step, canGoBack]);
+
   const set = (k) => (e) =>
     setV((s) => ({ ...s, [k]: e?.target ? e.target.value : e }));
   const go = (step) => setV((s) => ({ ...s, step }));
@@ -394,7 +412,24 @@ export default function FieldCapture() {
           paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 40px)",
         }}
       >
+        {/* One back control, in the same place on every screen, sized for a
+            thumb. In a home-screen app there is no browser back button, so
+            this is the only way out of a step — the small text links that were
+            at the foot of some screens and absent from others were neither
+            findable nor reachable one-handed. */}
         <div className="flex items-center gap-2.5">
+          {canGoBack && (
+            <button
+              type="button"
+              onClick={back}
+              aria-label="Back"
+              className={`-ml-2 mr-0.5 grid h-10 w-10 place-items-center rounded-xl
+                border active:scale-95 transition
+                ${dark ? "border-white/10 bg-white/[0.04]" : "border-slate-200 bg-white"}`}
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+          )}
           {/* Two files rather than a CSS filter: inverting the mark would
               turn the leaf white as well, and the leaf is the half of it
               anyone recognises. The light variant lifts only the wordmark. */}
@@ -528,10 +563,6 @@ export default function FieldCapture() {
                 className={`w-full rounded-xl border px-3.5 py-2.5 text-[14px] outline-none ${T.ctl}`} />
             </div>
             <Btn tone="dark" onClick={() => go(2)}>Continue</Btn>
-            <button type="button" onClick={() => go(0)}
-              className={`mt-3 text-[12px] inline-flex items-center gap-1 ${T.sub}`}>
-              <ChevronLeft className="w-3.5 h-3.5" /> Back
-            </button>
           </section>
         )}
 
@@ -598,10 +629,6 @@ export default function FieldCapture() {
                 className={`w-full rounded-xl border px-3.5 py-2.5 text-[14px] outline-none ${T.ctl}`} />
             </div>
             <Btn tone="dark" onClick={() => go(3)}>Continue</Btn>
-            <button type="button" onClick={() => go(1)}
-              className={`mt-3 text-[12px] inline-flex items-center gap-1 ${T.sub}`}>
-              <ChevronLeft className="w-3.5 h-3.5" /> Back
-            </button>
           </section>
         )}
 
@@ -633,10 +660,6 @@ export default function FieldCapture() {
             <p className={`text-[11px] mt-3 text-center ${T.faint}`}>
               The moment is recorded on the server, not on this phone.
             </p>
-            <button type="button" onClick={() => go(2)}
-              className={`mt-3 text-[12px] inline-flex items-center gap-1 ${T.sub}`}>
-              <ChevronLeft className="w-3.5 h-3.5" /> Back
-            </button>
           </section>
         )}
 
