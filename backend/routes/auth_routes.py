@@ -277,6 +277,22 @@ async def me(user: dict = Depends(current_user)):
     return public_user(user)
 
 
+@router.get("/operators")
+async def list_operators(_: dict = Depends(current_user)) -> List[dict]:
+    """Just the names, for the field app's "recorded by" list.
+
+    /auth/users is admin-only and returns the whole record. An operator
+    signing in on a phone needs neither: only a list of names to choose from,
+    so that the value is always one of a known set rather than something typed
+    into a box at a site. Nothing here identifies an account — no username, no
+    role, no dates — so exposing it to any signed-in user costs nothing.
+    """
+    docs = await db.users.find(
+        {"active": True}, {"_id": 0, "id": 1, "name": 1}) \
+        .sort("name", 1).to_list(length=200)
+    return [d for d in docs if d.get("name")]
+
+
 @router.get("/users")
 async def list_users(_: dict = Depends(require_admin)) -> List[dict]:
     projection = {"_id": 0} | SECRET_FIELDS
