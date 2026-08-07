@@ -60,6 +60,10 @@ export const authVerify = (payload) =>
   api.post("/auth/login/verify", payload).then((r) => r.data);
 
 export const listUsers = () => api.get("/auth/users").then((r) => r.data);
+// Names only, and readable by any signed-in account — the field app needs a
+// list to choose from, not the user records, which are admin-only.
+export const listOperators = () =>
+  api.get("/auth/operators").then((r) => r.data);
 export const createUser = (payload) =>
   api.post("/auth/users", payload).then((r) => r.data);
 export const updateUser = (id, payload) =>
