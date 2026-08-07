@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  createSiteSample, deleteSiteSample, listSiteSamples, siteSamplePhotoUrl,
+  createSiteSample, deleteSiteSample, fetchSiteSamplePhotoBlob, listSiteSamples,
 } from "@/lib/api";
 import AuthImage from "@/components/AuthImage";
 
@@ -288,7 +288,8 @@ export default function SiteSamplesPage() {
                     <td className="px-3 py-2.5">
                       {r.photo_path ? (
                         <AuthImage
-                          src={siteSamplePhotoUrl(r.id)}
+                          attachmentId={r.id}
+                          fetcher={fetchSiteSamplePhotoBlob}
                           alt={`${r.kind} ${r.number}`}
                           className="h-10 w-10 rounded-sm object-cover border border-border"
                         />
