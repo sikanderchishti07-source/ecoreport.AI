@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, Link, useNavigate } from "react-router-dom";
 import {
-  Activity, Bell, Gauge, Images, Inbox, LogOut, Ruler, ShieldCheck, Truck,
+  Activity, Bell, FlaskConical, Gauge, Images, Inbox, LogOut, Ruler,
+  ShieldCheck, Truck,
   UserRound, Users,
 } from "lucide-react";
 import { NAV } from "@/constants/testIds";
@@ -145,6 +146,15 @@ export default function AppShell() {
               }
             >
               <Truck className="w-3.5 h-3.5" /> Mobile Labs
+            </NavLink>
+            <NavLink
+              to="/site-samples"
+              data-testid="nav-site-samples"
+              className={({ isActive }) =>
+                `${linkBase} ${isActive ? linkActive : linkIdle} inline-flex items-center gap-1.5`
+              }
+            >
+              <FlaskConical className="w-3.5 h-3.5" /> Site Samples
             </NavLink>
             <NavLink
               to="/cover-photos"
