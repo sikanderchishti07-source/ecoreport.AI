@@ -330,6 +330,36 @@ export default function FieldCapture() {
   };
   const countOf = (kind) => samples.filter((s) => s.kind === kind).length;
 
+  /** Adds a sample by count rather than by capturing it.
+   *
+   *  Kept separate from the one-at-a-time button on purpose. A sample added
+   *  individually carries its own position and the moment it was taken; one
+   *  added by count carries the site's position and the time it was typed,
+   *  which is not the same claim. The record says which it was, so nobody
+   *  later reads a site coordinate as the place a sample came from. */
+  const addByCount = (kind) => {
+    setSamples((all) => [...all, {
+      kind, file: null, at: localStamp(),
+      lat: v.latitude, lon: v.longitude, acc: v.accuracy,
+      byCount: true,
+    }]);
+    buzz(12);
+  };
+
+  const removeLastByCount = (kind) => {
+    setSamples((all) => {
+      for (let i = all.length - 1; i >= 0; i -= 1) {
+        if (all[i].kind === kind && all[i].byCount) {
+          return all.filter((_, j) => j !== i);
+        }
+      }
+      // Nothing typed to remove: a captured sample is never taken away by the
+      // minus button, only by its own delete.
+      toast.error("Only counted samples can be removed here");
+      return all;
+    });
+  };
+
   // ---- Start: the campaign is created here, at the instrument ------------
   const start = async () => {
     if (!operator) { toast.error("Choose who is recording this"); go(0); return; }
@@ -433,6 +463,10 @@ export default function FieldCapture() {
           accuracy_m: s.acc || undefined,
           taken_at: s.at,
           recorded_by: operator,
+          // So the office can tell the two apart. A counted sample's position
+          // is the site's, not the sample's, and saying so is the difference
+          // between a record and a guess.
+          note: s.byCount ? "Counted on site — position is the station's" : undefined,
         }, s.file || undefined);
         sent.push(s);
       }
@@ -905,8 +939,10 @@ export default function FieldCapture() {
                       </div>
                       <div className={`text-[10.5px] mt-1 ${T.faint}`}>
                         {words(sm.at)}
-                        {sm.lat ? ` · ${sm.lat}, ${sm.lon}` : " · no position"}
-                        {sm.file ? " · photo" : " · no photo"}
+                        {sm.byCount
+                          ? " · counted, site position"
+                          : (sm.lat ? ` · ${sm.lat}, ${sm.lon}` : " · no position")}
+                        {sm.file ? " · photo" : ""}
                       </div>
                     </div>
                   );
@@ -914,26 +950,51 @@ export default function FieldCapture() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-2.5">
-              {[["water", "Water", Droplets, "text-sky-400"],
-                ["soil", "Soil", Mountain, "text-amber-500"]].map(([k, lbl, Icon, tone]) => (
-                <button key={k} type="button"
-                  onClick={() => {
-                    sampleRef.current.dataset.kind = k;
-                    sampleRef.current.click();
-                  }}
-                  className={`rounded-xl border px-3 py-3 text-left ${T.ctl}`}>
-                  <span className="flex items-center gap-2 text-[13.5px] font-medium">
-                    <Icon className={`w-4 h-4 ${tone}`} /> {lbl}
-                  </span>
-                  <span className={`block text-[10.5px] mt-1 ${T.faint}`}>
+            {[["water", "Water", Droplets, "text-sky-400"],
+              ["soil", "Soil", Mountain, "text-amber-500"]].map(([k, lbl, Icon, tone]) => (
+              <div key={k} className={`rounded-xl border px-3.5 py-3 mb-2.5 ${T.ctl}`}>
+                <div className="flex items-center gap-2">
+                  <Icon className={`w-4 h-4 ${tone}`} />
+                  <span className="text-[13.5px] font-medium">{lbl}</span>
+                  <span className={`ml-auto text-[11px] ${T.faint}`}>
                     {countOf(k)} recorded
                   </span>
-                </button>
-              ))}
-            </div>
-            <p className={`text-[10.5px] mt-2 ${T.faint}`}>
-              Sent when you stop the survey, and listed under Site Samples.
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 mt-2.5">
+                  <button type="button"
+                    onClick={() => {
+                      sampleRef.current.dataset.kind = k;
+                      sampleRef.current.click();
+                    }}
+                    className={`rounded-xl border px-3 py-2.5 text-[12.5px]
+                      flex items-center justify-center gap-1.5 ${T.sensed}`}>
+                    <Camera className="w-3.5 h-3.5" /> Add one
+                  </button>
+
+                  {/* Counting, for samples already taken or when there is no
+                      time to photograph each. */}
+                  <div className={`rounded-xl border flex items-center
+                    ${T.ctl}`}>
+                    <button type="button" aria-label={`One fewer ${lbl}`}
+                      onClick={() => removeLastByCount(k)}
+                      className="flex-1 py-2.5 text-[16px] leading-none">−</button>
+                    <span className="text-[13px] tabular-nums w-8 text-center">
+                      {samples.filter((x) => x.kind === k && x.byCount).length}
+                    </span>
+                    <button type="button" aria-label={`One more ${lbl}`}
+                      onClick={() => addByCount(k)}
+                      className="flex-1 py-2.5 text-[16px] leading-none">+</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            <p className={`text-[10.5px] mt-1 ${T.faint}`}>
+              <b>Add one</b> takes a photograph and its own position.
+              <b> + </b> just counts: the site position and this moment are
+              recorded instead, and the sample is marked as counted. Both are
+              sent when you stop, and listed under Site Samples.
             </p>
 
             {/* The phone's own camera here, not the stamped one: a sample
