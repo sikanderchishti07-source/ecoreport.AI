@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, Link, useNavigate } from "react-router-dom";
 import {
-  Activity, Bell, FlaskConical, Gauge, Images, Inbox, LogOut, Ruler,
-  ShieldCheck, Truck,
-  UserRound, Users,
+  Bell, ChevronDown, FlaskConical, Gauge, Images, Inbox, LogOut, Ruler, Truck,
+  Users,
 } from "lucide-react";
 import { NAV } from "@/constants/testIds";
 import { Toaster } from "sonner";
@@ -13,10 +12,25 @@ import {
   markNotificationRead, reviewQueue,
 } from "@/lib/api";
 
+/** Initials for the avatar: two letters at most, and the first letter of the
+ *  name when there is only one word. */
+function initials(name) {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "—";
+  return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : ""))
+    .toUpperCase();
+}
+
 const linkBase =
-  "px-3 py-2 text-sm rounded-sm border border-transparent hover:bg-secondary hover:border-border transition-colors";
-const linkActive = "bg-secondary border-border text-foreground";
-const linkIdle = "text-muted-foreground";
+  "relative px-3 py-2 text-[13px] rounded-md transition-colors";
+// The current page is marked by a rule beneath it, aligned to the header's
+// own bottom edge. Quieter than a filled pill, and it stops the navigation
+// competing with the controls on the right.
+const linkActive = "text-foreground font-semibold";
+const linkIdle = "text-muted-foreground hover:text-foreground hover:bg-secondary/60";
+const linkRule =
+  "after:absolute after:left-3 after:right-3 after:-bottom-[13px] after:h-[2px] "
+  + "after:rounded-full after:bg-primary";
 
 function fmtWhen(ts) {
   if (!ts) return "";
@@ -44,6 +58,8 @@ export default function AppShell() {
   const [unread, setUnread] = useState(0);
   const [openBell, setOpenBell] = useState(false);
   const bellRef = useRef(null);
+  const [openAcct, setOpenAcct] = useState(false);
+  const acctRef = useRef(null);
 
   const [waiting, setWaiting] = useState(0);
   const admin = user?.role === "admin";
@@ -72,15 +88,27 @@ export default function AppShell() {
     return () => clearInterval(t);
   }, [loadNotes]);
 
-  // Click anywhere else closes the panel.
+  // Click anywhere else closes whichever panel is open, and Escape closes
+  // both — a menu that can only be dismissed by finding its own button again
+  // is the sort of thing people quietly resent.
   useEffect(() => {
     const away = (e) => {
       if (bellRef.current && !bellRef.current.contains(e.target)) {
         setOpenBell(false);
       }
+      if (acctRef.current && !acctRef.current.contains(e.target)) {
+        setOpenAcct(false);
+      }
+    };
+    const esc = (e) => {
+      if (e.key === "Escape") { setOpenBell(false); setOpenAcct(false); }
     };
     document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
   }, []);
 
   const openNote = async (n) => {
@@ -106,26 +134,39 @@ export default function AppShell() {
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <header className="sticky top-0 z-30 border-b border-border bg-background/95 backdrop-blur">
         <div className="mx-auto max-w-[1400px] px-4 md:px-6 h-14 flex items-center justify-between">
-          <Link
-            to="/"
-            data-testid={NAV.brand}
-            className="flex items-center gap-2 text-sm font-semibold tracking-tight"
-          >
-            <span className="inline-flex items-center justify-center w-6 h-6 border border-border rounded-sm bg-secondary">
-              <Activity className="w-3.5 h-3.5 text-primary" />
+          {/* A brand lockup rather than a word among the links: the real mark
+              at its own proportions, then a rule before the navigation.
+              "Phase 1" is gone — it stopped being true months ago, and a label
+              that is no longer true teaches people to ignore labels. This says
+              which system you are looking at, which stays useful. */}
+          <div className="flex items-center gap-3 pr-4 mr-1 border-r border-border/70">
+            <Link to="/" data-testid={NAV.brand} className="flex items-center gap-2.5">
+              <img
+                src="/logo-mark.png"
+                alt="BSA.lab"
+                className="h-6 w-auto dark:hidden"
+              />
+              <img
+                src="/logo-mark-light.png"
+                alt="BSA.lab"
+                className="h-6 w-auto hidden dark:block"
+              />
+            </Link>
+            <span className="hidden md:inline text-[9.5px] font-bold uppercase
+                             tracking-[0.12em] text-emerald-700 dark:text-emerald-400
+                             bg-emerald-50 dark:bg-emerald-400/10
+                             border border-emerald-200 dark:border-emerald-400/25
+                             rounded px-1.5 py-[3px]">
+              Live
             </span>
-            <span>EcoReport AI</span>
-            <span className="ml-2 text-[10px] uppercase tracking-[0.15em] text-muted-foreground border border-border rounded-sm px-1.5 py-0.5">
-              Phase 1
-            </span>
-          </Link>
+          </div>
           <nav className="flex items-center gap-1">
 
             <NavLink
               to="/campaigns"
               data-testid={NAV.campaigns}
               className={({ isActive }) =>
-                `${linkBase} ${isActive ? linkActive : linkIdle} inline-flex items-center gap-1.5`
+                `${linkBase} ${isActive ? `${linkActive} ${linkRule}` : linkIdle} inline-flex items-center gap-1.5`
               }
             >
               <Gauge className="w-3.5 h-3.5" /> Campaigns
@@ -134,15 +175,15 @@ export default function AppShell() {
               to="/limits"
               data-testid={NAV.limits}
               className={({ isActive }) =>
-                `${linkBase} ${isActive ? linkActive : linkIdle} inline-flex items-center gap-1.5`
+                `${linkBase} ${isActive ? `${linkActive} ${linkRule}` : linkIdle} inline-flex items-center gap-1.5`
               }
             >
-              <Ruler className="w-3.5 h-3.5" /> NCEC Limits
+              <Ruler className="w-3.5 h-3.5" /> Limits
             </NavLink>
             <NavLink
               to="/labs"
               className={({ isActive }) =>
-                `${linkBase} ${isActive ? linkActive : linkIdle} inline-flex items-center gap-1.5`
+                `${linkBase} ${isActive ? `${linkActive} ${linkRule}` : linkIdle} inline-flex items-center gap-1.5`
               }
             >
               <Truck className="w-3.5 h-3.5" /> Mobile Labs
@@ -151,7 +192,7 @@ export default function AppShell() {
               to="/site-samples"
               data-testid="nav-site-samples"
               className={({ isActive }) =>
-                `${linkBase} ${isActive ? linkActive : linkIdle} inline-flex items-center gap-1.5`
+                `${linkBase} ${isActive ? `${linkActive} ${linkRule}` : linkIdle} inline-flex items-center gap-1.5`
               }
             >
               <FlaskConical className="w-3.5 h-3.5" /> Site Samples
@@ -160,7 +201,7 @@ export default function AppShell() {
               to="/cover-photos"
               data-testid="nav-cover-photos"
               className={({ isActive }) =>
-                `${linkBase} ${isActive ? linkActive : linkIdle} inline-flex items-center gap-1.5`
+                `${linkBase} ${isActive ? `${linkActive} ${linkRule}` : linkIdle} inline-flex items-center gap-1.5`
               }
             >
               <Images className="w-3.5 h-3.5" /> Cover Photos
@@ -170,7 +211,7 @@ export default function AppShell() {
                 to="/review"
                 data-testid="nav-review"
                 className={({ isActive }) =>
-                  `${linkBase} ${isActive ? linkActive : linkIdle} inline-flex items-center gap-1.5`
+                  `${linkBase} ${isActive ? `${linkActive} ${linkRule}` : linkIdle} inline-flex items-center gap-1.5`
                 }
               >
                 <Inbox className="w-3.5 h-3.5" /> Review
@@ -179,16 +220,6 @@ export default function AppShell() {
                     {waiting}
                   </span>
                 )}
-              </NavLink>
-            )}
-            {admin && (
-              <NavLink
-                to="/users"
-                className={({ isActive }) =>
-                  `${linkBase} ${isActive ? linkActive : linkIdle} inline-flex items-center gap-1.5`
-                }
-              >
-                <Users className="w-3.5 h-3.5" /> Users
               </NavLink>
             )}
             <div className="relative" ref={bellRef}>
@@ -239,24 +270,72 @@ export default function AppShell() {
                 </div>
               )}
             </div>
-            <ThemeToggle />
-            <div
-              className="hidden sm:flex items-center gap-1.5 ml-2 border border-border rounded-sm px-2.5 h-9 bg-secondary/40 text-xs"
-              title={`Signed in as ${user?.name || ""} — all actions are recorded under this name`}
-            >
-              {admin
-                ? <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                : <UserRound className="w-3.5 h-3.5 text-muted-foreground" />}
-              <span className="max-w-[140px] truncate">{user?.name || "—"}</span>
+            {/* Theme, users, audit and sign-out live behind the name: things
+                touched once a day, not once a minute. Moving them out is what
+                gives the navigation room to sit on one line instead of every
+                label wrapping. */}
+            <span className="w-px h-5 bg-border/70 mx-1" />
+            <div className="relative" ref={acctRef}>
+              <button
+                onClick={() => setOpenAcct((o) => !o)}
+                data-testid="account-btn"
+                title={`Signed in as ${user?.name || ""} — every action is recorded under this name`}
+                className="flex items-center gap-2 h-8 pl-1 pr-2.5 rounded-full
+                           border border-border bg-background hover:bg-secondary/60
+                           transition-colors"
+              >
+                <span className="grid place-items-center w-6 h-6 rounded-full
+                                 bg-primary text-primary-foreground text-[10px] font-bold">
+                  {initials(user?.name)}
+                </span>
+                <span className="hidden sm:inline text-[12.5px] max-w-[110px] truncate">
+                  {(user?.name || "—").split(" ")[0]}
+                </span>
+                <ChevronDown className="w-3 h-3 text-muted-foreground" />
+              </button>
+
+              {openAcct && (
+                <div className="absolute right-0 mt-1.5 w-[236px] rounded-md border
+                                border-border bg-background shadow-lg z-40 p-1.5">
+                  <div className="px-2 py-1.5">
+                    <div className="text-[13px] font-semibold leading-tight">
+                      {user?.name || "—"}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground font-mono">
+                      {user?.username}{admin ? " · administrator" : ""}
+                    </div>
+                  </div>
+                  <div className="h-px bg-border my-1.5" />
+                  <div className="px-2 pt-1 pb-1.5 text-[9.5px] font-bold uppercase
+                                  tracking-[0.12em] text-muted-foreground">
+                    Appearance
+                  </div>
+                  <div className="px-1 pb-1.5"><ThemeToggle /></div>
+                  {admin && (
+                    <>
+                      <div className="h-px bg-border my-1.5" />
+                      <button
+                        onClick={() => { setOpenAcct(false); nav("/users"); }}
+                        className="w-full text-left px-2 py-1.5 rounded text-[12.5px]
+                                   hover:bg-secondary inline-flex items-center gap-2"
+                      >
+                        <Users className="w-3.5 h-3.5 text-muted-foreground" /> Users
+                      </button>
+                    </>
+                  )}
+                  <div className="h-px bg-border my-1.5" />
+                  <button
+                    onClick={logout}
+                    data-testid="logout-btn"
+                    className="w-full text-left px-2 py-1.5 rounded text-[12.5px]
+                               text-destructive hover:bg-destructive/10
+                               inline-flex items-center gap-2"
+                  >
+                    <LogOut className="w-3.5 h-3.5" /> Sign out
+                  </button>
+                </div>
+              )}
             </div>
-            <button
-              onClick={logout}
-              title="Sign out"
-              className={`${linkBase} ${linkIdle} inline-flex items-center gap-1.5`}
-              data-testid="logout-btn"
-            >
-              <LogOut className="w-3.5 h-3.5" /> Sign out
-            </button>
           </nav>
         </div>
       </header>
@@ -267,7 +346,7 @@ export default function AppShell() {
 
       <footer className="border-t border-border">
         <div className="mx-auto max-w-[1400px] px-4 md:px-6 py-3 text-[11px] text-muted-foreground flex items-center justify-between">
-          <span>EcoReport AI — Ambient Air Quality Monitoring</span>
+          <span>EcoReport AI — environmental monitoring reports</span>
           <span className="font-mono">v0.1.0 · KSA NCEC 2020</span>
         </div>
       </footer>
