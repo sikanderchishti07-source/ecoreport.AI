@@ -22,14 +22,14 @@ function initials(name) {
 }
 
 const linkBase =
-  "relative px-3 py-2 text-[13px] rounded-md transition-colors";
+  "relative px-3.5 py-2 text-[13.5px] rounded-md transition-colors";
 // The current page is marked by a rule beneath it, aligned to the header's
 // own bottom edge. Quieter than a filled pill, and it stops the navigation
 // competing with the controls on the right.
 const linkActive = "text-foreground font-semibold";
 const linkIdle = "text-muted-foreground hover:text-foreground hover:bg-secondary/60";
 const linkRule =
-  "after:absolute after:left-3 after:right-3 after:-bottom-[13px] after:h-[2px] "
+  "after:absolute after:left-3 after:right-3 after:-bottom-[19px] after:h-[2px] "
   + "after:rounded-full after:bg-primary";
 
 function fmtWhen(ts) {
@@ -133,7 +133,7 @@ export default function AppShell() {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <header className="sticky top-0 z-30 border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto max-w-[1400px] px-4 md:px-6 h-14 flex items-center justify-between">
+        <div className="mx-auto max-w-[1400px] px-4 md:px-6 h-16 flex items-center justify-between">
           {/* A brand lockup rather than a word among the links: the real mark
               at its own proportions, then a rule before the navigation.
               "Phase 1" is gone — it stopped being true months ago, and a label
@@ -144,19 +144,19 @@ export default function AppShell() {
               <img
                 src="/logo-mark.png"
                 alt="BSA.lab"
-                className="h-6 w-auto dark:hidden"
+                className="h-9 w-auto dark:hidden"
               />
               <img
                 src="/logo-mark-light.png"
                 alt="BSA.lab"
-                className="h-6 w-auto hidden dark:block"
+                className="h-9 w-auto hidden dark:block"
               />
             </Link>
-            <span className="hidden md:inline text-[9.5px] font-bold uppercase
+            <span className="hidden md:inline text-[10px] font-bold uppercase
                              tracking-[0.12em] text-emerald-700 dark:text-emerald-400
                              bg-emerald-50 dark:bg-emerald-400/10
                              border border-emerald-200 dark:border-emerald-400/25
-                             rounded px-1.5 py-[3px]">
+                             rounded px-2 py-[4px]">
               Live
             </span>
           </div>
@@ -280,15 +280,15 @@ export default function AppShell() {
                 onClick={() => setOpenAcct((o) => !o)}
                 data-testid="account-btn"
                 title={`Signed in as ${user?.name || ""} — every action is recorded under this name`}
-                className="flex items-center gap-2 h-8 pl-1 pr-2.5 rounded-full
+                className="flex items-center gap-2 h-9 pl-1 pr-3 rounded-full
                            border border-border bg-background hover:bg-secondary/60
                            transition-colors"
               >
-                <span className="grid place-items-center w-6 h-6 rounded-full
-                                 bg-primary text-primary-foreground text-[10px] font-bold">
+                <span className="grid place-items-center w-7 h-7 rounded-full
+                                 bg-primary text-primary-foreground text-[11px] font-bold">
                   {initials(user?.name)}
                 </span>
-                <span className="hidden sm:inline text-[12.5px] max-w-[110px] truncate">
+                <span className="hidden sm:inline text-[13px] max-w-[110px] truncate">
                   {(user?.name || "—").split(" ")[0]}
                 </span>
                 <ChevronDown className="w-3 h-3 text-muted-foreground" />
