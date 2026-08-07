@@ -160,7 +160,11 @@ export default function AppShell() {
               Live
             </span>
           </div>
-          <nav className="flex items-center gap-0.5">
+          {/* The navigation takes the spare width. Without it the bell and
+              the account stopped wherever the last link happened to end,
+              because a spacer inside an element that does not stretch has
+              nothing to push against. */}
+          <nav className="flex-1 flex items-center gap-0.5">
 
             <NavLink
               to="/campaigns"
@@ -222,7 +226,10 @@ export default function AppShell() {
                 )}
               </NavLink>
             )}
-            <span className="flex-1" />
+          </nav>
+
+          {/* Carried to the corner, level with the page's own right edge. */}
+          <div className="flex items-center gap-1.5">
             <div className="relative" ref={bellRef}>
               <button
                 onClick={() => { setOpenBell((v) => !v); if (!openBell) loadNotes(); }}
@@ -337,7 +344,7 @@ export default function AppShell() {
                 </div>
               )}
             </div>
-          </nav>
+          </div>
         </div>
       </header>
 
