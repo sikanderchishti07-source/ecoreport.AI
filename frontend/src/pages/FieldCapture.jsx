@@ -282,7 +282,7 @@ export default function FieldCapture() {
     const onPop = () => setV((s) => ({ ...s, step: Math.max(0, s.step - 1) }));
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [v.step, canGoBack]);
+  }, [v.step, canGoBack, setV]);
 
   const set = (k) => (e) =>
     setV((s) => ({ ...s, [k]: e?.target ? e.target.value : e }));
@@ -313,7 +313,7 @@ export default function FieldCapture() {
       return;
     }
     setV((s) => ({ ...s, ...p }));
-  }, [readPosition]);
+  }, [readPosition, setV]);
   useEffect(() => { if (v.step === 1 && !v.latitude) locate(); }, [v.step]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const addSample = async (kind, file) => {
