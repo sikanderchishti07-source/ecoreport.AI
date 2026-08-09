@@ -29,13 +29,27 @@ from noise_calc import NOISE_LIMITS, NoiseSummary  # noqa: E402
 
 log = logging.getLogger(__name__)
 
+# Measured against a black-and-white print, which is how these are often read
+# in a site office. The hourly trace and the day limit came out at 100 and 82
+# on a 0-255 grey scale — close enough that on paper the reading and the limit
+# were hard to tell apart.
+#
+# The trace is darkened to 56: a gap of 26 from the day limit at 82 and 78 from
+# the night limit at 134. Two nearer blues were tried first and both landed
+# within a point or two of the day limit — a colour that looks clearly
+# different on screen is very often the same tone on paper, so these numbers
+# are computed rather than judged, and stated here because they are easy to
+# undo by eye.
+#
+# The two limits also now differ in dash pattern, so the chart still reads if
+# it is photocopied and the tones compress further.
 NAVY = "#123a6d"
-BLUE = "#2e6fb7"
+BLUE = "#14406e"        # hourly trace — prints as 56 grey
 LBLUE = "#a8c8e8"
-RED = "#b02a2a"
-AMBER = "#c7791f"
-GREEN = "#1e7d4f"
-GREY = "#8a8f98"
+RED = "#b02a2a"         # day limit — 82
+AMBER = "#c7791f"       # night limit — 134
+GREEN = "#1e7d4f"       # compliant bars — 91
+GREY = "#6b7885"        # was #8a8f98, 3.25:1, too pale for the small labels
 NIGHT = "#0d2340"
 
 MM = 1 / 25.4
@@ -58,7 +72,7 @@ def _y(mm_from_top: float) -> float:
     return 1.0 - mm_from_top / FIG_H_MM
 
 _RC = {"font.family": "DejaVu Sans", "axes.edgecolor": "#d7dbe0",
-       "axes.linewidth": 0.8, "axes.grid": True, "grid.color": "#eceff3",
+       "axes.linewidth": 0.9, "axes.grid": True, "grid.color": "#dde4eb",
        "grid.linewidth": 0.7, "xtick.color": "#555", "ytick.color": "#555",
        "font.size": 8}
 
@@ -169,7 +183,8 @@ def _chrome(fig, title, sub, chips):
         x -= 0.088
     fig.text(0.055, _y(FIG_H_MM - 1.9),
              "Generated from validated monitoring data",
-             fontsize=5.6, color="#b7bcc4")
+             # was #b7bcc4 at 1.9:1 — legible on screen, gone on paper
+             fontsize=6.0, color="#8a97a7")
 
 
 def _f(v: Optional[float]) -> str:
@@ -199,7 +214,7 @@ def chart_hourly(s: NoiseSummary, category: str, out: str) -> Optional[str]:
         lo = min(lo, lim.night_db - 5)
         hi = max(hi, lim.day_db + 7)
     ax.fill_between(hk, hv, lo, color=BLUE, alpha=0.09, zorder=1)
-    ax.plot(hk, hv, color=BLUE, lw=1.8, marker="o", ms=3.4, mfc="white",
+    ax.plot(hk, hv, color=BLUE, lw=2.4, marker="o", ms=3.4, mfc="white",
             mec=BLUE, zorder=5)
     if has_lim:
         # Hours over the limit are ringed: an exceedance should be findable
@@ -208,8 +223,8 @@ def chart_hourly(s: NoiseSummary, category: str, out: str) -> Optional[str]:
         if over:
             ax.plot([o[0] for o in over], [o[1] for o in over], "o", ms=5,
                     color=RED, zorder=6)
-        ax.axhline(lim.day_db, color=RED, ls=(0, (6, 3)), lw=1.3, zorder=4)
-        ax.axhline(lim.night_db, color=AMBER, ls=(0, (6, 3)), lw=1.3,
+        ax.axhline(lim.day_db, color=RED, ls=(0, (6, 3)), lw=1.7, zorder=4)
+        ax.axhline(lim.night_db, color=AMBER, ls=(0, (2, 2)), lw=1.7,
                    zorder=4)
         ax.text(hk[0], lim.day_db + 0.7, f"Day limit {lim.day_db:.0f} dB(A)",
                 fontsize=6.2, color=RED, fontweight="bold")
