@@ -42,16 +42,31 @@ FONT = _resolve_font()
 # ---------------------------------------------------------------------------
 # Palette
 # ---------------------------------------------------------------------------
+# These reports are printed, and often on a black-and-white machine in a site
+# office. Measured against that: the old data blue and the limit red both fell
+# to about 95 on a 0-255 grey scale — the same shade — so on paper the reading
+# and the regulatory limit became a single line. Colour was carrying the
+# meaning by itself.
+#
+# The fix is to darken the data line and leave the limit red where it was: they
+# now print at 76 and 96, a gap of 20, which is visible. Darkening the red as
+# well was tried first and made it worse — 79 against 76, no separation at all.
+# The numbers are stated here because they are easy to break by eye: a red that
+# looks stronger on screen is very often the same tone as the blue on paper.
+#
+# Line weight and the dash pattern carry the distinction a second time, so the
+# chart still reads if it is photocopied and the tones compress further.
 NAVY = "#0F3D6E"        # headings, emphasis
-BLUE = "#1F6FB2"        # primary data series
+BLUE = "#155A93"        # primary data series — prints as 76 grey
 BLUE_LIGHT = "#5BA3D9"
 GREEN = "#2F9E63"       # secondary series
-RED = "#C0392B"         # regulatory limit / exceedance
+RED = "#C0392B"         # regulatory limit / exceedance — prints as 96 grey
 INK = "#2C3A47"         # primary text
 MUTED = "#6B7885"       # axis labels, secondary text
-FAINT = "#A7B0BA"       # footnotes
-GRID = "#EDF1F5"
-AXIS = "#DCE3EA"
+FAINT = "#6B7885"       # footnotes — was #A7B0BA, 2.2:1, which vanished on
+                        # paper and disappeared entirely on a photocopy
+GRID = "#DDE4EB"        # was #EDF1F5, 1.14:1 — pale enough not to print at all
+AXIS = "#C9D2DB"
 PANEL = "#F4F7FA"
 
 ROSE_SCALE = ["#DCEBF7", "#A9CDE9", "#67A6D8", "#2A7CBE", "#0F3D6E", "#2F9E63"]
@@ -158,7 +173,7 @@ def style_axes(ax, ylabel: str = "", xlabel: str = "") -> None:
         ax.spines[side].set_visible(False)
     for side in ("left", "bottom"):
         ax.spines[side].set_color(AXIS)
-    ax.grid(axis="y", color=GRID, linewidth=0.95)
+    ax.grid(axis="y", color=GRID, linewidth=1.1)
     ax.set_axisbelow(True)
     ax.tick_params(labelsize=8, length=0, pad=5)
     if ylabel:
@@ -186,7 +201,7 @@ def gradient_under(ax, x, y, color: str = BLUE, alpha: float = 0.22) -> None:
 
 
 def series_line(ax, x, y, color: str = BLUE, label: str = "",
-                width: float = 2.0, markers: Optional[bool] = None):
+                width: float = 2.6, markers: Optional[bool] = None):
     """Primary series with soft shadow; adds point markers when data is sparse."""
     y = [v if v is not None else math.nan for v in y]
     n_valid = sum(1 for v in y if not (v is None or (isinstance(v, float)
@@ -207,7 +222,9 @@ def series_line(ax, x, y, color: str = BLUE, label: str = "",
 def limit_line(ax, limit: float, text: str, x_data=None, y_data=None) -> None:
     """Dashed regulatory limit with a pill label placed where it won't collide
     with the data (left or right, whichever side is emptier near the limit)."""
-    ax.axhline(limit, color=RED, linewidth=1.4, linestyle=(0, (7, 3)), zorder=5)
+    # Dashed and heavier: on a mono print the dash pattern is what tells a
+    # limit from a reading, and at 1.4 pt the dashes closed up into a line.
+    ax.axhline(limit, color=RED, linewidth=1.8, linestyle=(0, (7, 3)), zorder=5)
     xmin, xmax = ax.get_xlim()
     place_right = True
     if x_data is not None and y_data is not None:
