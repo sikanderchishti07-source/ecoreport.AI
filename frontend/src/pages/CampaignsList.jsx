@@ -188,7 +188,15 @@ export default function CampaignsList() {
       {choosing && (
         <TypeChooser
           onClose={() => setChoosing(false)}
-          onPick={(t) => { setChoosing(false); nav(`/campaigns/new?type=${t}`); }}
+          onPick={(t) => {
+            setChoosing(false);
+            // Soil and water has its own page. Its work is samples and
+            // laboratory results, not a time series, so it shares none of
+            // the air wizard's steps.
+            nav(t === "soil_water"
+              ? "/campaigns/new-soil-water"
+              : `/campaigns/new?type=${t}`);
+          }}
         />
       )}
       <header className="flex items-center justify-between">
@@ -287,7 +295,9 @@ export default function CampaignsList() {
                 variant="ghost"
                 size="sm"
                 data-testid={CAMPAIGNS_LIST.rowOpen(c.id)}
-                onClick={() => nav(`/campaigns/${c.id}`)}
+                onClick={() => nav(c.campaign_type === "soil_water"
+                  ? `/campaigns/${c.id}/soil-water`
+                  : `/campaigns/${c.id}`)}
                 className="rounded-sm"
               >
                 <ArrowRight className="w-3.5 h-3.5" />
