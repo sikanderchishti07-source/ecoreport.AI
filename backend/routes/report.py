@@ -567,7 +567,12 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
                                   campaign.monitoring_end,
                                   campaign.day_start_hour,
                                   campaign.day_end_hour)
-    verdicts = assess(summary, campaign.noise_category)
+    # Article (7): construction sites are judged against the zone around them
+    # plus the Table (4) correction. Without both facts assess() returns no
+    # verdict and the report says so, rather than judging against a guess.
+    verdicts = assess(summary, campaign.noise_category,
+                      getattr(campaign, "construction_base_category", None),
+                      getattr(campaign, "construction_hours_per_day", None))
 
     out_dir = os.path.join(REPORT_DIR, campaign_id)
     os.makedirs(out_dir, exist_ok=True)
