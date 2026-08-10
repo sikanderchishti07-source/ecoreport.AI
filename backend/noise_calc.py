@@ -14,8 +14,15 @@ figure in that report to two decimal places (LAeq 60.08, LA10 61.20, LA50
 
 Percentile convention: LA10 is the level exceeded 10% of the time — the 90th
 percentile of the record — and LA90 the level exceeded 90% of the time. The
-day period is taken from the campaign (default 07:00–19:00) using the naive
+day period is taken from the campaign (default 07:00–20:00) using the naive
 local timestamps, per the locked rule that KSA time is never stamped UTC.
+
+Day period. The Executive Regulation for Noise (Royal Decree M/165,
+Article 1 — Definitions) defines daytime as the period between 7.00 am and
+8.00 pm, and night-time as 8.00 pm to 7.00 am. This module previously
+defaulted the day period to 07:00–19:00, which placed the 19:00–20:00 hour
+in the night average and judged it against a limit 10 dB tighter than the
+one that applies. The default is now the regulation's own window.
 """
 from __future__ import annotations
 
@@ -24,6 +31,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Tuple
+
+# The regulation's day period. Article 1 defines these; they are not a matter
+# of professional judgement, so they are named here rather than left as bare
+# numbers in a signature.
+REGULATORY_DAY_START = 7
+REGULATORY_DAY_END = 20
 
 
 def laeq(levels: Sequence[float]) -> Optional[float]:
@@ -121,8 +134,8 @@ def coerce_timestamps(readings: List[dict]) -> List[dict]:
 def build_noise_summary(readings: List[dict],
                         window_start: datetime,
                         window_end: datetime,
-                        day_start_hour: int = 7,
-                        day_end_hour: int = 19) -> NoiseSummary:
+                        day_start_hour: int = REGULATORY_DAY_START,
+                        day_end_hour: int = REGULATORY_DAY_END) -> NoiseSummary:
     """Statistics over the valid readings inside the monitoring window.
 
     ``readings`` are dicts with at least ``timestamp``, ``laeq`` and
@@ -209,7 +222,7 @@ def build_noise_summary(readings: List[dict],
 
 
 # ---------------------------------------------------------------------------
-# NCEC noise limits — Implementing Regulations for Noise, Royal Decree M/165
+# NCEC noise limits — Executive Regulation for Noise, Royal Decree M/165
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class NoiseLimit:
@@ -217,34 +230,97 @@ class NoiseLimit:
     label: str
     day_db: Optional[float]
     night_db: Optional[float]
+    # A short name that reads correctly inside a sentence. The full label is
+    # a table caption and does not.
+    short: str = ""
 
 
 NOISE_LIMITS: Dict[str, NoiseLimit] = {
-    "A": NoiseLimit("A", "Category A — sensitive zones (hospitals, schools)",
-                    50, 40),
-    "B": NoiseLimit("B", "Category B — residential areas", 55, 45),
-    "C": NoiseLimit("C", "Category C — mixed residential and commercial",
-                    60, 50),
-    "D": NoiseLimit("D", "Category D — commercial and business districts",
-                    65, 55),
+    # Article 4, Table (1)
+    "A": NoiseLimit("A", "Category A — low-density residential, tourist "
+                         "attractions, recreational parks, and the "
+                         "surroundings of hospitals, schools, elder care "
+                         "centres, nurseries and environmentally sensitive "
+                         "areas", 50, 40, "Category A"),
+    "B": NoiseLimit("B", "Category B — medium-density residential areas",
+                    55, 45, "Category B"),
+    "C": NoiseLimit("C", "Category C — high-density residential areas and "
+                         "areas of both residential and commercial activity",
+                    60, 50, "Category C"),
+    "D": NoiseLimit("D", "Category D — commercial areas, including warehouses "
+                         "and financial centres", 65, 55, "Category D"),
+    # Article 5, Table (2)
     "roadside": NoiseLimit("roadside", "Roadside — main roads and highways",
-                           70, 65),
-    "industrial": NoiseLimit("industrial", "Industrial zones", 70, 65),
-    # Construction sites take the roadside base with the correction of
-    # Table 8 applied per activity duration; the correction is stated in the
-    # report rather than silently added to a limit.
+                           70, 65, "a roadside area"),
+    # Article 6, Table (3)
+    "industrial": NoiseLimit("industrial",
+                             "Industrial zones, including the outdoor "
+                             "premises of activities", 70, 65, "an industrial zone"),
+    # Article 7 — a construction work site has NO standard of its own. It
+    # takes the standard of the zone it sits in (Article 4, 5 or 6) with the
+    # Table (4) correction added, and the correction is permitted only
+    # between 07:00 and 18:00. This entry therefore carries no numbers: a
+    # construction campaign cannot be judged until the surrounding zone and
+    # the duration of activities are known. It previously carried 70/65 —
+    # the roadside figures — which judged construction inside a Category A
+    # residential area against a limit 20 dB too lenient.
     "construction": NoiseLimit("construction",
-                               "Construction work site (corrections apply)",
-                               70, 65),
+                               "Construction work site — the standard of the "
+                               "surrounding zone with the Article 7 "
+                               "correction applied", None, None),
     "tbd": NoiseLimit("tbd", "To be determined by the consultant",
                       None, None),
 }
 
-# Table 8 — corrections at construction work sites
+# The zones a construction site can sit in. Construction is not itself a
+# zone, so it cannot be its own base.
+BASE_ZONE_CODES: Tuple[str, ...] = ("A", "B", "C", "D", "roadside",
+                                    "industrial")
+
+# Table (4) — corrections to the allowed noise levels at construction work
+# sites, by the duration of construction activities. "Over 8 hours" carries
+# no correction at all: a site working a full day is held to the ordinary
+# limit of its zone.
 CONSTRUCTION_CORRECTIONS: List[Tuple[str, int]] = [
     ("Up to 2.5 hours", 10),
     ("From 2.5 to 8 hours", 5),
+    ("Over 8 hours", 0),
 ]
+
+# Article 7(1): the exceedance is permitted in construction work sites from
+# 7.00 am to 6.00 pm. Outside those hours no correction applies.
+CONSTRUCTION_START_HOUR = 7
+CONSTRUCTION_END_HOUR = 18
+
+
+def construction_correction(activity_hours: Optional[float]) -> Optional[int]:
+    """Table (4) correction in dB for a stated duration of construction
+    activity. Returns None when the duration is unknown — the caller must
+    then decline to judge rather than assume the most generous band."""
+    if activity_hours is None:
+        return None
+    try:
+        h = float(activity_hours)
+    except (TypeError, ValueError):
+        return None
+    if h <= 0:
+        return None
+    if h <= 2.5:
+        return 10
+    if h <= 8:
+        return 5
+    return 0
+
+
+def construction_band(activity_hours: Optional[float]) -> Optional[str]:
+    """The Table (4) row label matching a stated duration."""
+    c = construction_correction(activity_hours)
+    if c is None:
+        return None
+    for label, db in CONSTRUCTION_CORRECTIONS:
+        if db == c:
+            return label
+    return None
 
 
 @dataclass
@@ -257,20 +333,71 @@ class NoiseVerdict:
     text: str
 
 
-def assess(summary: NoiseSummary, category: str) -> List[NoiseVerdict]:
+def applicable_limits(category: str,
+                      base_category: Optional[str] = None,
+                      activity_hours: Optional[float] = None
+                      ) -> Tuple[Optional[float], Optional[float], str]:
+    """The day and night limits that actually apply, with a sentence stating
+    where they come from.
+
+    For every category except construction this is simply the table value.
+    For construction it is the surrounding zone's value with the Article 7
+    correction added to the day figure only — the regulation grants no
+    night-time allowance to construction work.
+    """
+    limit = NOISE_LIMITS.get(category)
+    if limit is None:
+        return None, None, ""
+    if category != "construction":
+        return limit.day_db, limit.night_db, ""
+
+    base = NOISE_LIMITS.get(base_category) if base_category else None
+    if base is None or base.day_db is None \
+            or base_category not in BASE_ZONE_CODES:
+        return None, None, ""
+    correction = construction_correction(activity_hours)
+    if correction is None:
+        return None, None, ""
+    band = construction_band(activity_hours)
+    zone = base.short or base.label
+    basis = (
+        f"The site lies within {zone}, for which the standards "
+        f"are {base.day_db:.0f} dB(A) by day and {base.night_db:.0f} dB(A) at "
+        f"night. Article (7) of the Executive Regulation permits construction "
+        f"work sites to exceed that standard between 07:00 and 18:00 by the "
+        f"correction value of Table (4); for activities lasting "
+        f"{band.lower()} the correction is +{correction} dB(A), giving a "
+        f"corrected day-time limit of {base.day_db + correction:.0f} dB(A). "
+        f"No correction is permitted at night."
+    )
+    return base.day_db + correction, base.night_db, basis
+
+
+def assess(summary: NoiseSummary,
+           category: str,
+           base_category: Optional[str] = None,
+           activity_hours: Optional[float] = None) -> List[NoiseVerdict]:
     """Measured day and night levels against the campaign's category.
 
     An empty list means no judgement is made — the "to be determined"
     posture, in which the report states the levels against every category
     and leaves the assessment to the consultant.
+
+    A construction campaign also returns an empty list unless both the
+    surrounding zone (``base_category``) and the duration of construction
+    activities (``activity_hours``) are known, because Article 7 defines the
+    construction limit only in terms of those two facts. Printing no verdict
+    is the correct outcome; printing one against a guessed limit is not.
     """
-    limit = NOISE_LIMITS.get(category)
-    if limit is None or limit.day_db is None:
+    day_limit, night_limit, basis = applicable_limits(
+        category, base_category, activity_hours)
+    if day_limit is None:
         return []
+
     out: List[NoiseVerdict] = []
-    for period, measured, lim in (("day", summary.l_day, limit.day_db),
-                                  ("night", summary.l_night, limit.night_db)):
-        if measured is None:
+    for period, measured, lim in (("day", summary.l_day, day_limit),
+                                  ("night", summary.l_night, night_limit)):
+        if measured is None or lim is None:
             continue
         margin = measured - lim
         status = "ok" if margin <= 0 else "over"
@@ -283,6 +410,17 @@ def assess(summary: NoiseSummary, category: str) -> List[NoiseVerdict]:
             text = (f"{name} of {measured:.1f} dB(A) against a limit of "
                     f"{lim:.0f} dB(A) — {margin:.1f} dB above the "
                     f"permissible level.")
+        # A construction day verdict must say where its limit came from, and
+        # must not let the reader assume the correction covered the whole
+        # day period when the survey ran past 18:00.
+        if category == "construction" and period == "day":
+            text = f"{text} {basis}"
+            if summary.day_end_hour > CONSTRUCTION_END_HOUR:
+                text = (f"{text} The day period extends to "
+                        f"{summary.day_end_hour:02d}:00, beyond the 18:00 "
+                        f"limit of the Article (7) allowance; levels measured "
+                        f"after 18:00 are included in L Day but carry no "
+                        f"correction.")
         out.append(NoiseVerdict(period=period, measured=measured, limit=lim,
                                 margin=margin, status=status, text=text))
     return out
