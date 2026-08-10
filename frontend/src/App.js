@@ -4,6 +4,7 @@ import AppShell from "@/components/layout/AppShell";
 import CampaignsList from "@/pages/CampaignsList";
 import CampaignForm from "@/pages/CampaignForm";
 import CampaignDetail from "@/pages/CampaignDetail";
+import SoilWaterCampaign from "@/pages/SoilWaterCampaign";
 import UploadPage from "@/pages/UploadPage";
 import LimitsPage from "@/pages/LimitsPage";
 import LoginPage from "@/pages/LoginPage";
@@ -46,6 +47,12 @@ export default function App() {
           >
             <Route index element={<HomeDashboard />} />
             <Route path="/campaigns" element={<CampaignsList />} />
+            {/* The soil and water flow is its own page. Its work is samples
+                and laboratory results, not a time series, so it shares none of
+                the air wizard's steps — routing it through CampaignForm would
+                have shown an inlet height and a gas units selector. */}
+            <Route path="/campaigns/new-soil-water" element={<SoilWaterCampaign />} />
+            <Route path="/campaigns/:id/soil-water" element={<SoilWaterCampaign />} />
             <Route path="/campaigns/new" element={<CampaignForm mode="create" />} />
             <Route path="/campaigns/:id" element={<CampaignDetail />} />
             <Route path="/campaigns/:id/edit" element={<CampaignForm mode="edit" />} />
