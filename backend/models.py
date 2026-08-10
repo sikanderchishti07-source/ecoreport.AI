@@ -91,6 +91,10 @@ DEFAULT_GAS_UNITS_MAP: Dict[str, str] = {
 NOISE_CATEGORIES = ("A", "B", "C", "D", "roadside", "industrial",
                     "construction", "tbd")
 
+# The zones a construction work site can sit inside. Construction is not a
+# zone in its own right, so it cannot be its own base.
+CONSTRUCTION_BASE_CATEGORIES = ("A", "B", "C", "D", "roadside", "industrial")
+
 
 class CampaignBase(BaseModel):
     # "air" is the original ambient-air campaign; "noise" is an attended
@@ -126,8 +130,21 @@ class CampaignBase(BaseModel):
     )
     # --- noise campaigns only -------------------------------------------
     noise_category: str = "tbd"        # one of NOISE_CATEGORIES
-    day_start_hour: int = 7            # day period per the Implementing
-    day_end_hour: int = 19             # Regulations; configurable per job
+    # Article (1) of the Executive Regulation for Noise defines daytime as
+    # 07:00-20:00 and night-time as 20:00-07:00. The default was 19 and put
+    # the 19:00-20:00 hour into the night average, where the limit is 10 dB
+    # tighter. The field stays editable for the rare job that is measured to
+    # a different agreed window, but 20 is the regulation.
+    day_start_hour: int = 7
+    day_end_hour: int = 20
+    # Article (7): a construction work site has no standard of its own. It
+    # takes the standard of the zone around it, corrected by the Table (4)
+    # value for the duration of activities, and only between 07:00 and 18:00.
+    # Both facts are needed before any verdict can be given; left blank, the
+    # report states the levels and makes no judgement.
+    construction_base_category: Optional[str] = None   # A|B|C|D|roadside|
+                                                       # industrial
+    construction_hours_per_day: Optional[float] = None # duration of activity
     meter_model: Optional[str] = None  # sound level meter, printed in
     meter_serial: Optional[str] = None # the methodology section
     calibrator_model: Optional[str] = None
@@ -184,6 +201,8 @@ class CampaignUpdate(BaseModel):
     noise_category: Optional[str] = None
     day_start_hour: Optional[int] = None
     day_end_hour: Optional[int] = None
+    construction_base_category: Optional[str] = None
+    construction_hours_per_day: Optional[float] = None
     meter_model: Optional[str] = None
     meter_serial: Optional[str] = None
     calibrator_model: Optional[str] = None
