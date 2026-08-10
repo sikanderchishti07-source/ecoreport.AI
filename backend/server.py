@@ -16,6 +16,7 @@ from routes import readings as readings_router
 from routes import history as history_router
 from routes import media as media_router
 from routes import samples as samples_router
+from routes import lab_samples as lab_samples_router
 from routes import noise as noise_router
 from routes import portal as portal_router
 from routes import report as report_router
@@ -58,6 +59,11 @@ api.include_router(history_router.router, dependencies=_protected)
 api.include_router(media_router.router, dependencies=_protected)
 # Water and soil samples: recorded on site, read by nothing yet.
 api.include_router(samples_router.router, dependencies=_protected)
+# Soil and water reporting: parameter profiles, laboratory samples, the
+# results grid and the evaluated matrix. Distinct from samples_router above,
+# which records what the field operator captures during a visit; this one
+# holds what the laboratory reports afterwards.
+api.include_router(lab_samples_router.router, dependencies=_protected)
 api.include_router(noise_router.router, dependencies=_protected)
 api.include_router(portal_router.router, dependencies=_protected)
 # Client portal: intentionally open — access is granted by a signed,
