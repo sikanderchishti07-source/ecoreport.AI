@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus, Trash2, ArrowRight, MapPin, Search, Wind, Volume2, X } from "lucide-react";
+import {
+  Plus, Trash2, ArrowRight, MapPin, Search, Wind, Volume2, FlaskConical, X,
+} from "lucide-react";
 
 import { listCampaigns, deleteCampaign, searchArchive } from "@/lib/api";
 import { CAMPAIGNS_LIST } from "@/constants/testIds";
@@ -18,6 +20,15 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+
+// A campaign's type is fixed at creation, so this map is the one place the
+// printed name of each type lives. An unknown type falls back to Air rather
+// than rendering blank.
+const TYPE_LABELS = {
+  air: "Air",
+  noise: "Noise",
+  soil_water: "Soil & water",
+};
 
 const statusVariant = {
   draft: "bg-accent text-muted-foreground border-border",
@@ -55,14 +66,14 @@ function TypeChooser({ onClose, onPick }) {
   return (
     <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur flex items-center justify-center p-4"
          onMouseDown={onClose}>
-      <div className="w-full max-w-2xl border border-border rounded-sm bg-background p-6 shadow-lg"
+      <div className="w-full max-w-4xl border border-border rounded-sm bg-background p-6 shadow-lg"
            onMouseDown={(e) => e.stopPropagation()}>
         <h2 className="text-lg font-semibold tracking-tight">What is being monitored?</h2>
         <p className="text-xs text-muted-foreground mt-1">
           The campaign type decides the data format, the calculations and the
           report the system generates.
         </p>
-        <div className="grid md:grid-cols-2 gap-4 mt-5">
+        <div className="grid md:grid-cols-3 gap-4 mt-5">
           <button
             onClick={() => onPick("air")}
             data-testid="new-campaign-air"
@@ -85,6 +96,19 @@ function TypeChooser({ onClose, onPick }) {
             <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
               One-minute sound level record — LAeq, day and night levels and
               statistical percentiles against the NCEC noise limits.
+            </p>
+          </button>
+          <button
+            onClick={() => onPick("soil_water")}
+            data-testid="new-campaign-soil-water"
+            className="text-left border border-border rounded-sm p-5 hover:border-primary hover:bg-secondary/40 transition-colors"
+          >
+            <FlaskConical className="w-6 h-6 text-primary" />
+            <div className="mt-3 text-sm font-semibold">Soil &amp; Water Quality</div>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+              Laboratory results for soil, water or sediment samples — several
+              sample points in one report, against the NCEC soil and aqueous
+              media standards.
             </p>
           </button>
         </div>
@@ -239,7 +263,7 @@ export default function CampaignsList() {
                 <span>{c.project_name}</span>
                 <Badge variant="outline"
                        className="rounded-sm text-[10px] uppercase tracking-wider">
-                  {c.campaign_type === "noise" ? "Noise" : "Air"}
+                  {TYPE_LABELS[c.campaign_type] || TYPE_LABELS.air}
                 </Badge>
                 <StatusPill value={c.status} />
               </div>
