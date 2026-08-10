@@ -32,14 +32,27 @@ const DEFAULT_GAS_UNITS_MAP = {
 };
 
 const NOISE_CATEGORIES = [
-  { value: "A", label: "A — Sensitive zones (hospitals, schools)" },
-  { value: "B", label: "B — Residential areas" },
-  { value: "C", label: "C — Mixed residential and commercial" },
-  { value: "D", label: "D — Commercial and business districts" },
+  { value: "A", label: "A — Low-density residential, parks, hospitals, schools" },
+  { value: "B", label: "B — Medium-density residential" },
+  { value: "C", label: "C — High-density residential and mixed commercial" },
+  { value: "D", label: "D — Commercial, warehouses, financial centres" },
   { value: "roadside", label: "Roadside — main roads and highways" },
   { value: "industrial", label: "Industrial zones" },
   { value: "construction", label: "Construction work site" },
   { value: "tbd", label: "To be determined by the consultant" },
+];
+
+// A construction site has no standard of its own. Article (7) gives it the
+// standard of the zone around it plus a correction, so the zone has to be
+// named separately — construction cannot be its own base.
+const CONSTRUCTION_BASE_CATEGORIES = NOISE_CATEGORIES.filter(
+  (c) => c.value !== "construction" && c.value !== "tbd");
+
+// Table (4) — the correction depends on how long activities run each day.
+const CONSTRUCTION_BANDS = [
+  { value: 2, label: "Up to 2.5 hours (+10 dB)" },
+  { value: 6, label: "From 2.5 to 8 hours (+5 dB)" },
+  { value: 10, label: "Over 8 hours (no correction)" },
 ];
 
 
@@ -96,7 +109,9 @@ const defaults = {
   campaign_type: "air",
   noise_category: "tbd",
   day_start_hour: 7,
-  day_end_hour: 19,
+  day_end_hour: 20,
+  construction_base_category: "",
+  construction_hours_per_day: "",
   meter_model: "",
   meter_serial: "",
   calibrator_model: "",
@@ -279,7 +294,9 @@ export default function CampaignForm({ mode }) {
           campaign_type: c.campaign_type || "air",
           noise_category: c.noise_category || "tbd",
           day_start_hour: c.day_start_hour ?? 7,
-          day_end_hour: c.day_end_hour ?? 19,
+          day_end_hour: c.day_end_hour ?? 20,
+          construction_base_category: c.construction_base_category || "",
+          construction_hours_per_day: c.construction_hours_per_day ?? "",
           meter_model: c.meter_model || "",
           meter_serial: c.meter_serial || "",
           calibrator_model: c.calibrator_model || "",
@@ -366,7 +383,13 @@ export default function CampaignForm({ mode }) {
       const payload = {
         ...form,
         day_start_hour: parseInt(form.day_start_hour, 10) || 7,
-        day_end_hour: parseInt(form.day_end_hour, 10) || 19,
+        day_end_hour: parseInt(form.day_end_hour, 10) || 20,
+        construction_base_category:
+          form.construction_base_category || null,
+        construction_hours_per_day:
+          form.construction_hours_per_day === ""
+            ? null
+            : parseFloat(form.construction_hours_per_day),
         // Blank weather fields must arrive as null: an empty string is not
         // a number, and the report omits the table when nothing was
         // recorded rather than printing empty rows.
@@ -564,7 +587,9 @@ export default function CampaignForm({ mode }) {
           The land-use category decides which NCEC limits the report judges
           against. Choosing "to be determined" produces a report that states
           the measured levels against every category and leaves the
-          assessment to the consultant.
+          assessment to the consultant. The day period is 07:00–20:00 under
+          Article (1) of the Executive Regulation for Noise; change it only
+          where a different window has been agreed in writing.
         </p>
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-1.5">
@@ -595,6 +620,50 @@ export default function CampaignForm({ mode }) {
                      onChange={(e) => setForm((f) => ({ ...f, day_end_hour: e.target.value }))} />
             </div>
           </div>
+          {form.noise_category === "construction" && (
+            <div className="md:col-span-2 space-y-3 rounded-sm border border-border bg-muted/30 p-3">
+              <p className="text-[11px] text-muted-foreground">
+                A construction work site has no standard of its own.
+                Article (7) allows it to exceed the standard of the zone
+                around it, by the Table (4) correction, and only between
+                07:00 and 18:00. Both the surrounding zone and the duration
+                of activities are needed. Left blank, the report states the
+                measured levels and makes no compliance judgement.
+              </p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Surrounding zone</Label>
+                  <select
+                    value={form.construction_base_category}
+                    onChange={(e) => setForm((f) => ({
+                      ...f, construction_base_category: e.target.value }))}
+                    className="w-full h-9 rounded-sm border border-border bg-background px-2 text-sm"
+                    data-testid="construction-base-category"
+                  >
+                    <option value="">Not stated — no verdict</option>
+                    {CONSTRUCTION_BASE_CATEGORIES.map((c) => (
+                      <option key={c.value} value={c.value}>{c.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Duration of activities</Label>
+                  <select
+                    value={form.construction_hours_per_day}
+                    onChange={(e) => setForm((f) => ({
+                      ...f, construction_hours_per_day: e.target.value }))}
+                    className="w-full h-9 rounded-sm border border-border bg-background px-2 text-sm"
+                    data-testid="construction-hours"
+                  >
+                    <option value="">Not stated — no verdict</option>
+                    {CONSTRUCTION_BANDS.map((c) => (
+                      <option key={c.value} value={c.value}>{c.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Sound level meter</Label>
             <Input value={form.meter_model}
