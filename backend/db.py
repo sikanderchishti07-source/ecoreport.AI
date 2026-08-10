@@ -139,6 +139,114 @@ async def seed_pollutant_limits() -> None:
     log.info("NCEC limits seed complete (%d rows).", len(NCEC_LIMITS))
 
 
+# ---------------------------------------------------------------------------
+# Soil and water parameter profiles.
+#
+# Unlike the air and noise limits, the soil and water limit tables are not
+# seeded into Mongo at all. They live in soil_water_limits.py, read straight
+# from the two Executive Regulations, because a limit table that can be
+# edited through the UI is a limit table that can be edited to the wrong
+# number — which is precisely how the PM exceedance counts and the
+# construction noise standard were wrong for months. The regulation changes
+# by decree, not by a user with a keyboard.
+#
+# What is seeded is the starting set of parameter profiles: the suites BSA
+# already runs, so a new campaign is one click rather than ticking forty
+# boxes. Profiles are the client's scope of work, not the standard, so they
+# are meant to be edited.
+# ---------------------------------------------------------------------------
+STARTER_PROFILES: List[Dict[str, Any]] = [
+    {
+        "name": "Soil — TPH, BTEX, metals (standard suite)",
+        "medium": "soil",
+        "analyte_keys": [
+            "f1", "f2", "f3", "f4",
+            "benzene", "ethylbenzene", "toluene", "xylene",
+            "ph", "phenols", "fluoride", "cyanide_free", "sulphur",
+            "as", "cd", "cr", "cu", "pb", "hg", "ni", "zn",
+            "ca", "mg", "k",
+            "gravel", "sand", "mud",
+        ],
+    },
+    {
+        "name": "Soil — full physicochemical and metals",
+        "medium": "soil",
+        "analyte_keys": [
+            "f1", "f2", "f3", "f4",
+            "benzene", "ethylbenzene", "toluene", "xylene",
+            "fog", "toc", "ph", "conductivity", "phenols",
+            "ca", "mg", "k", "fluoride", "cyanide_free", "sulphur",
+            "al", "ba", "b", "be", "as", "cd", "cr", "cu", "fe", "mn",
+            "co", "pb", "hg", "ni", "ag", "tl", "sn", "v", "zn",
+            "chloride", "carbonate", "phosphate", "phosphorus",
+            "ammonia_n", "nitrate_n", "tn",
+            "gravel", "sand", "mud",
+        ],
+    },
+    {
+        "name": "Water — field, chemical and microbiology",
+        "medium": "water",
+        "analyte_keys": [
+            "ph", "temperature", "tds", "do", "conductivity", "salinity",
+            "turbidity", "cod", "bod5", "hardness", "alkalinity",
+            "chloride", "free_chlorine", "cyanide_free", "fluoride",
+            "nitrate_n", "nitrite_n", "phosphate", "sulphate", "sulphide",
+            "ammonia_n", "tn", "phosphorus",
+            "al", "as", "ba", "cd", "ca", "cr", "co", "cu", "fe", "pb",
+            "mg", "mn", "hg", "ni", "se", "na", "zn",
+            "benzene", "ethylbenzene", "toluene", "xylene", "phenols",
+            "fog", "toc", "tph",
+            "ecoli", "intestinal_enterococci", "total_coliform",
+        ],
+    },
+    {
+        "name": "Water — metals only",
+        "medium": "water",
+        "analyte_keys": [
+            "al", "sb", "as", "ba", "be", "b", "cd", "ca", "cr", "cr6",
+            "co", "cu", "fe", "pb", "li", "mg", "mn", "hg", "mo", "ni",
+            "k", "se", "ag", "na", "tl", "sn", "v", "zn",
+        ],
+    },
+    {
+        "name": "Sediment — metals, nutrients and organics",
+        "medium": "sediment",
+        "analyte_keys": [
+            "ph", "gravel", "sand", "mud",
+            "ba", "cd", "cr", "cr6", "co", "cu", "fe", "pb", "hg", "ni",
+            "sn", "zn",
+            "phosphate", "phosphorus", "ammonia_n", "nitrate_n", "nitrite_n",
+            "tn", "organic_matter", "tph", "pahs",
+            "benzene", "ethylbenzene", "toluene", "xylene", "total_vocs",
+            "toc",
+        ],
+    },
+]
+
+
+async def seed_parameter_profiles() -> None:
+    """Insert the starter profiles once, then leave them alone.
+
+    `$setOnInsert` only, unlike the limits seed: a profile is a working
+    document that BSA is expected to edit, and overwriting an edited profile
+    on every redeploy would quietly undo that work.
+    """
+    from sample_models import ParameterProfile  # local import: avoids a cycle
+
+    created = 0
+    for row in STARTER_PROFILES:
+        existing = await db.parameter_profiles.find_one(
+            {"name": row["name"], "medium": row["medium"]}
+        )
+        if existing:
+            continue
+        record = ParameterProfile(**row)
+        await db.parameter_profiles.insert_one(to_mongo(record.model_dump()))
+        created += 1
+    if created:
+        log.info("Parameter profiles seeded (%d new).", created)
+
+
 async def migrate_campaigns() -> None:
     """Idempotent schema repairs to stored campaigns.
 
@@ -160,6 +268,25 @@ async def migrate_campaigns() -> None:
         log.info("Day period corrected to 07:00-20:00 on %d noise campaign(s);"
                  " their reports need reissuing.", res.modified_count)
 
+    # Soil and water campaigns created before the settings block existed get
+    # an empty one. Empty means no standard chosen, which means no verdicts —
+    # the correct posture, not a regression.
+    res2 = await db.campaigns.update_many(
+        {"campaign_type": "soil_water", "sample_settings": {"$exists": False}},
+        {"$set": {"sample_settings": {
+            "standard": "none",
+            "decision_rule": "simple_acceptance",
+            "analyte_keys": [],
+            "profile_id": None,
+            "laboratory": None,
+            "lab_accreditation": None,
+            "default_context": {},
+        }}},
+    )
+    if res2.modified_count:
+        log.info("Sample settings block added to %d soil/water campaign(s).",
+                 res2.modified_count)
+
 
 async def create_indexes() -> None:
     """Create supporting indexes."""
@@ -176,4 +303,12 @@ async def create_indexes() -> None:
     await db.notifications.create_index("id", unique=True)
     await db.notifications.create_index([("user_id", 1), ("created_at", -1)])
     await db.notifications.create_index([("user_id", 1), ("read", 1)])
+    # Soil and water: laboratory samples belong to a campaign and are read in
+    # column order; profiles are looked up by client and medium.
+    await db.lab_samples.create_index("id", unique=True)
+    await db.lab_samples.create_index([("campaign_id", 1), ("position", 1)])
+    await db.lab_samples.create_index([("campaign_id", 1), ("code", 1)], unique=True)
+    await db.parameter_profiles.create_index("id", unique=True)
+    await db.parameter_profiles.create_index([("medium", 1), ("client", 1)])
     await migrate_campaigns()
+    await seed_parameter_profiles()
