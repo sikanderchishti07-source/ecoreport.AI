@@ -24,8 +24,9 @@ from audit import audit
 from auth import current_username
 from db import db, to_mongo
 from models import Campaign, NoiseReading
-from noise_calc import (CONSTRUCTION_CORRECTIONS, NOISE_LIMITS, assess,
-                        build_noise_summary)
+from noise_calc import (CONSTRUCTION_CORRECTIONS, NOISE_LIMITS,
+                        applicable_limits, assess, build_noise_summary,
+                        construction_band)
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["noise"])
@@ -326,13 +327,26 @@ async def noise_summary(campaign_id: str):
     s = build_noise_summary(readings, campaign.monitoring_start,
                             campaign.monitoring_end,
                             campaign.day_start_hour, campaign.day_end_hour)
-    verdicts = assess(s, campaign.noise_category)
+    base_cat = getattr(campaign, "construction_base_category", None)
+    act_hours = getattr(campaign, "construction_hours_per_day", None)
+    verdicts = assess(s, campaign.noise_category, base_cat, act_hours)
     limit = NOISE_LIMITS.get(campaign.noise_category)
+    # A construction site is judged against the zone around it plus the
+    # Table (4) correction, so the limits shown here are the ones that
+    # actually apply, not the row from the table.
+    day_lim, night_lim, _basis = applicable_limits(
+        campaign.noise_category, base_cat, act_hours)
     return {
         "category": campaign.noise_category,
         "category_label": limit.label if limit else campaign.noise_category,
-        "limits": ({"day": limit.day_db, "night": limit.night_db}
-                   if limit and limit.day_db is not None else None),
+        "limits": ({"day": day_lim, "night": night_lim}
+                   if day_lim is not None else None),
+        "construction": ({"base_category": base_cat,
+                          "hours_per_day": act_hours,
+                          "band": construction_band(act_hours),
+                          "applies_between": "07:00\u201318:00"}
+                         if campaign.noise_category == "construction"
+                         else None),
         "corrections": [{"period": p, "db": c}
                         for p, c in CONSTRUCTION_CORRECTIONS],
         "stats": {
