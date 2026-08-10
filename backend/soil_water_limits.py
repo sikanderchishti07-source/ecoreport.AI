@@ -806,6 +806,8 @@ ANALYTES: Tuple[Analyte, ...] = (
        "mg/L", "EPA 610"),
 
     # --- microbiology ---------------------------------------------------
+    _a("tss", "Total suspended solids", ("water",), "physicochemical", "mg/L",
+       "APHA 2540 D", ("TSS",)),
     _a("ecoli", "E. coli", ("water",), "microbiology", "CFU / 100 mL", "APHA SM9213D"),
     _a("enterococcus", "Enterococcus", ("water",), "microbiology", "CFU / 100 mL",
        "APHA 9230 B"),
@@ -817,6 +819,8 @@ ANALYTES: Tuple[Analyte, ...] = (
     _a("pseudomonas", "Pseudomonas", ("water",), "microbiology", "CFU / 100 mL", "APHA 9213 E"),
     _a("total_coliform", "Total coliform", ("water",), "microbiology", "CFU / 100 mL",
        "APHA 9222B"),
+    _a("nematode", "Viable oval nematode", ("water",), "microbiology", "live ova / L",
+       "WHO bench aid"),
 
     # --- grain size -----------------------------------------------------
     _a("gravel", "Grain size — gravel", ("soil", "sediment"), "grain_size", "%",
@@ -827,66 +831,107 @@ ANALYTES: Tuple[Analyte, ...] = (
 
 ANALYTES_BY_KEY: Dict[str, Analyte] = {a.key: a for a in ANALYTES}
 
-# Spellings that appear on BSA's own certificate templates and on laboratory
-# sheets. Kept explicit rather than fuzzy-matched: a fuzzy match that picks
-# total chromium when the sheet said hexavalent chromium is a wrong number
-# printed with confidence.
-EXTRA_ALIASES: Dict[str, Tuple[str, ...]] = {
-    "cr": ("chromium cr", "chromium total cr", "chromium (total)", "total chromium"),
-    "cr6": ("chromium cr (iv)", "chromium cr iv", "chromium (vi)", "hexavalent chromium"),
-    "as": ("arsenic as", "arsenic (inorganic)"),
-    "mn": ("manganase mn", "manganese mn"),
-    "fe": ("iron fe",),
-    "al": ("aluminum al", "aluminium al", "aluminum", "aluminium"),
-    "ag": ("silver ag",),
-    "sn": ("tin sn", "tin ti"),
-    "pb": ("lead pb",),
-    "hg": ("mercury hg",),
-    "ni": ("nickel ni",),
-    "cu": ("copper cu",),
-    "zn": ("zinc zn",),
-    "cd": ("cadmium cd",),
-    "co": ("cobalt co",),
-    "ba": ("barium ba",),
-    "ca": ("calcium ca",),
-    "mg": ("magnesium mg",),
-    "k": ("potassium k",),
-    "na": ("sodium na",),
-    "se": ("selenium se",),
-    "mo": ("molybdenum mo",),
-    "li": ("lithium li",),
-    "tl": ("thallium tl",),
-    "v": ("vanadium v",),
-    "b": ("boron b",),
-    "be": ("beryllium be",),
-    "sb": ("antimony sb",),
-    "cyanide_free": ("cyanide (cn)", "cyanide cn", "cyanide free"),
-    "sulphur": ("sulphur s", "sulfur s", "sulfur"),
-    "sulphide": ("sulphide s", "sulfide"),
-    "sulphate": ("sulphate so4", "sulfate so4", "sulfate"),
-    "fluoride": ("fluoride f",),
-    "chloride": ("chloride cl-", "chloride (cl)", "chloride cl"),
-    "phosphate": ("phosphate po4",),
-    "phosphorus": ("total phosphorus p", "phosphorus p"),
-    "nitrate_n": ("nitrate no3 as n", "nitrate no3"),
-    "nitrite_n": ("nitrite no2 as n",),
-    "ammonia_n": ("ammonia nh3 as n", "ammonia nh3", "ammonia, total as n"),
-    "toc": ("total organic carbon toc",),
-    "fog": ("fats, oils , grease fog", "fats oils grease fog",
-            "fat oil and grease (fog)", "fat, oil and grease"),
-    "organic_matter": ("organic matter",),
-    "tph": ("total tph", "total petroleum hydrocarbon", "tph"),
-    "tph_c10_c30": ("tph (c10-30)", "tph c10-c30"),
-    "ph": ("ph (in 0.01m cacl2)",),
-    "do": ("dissolved oxygen (do)",),
-    "cod": ("chemical oxygen demand (cod)",),
-    "bod5": ("biological oxygen demand (bod5)", "biological oxygen demand (bod)"),
-    "tds": ("total dissolved solids (tds)",),
-    "tss": (),
-    "gravel": ("grain size gravel", "gravel"),
-    "sand": ("grain size sand", "sand"),
-    "mud": ("grain size mud", "mud"),
-}
+# Spellings that appear on BSA's own certificate templates, on laboratory
+# sheets, and in the limit tables themselves. Kept explicit rather than
+# fuzzy-matched: a fuzzy match that picks total chromium when the sheet said
+# hexavalent chromium is a wrong number printed with confidence.
+#
+# Held as a list of pairs, not a dict literal. Written as a dict, a key
+# repeated further down silently replaced the entry above it and half the
+# water table stopped resolving — with no error anywhere. The duplicate
+# check below turns that into an immediate failure at import.
+_ALIAS_SPEC: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("cr", ("chromium cr", "chromium total cr", "chromium (total)",
+            "total chromium", "chromium", "chromium (cr)", "chromium, total")),
+    ("cr6", ("chromium cr (iv)", "chromium cr iv", "chromium (vi)",
+             "hexavalent chromium", "chromium, hexavalent (cr vi)")),
+    ("as", ("arsenic as", "arsenic", "arsenic (as)", "arsenic (inorganic)",
+            "arsenic, inorganic (as)", "arsenic (inorganic) (as)")),
+    ("mn", ("manganase mn", "manganese mn", "manganese", "manganese (mn)")),
+    ("fe", ("iron fe", "iron", "iron (fe)")),
+    ("al", ("aluminum al", "aluminium al", "aluminum", "aluminium",
+            "aluminium (al)")),
+    ("ag", ("silver ag", "silver", "silver (ag)")),
+    ("sn", ("tin sn", "tin ti", "tin", "tin (sn)")),
+    ("pb", ("lead pb", "lead", "lead (pb)")),
+    ("hg", ("mercury hg", "mercury", "mercury (hg)", "mercury, inorganic (hg)",
+            "mercury, inorganic")),
+    ("ni", ("nickel ni", "nickel", "nickel (ni)")),
+    ("cu", ("copper cu", "copper", "copper (cu)")),
+    ("zn", ("zinc zn", "zinc", "zinc (zn)")),
+    ("cd", ("cadmium cd", "cadmium", "cadmium (cd)")),
+    ("co", ("cobalt co", "cobalt", "cobalt (co)")),
+    ("ba", ("barium ba", "barium", "barium (ba)", "barium, non-barite (ba)",
+            "barium (non-barite) (ba)")),
+    ("ca", ("calcium ca", "calcium", "calcium (ca)")),
+    ("mg", ("magnesium mg", "magnesium", "magnesium (mg)")),
+    ("k", ("potassium k", "potassium", "potassium (k)")),
+    ("na", ("sodium na", "sodium", "sodium (na)")),
+    ("se", ("selenium se", "selenium", "selenium (se)")),
+    ("mo", ("molybdenum mo", "molybdenum", "molybdenum (mo)")),
+    ("li", ("lithium li", "lithium", "lithium (li)")),
+    ("tl", ("thallium tl", "thallium", "thallium (tl)")),
+    ("v", ("vanadium v", "vanadium", "vanadium (v)")),
+    ("b", ("boron b", "boron", "boron (b)",
+           "boron, saturated phase extract (b)")),
+    ("be", ("beryllium be", "beryllium", "beryllium (be)")),
+    ("sb", ("antimony sb", "antimony", "antimony (sb)")),
+    ("cyanide_free", ("cyanide (cn)", "cyanide cn", "cyanide free",
+                      "cyanide", "cyanide (free)")),
+    ("sulphur", ("sulphur s", "sulfur s", "sulfur", "sulphur",
+                 "sulphur (elemental)", "sulfur (elemental)")),
+    ("sulphide", ("sulphide s", "sulfide", "sulphide")),
+    ("sulphate", ("sulphate so4", "sulfate so4", "sulfate", "sulphate")),
+    ("fluoride", ("fluoride f", "fluoride", "fluoride (f)")),
+    ("chloride", ("chloride cl-", "chloride (cl)", "chloride cl", "chloride")),
+    ("phosphate", ("phosphate po4", "phosphate", "phosphate (po4)")),
+    ("phosphorus", ("total phosphorus p", "phosphorus p", "phosphorus")),
+    ("nitrate_n", ("nitrate no3 as n", "nitrate no3",
+                   "nitrate nitrogen (no3-n)")),
+    ("nitrite_n", ("nitrite no2 as n",)),
+    ("ammonia_n", ("ammonia nh3 as n", "ammonia nh3", "ammonia, total as n",
+                   "ammonia", "ammoniacal nitrogen (nh3, nh4-n)")),
+    ("toc", ("total organic carbon toc", "total organic carbon (toc)")),
+    ("fog", ("fats, oils , grease fog", "fats oils grease fog",
+             "fat oil and grease (fog)", "fat, oil and grease",
+             "oil and grease", "fat, oil and grease (fog) (total extractable)")),
+    ("organic_matter", ("organic matter",)),
+    ("tph", ("total tph", "total petroleum hydrocarbon",
+             "total petroleum hydrocarbons")),
+    ("tph_c10_c30", ("tph (c10-30)", "tph c10-c30")),
+    ("ph", ("ph (in 0.01m cacl2)",)),
+    ("do", ("dissolved oxygen (do)", "dissolved oxygen")),
+    ("cod", ("chemical oxygen demand (cod)", "chemical oxygen demand")),
+    ("bod5", ("biological oxygen demand (bod5)",
+              "biological oxygen demand (bod)")),
+    ("tds", ("total dissolved solids (tds)", "total dissolved solids")),
+    ("tss", ("total suspended solids (tss)", "total suspended solids")),
+    ("turbidity", ("turbidity",)),
+    ("salinity", ("salinity",)),
+    ("temperature", ("temperature difference (delta t)", "temperature",
+                     "delta temperature")),
+    ("free_chlorine", ("free chlorine", "chlorine")),
+    ("phenols", ("phenol", "phenols (total)", "phenols")),
+    ("pahs", ("polycyclic aromatic hydrocarbons (pah)",
+              "polycyclic aromatic hydrocarbons (pahs)")),
+    ("xylene", ("xylenes",)),
+    ("ecoli", ("e. coli", "e.coli", "e. coli (per 100 ml)")),
+    ("enterococcus", ("enterococci bacteria", "enterococci bacteria (per 100 ml)")),
+    ("intestinal_enterococci", ("intestinal enterococci",)),
+    ("total_coliform", ("total coliform bacteria", "total coliform")),
+    ("nematode", ("viable oval nematode",)),
+    ("gravel", ("grain size gravel", "gravel", "grain size - gravel")),
+    ("sand", ("grain size sand", "sand", "grain size - sand")),
+    ("mud", ("grain size mud", "mud", "grain size - mud")),
+)
+
+_seen_alias_keys: set = set()
+for _k, _ in _ALIAS_SPEC:
+    if _k in _seen_alias_keys:
+        raise AssertionError(f"duplicate alias key in _ALIAS_SPEC: {_k}")
+    _seen_alias_keys.add(_k)
+
+EXTRA_ALIASES: Dict[str, Tuple[str, ...]] = dict(_ALIAS_SPEC)
 
 
 def _norm(text: str) -> str:
@@ -899,17 +944,42 @@ def _norm(text: str) -> str:
     return s.replace("\u2013", "-").replace("\u2014", "-")
 
 
+def _norm_loose(text: str) -> str:
+    """As _norm, but ignoring commas as well.
+
+    "Fat, oil and grease (FOG)" and "Fat oil and grease (FOG)" are the same
+    parameter written two ways, and both appear in these documents. Commas
+    never distinguish two different parameters in either table, so dropping
+    them is safe; a collision would be caught by the check below.
+    """
+    return " ".join(_norm(text).replace(",", " ").split())
+
+
 _ALIAS_INDEX: Dict[str, str] = {}
+_LOOSE_INDEX: Dict[str, str] = {}
+
+
+def _register(text: str, key: str) -> None:
+    _ALIAS_INDEX.setdefault(_norm(text), key)
+    loose = _norm_loose(text)
+    existing = _LOOSE_INDEX.get(loose)
+    if existing and existing != key:
+        raise AssertionError(
+            f"comma-insensitive name collision: {text!r} maps to both "
+            f"{existing!r} and {key!r}")
+    _LOOSE_INDEX.setdefault(loose, key)
+
+
 for _an in ANALYTES:
-    _ALIAS_INDEX[_norm(_an.name)] = _an.key
-    _ALIAS_INDEX[_norm(_an.key)] = _an.key
+    _register(_an.name, _an.key)
+    _register(_an.key, _an.key)
     for _al in _an.aliases:
-        _ALIAS_INDEX[_norm(_al)] = _an.key
+        _register(_al, _an.key)
 for _key, _als in EXTRA_ALIASES.items():
     if _key not in ANALYTES_BY_KEY:
-        continue
+        raise AssertionError(f"alias points at unknown analyte key: {_key}")
     for _al in _als:
-        _ALIAS_INDEX.setdefault(_norm(_al), _key)
+        _register(_al, _key)
 
 
 def resolve_analyte(text: str) -> Optional[Analyte]:
@@ -921,11 +991,58 @@ def resolve_analyte(text: str) -> Optional[Analyte]:
     """
     if not text:
         return None
-    return ANALYTES_BY_KEY.get(_ALIAS_INDEX.get(_norm(text), ""))
+    key = _ALIAS_INDEX.get(_norm(text)) or _LOOSE_INDEX.get(_norm_loose(text))
+    return ANALYTES_BY_KEY.get(key) if key else None
 
 
 def analytes_for(media: str) -> List[Analyte]:
     return [a for a in ANALYTES if media in a.media]
+
+
+# ---------------------------------------------------------------------------
+# Link the limit tables to the analyte library by key.
+#
+# The tables are written with the regulation's own wording and the library
+# with the wording BSA's certificates use. Matching the two on printed name
+# looks like it works and then quietly fails on the rows where the two
+# differ — pH is "pH (in 0.01M CaCl2)" in Appendix (1), mercury is "Mercury,
+# inorganic (Hg)". Both came back as "no limit" until this index existed.
+#
+# Rows that resolve to no analyte are kept and listed in UNLINKED_LIMIT_ROWS.
+# That is expected for most of the pesticide and radionuclide rows, which
+# the regulation carries but BSA does not currently determine; they can
+# still be reached by name. It is not expected for anything BSA measures, so
+# the list is worth reading after any edit to either table.
+# ---------------------------------------------------------------------------
+SOIL_BY_KEY: Dict[str, List[SoilRow]] = {}
+WATER_BY_KEY: Dict[str, List[Dict[str, object]]] = {}
+DISCHARGE_BY_KEY: Dict[str, List[Dict[str, object]]] = {}
+UNLINKED_LIMIT_ROWS: List[Tuple[str, str]] = []
+
+
+def _link(rows, index, table_name: str) -> None:
+    for row in rows:
+        analyte = resolve_analyte(str(row["analyte"]))
+        row["key"] = analyte.key if analyte else None
+        if analyte:
+            index.setdefault(analyte.key, []).append(row)
+        else:
+            UNLINKED_LIMIT_ROWS.append((table_name, str(row["analyte"])))
+
+
+_link(SOIL_LIMITS, SOIL_BY_KEY, "soil")
+_link(WATER_AMBIENT, WATER_BY_KEY, "water_ambient")
+_link(DISCHARGE_LIMITS, DISCHARGE_BY_KEY, "discharge")
+
+
+def _rows_for(analyte: str, index: Dict[str, List], table: List) -> List:
+    """Find limit rows for a key, an alias, or a literal table name."""
+    if analyte in index:
+        return index[analyte]
+    resolved = resolve_analyte(analyte)
+    if resolved and resolved.key in index:
+        return index[resolved.key]
+    return [r for r in table if r["analyte"] == analyte]
 
 
 # ---------------------------------------------------------------------------
@@ -941,7 +1058,7 @@ _NBL_REASON = ("The regulation gives this limit as the natural background "
 
 
 def _soil_rows(analyte: str, depth: Optional[str]) -> List[SoilRow]:
-    rows = [r for r in SOIL_LIMITS if r["analyte"] == analyte]
+    rows = _rows_for(analyte, SOIL_BY_KEY, SOIL_LIMITS)
     if not rows:
         return []
     split = [r for r in rows if r["depth"]]
@@ -963,7 +1080,7 @@ def soil_limit(analyte: str, particle_size: Optional[str],
     """
     rows = _soil_rows(analyte, depth)
     if not rows:
-        known = any(r["analyte"] == analyte for r in SOIL_LIMITS)
+        known = bool(_rows_for(analyte, SOIL_BY_KEY, SOIL_LIMITS))
         reason = _NO_CONTEXT if known else _NO_ROW
         return Limit(analyte=analyte, unit="", assessable=False, reason=reason,
                      source=SOIL_SOURCE)
@@ -985,7 +1102,7 @@ def soil_limit(analyte: str, particle_size: Optional[str],
 
 def water_ambient_limit(analyte: str, media: Optional[str]) -> Limit:
     """The Appendix (1) ambient water limit for one analyte in one class."""
-    rows = [r for r in WATER_AMBIENT if r["analyte"] == analyte]
+    rows = _rows_for(analyte, WATER_BY_KEY, WATER_AMBIENT)
     if not rows:
         return Limit(analyte=analyte, unit="", assessable=False,
                      reason=_NO_ROW, source=WATER_AMBIENT_SOURCE)
@@ -1029,10 +1146,10 @@ def discharge_limit(analyte: str, destination: Optional[str],
     average and gives no single-sample maximum, one sample cannot establish
     compliance and no verdict is given.
     """
-    rows = [r for r in DISCHARGE_LIMITS
-            if r["analyte"] == analyte and r["destination"] == destination]
+    candidates = _rows_for(analyte, DISCHARGE_BY_KEY, DISCHARGE_LIMITS)
+    rows = [r for r in candidates if r["destination"] == destination]
     if not rows:
-        known = any(r["analyte"] == analyte for r in DISCHARGE_LIMITS)
+        known = bool(candidates)
         if destination not in DISCHARGE_DESTINATIONS:
             return Limit(analyte=analyte, unit="", assessable=False,
                          reason=_NO_CONTEXT)
@@ -1095,6 +1212,7 @@ __all__ = [
     "INTERVALS", "INTERVAL_LABELS", "NBL", "Limit", "Analyte", "ANALYTES",
     "ANALYTES_BY_KEY", "resolve_analyte", "analytes_for",
     "SOIL_LIMITS", "WATER_AMBIENT", "DISCHARGE_LIMITS",
+    "SOIL_BY_KEY", "WATER_BY_KEY", "DISCHARGE_BY_KEY", "UNLINKED_LIMIT_ROWS",
     "SOIL_SOURCE", "WATER_AMBIENT_SOURCE", "DISCHARGE_SOURCE",
     "soil_limit", "water_ambient_limit", "discharge_limit", "soil_limit_row",
 ]
