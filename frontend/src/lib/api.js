@@ -365,3 +365,53 @@ export async function fetchSiteSamplePhotoBlob(id) {
   const res = await api.get(`/site-samples/${id}/photo`, { responseType: "blob" });
   return res.data;
 }
+
+// --- Soil and water reporting ----------------------------------------------
+// Distinct from the site-samples helpers above. Those record what the field
+// operator captures during a visit; these carry what the laboratory reports
+// afterwards, and the limits it is judged against.
+export const listAnalytes = (medium) =>
+  api.get("/analytes", { params: medium ? { medium } : {} }).then((r) => r.data);
+export const listSampleStandards = () =>
+  api.get("/standards").then((r) => r.data);
+
+export const listParameterProfiles = (params = {}) =>
+  api.get("/parameter-profiles", { params }).then((r) => r.data);
+export const createParameterProfile = (payload) =>
+  api.post("/parameter-profiles", payload).then((r) => r.data);
+export const updateParameterProfile = (id, payload) =>
+  api.put(`/parameter-profiles/${id}`, payload).then((r) => r.data);
+export const deleteParameterProfile = (id) =>
+  api.delete(`/parameter-profiles/${id}`);
+
+export const getSampleSettings = (campaignId) =>
+  api.get(`/campaigns/${campaignId}/sample-settings`).then((r) => r.data);
+export const saveSampleSettings = (campaignId, payload) =>
+  api.put(`/campaigns/${campaignId}/sample-settings`, payload).then((r) => r.data);
+
+export const listLabSamples = (campaignId) =>
+  api.get(`/campaigns/${campaignId}/samples`).then((r) => r.data);
+export const createLabSample = (campaignId, payload) =>
+  api.post(`/campaigns/${campaignId}/samples`, payload).then((r) => r.data);
+export const updateLabSample = (sampleId, payload) =>
+  api.put(`/samples/${sampleId}`, payload).then((r) => r.data);
+export const deleteLabSample = (sampleId) => api.delete(`/samples/${sampleId}`);
+
+export const ingestResultsGrid = (campaignId, payload) =>
+  api.post(`/campaigns/${campaignId}/results-grid`, payload).then((r) => r.data);
+// The CSV goes up as multipart, so the JSON content type set on the shared
+// client has to be overridden here or the server rejects the body.
+export const ingestResultsCsv = (campaignId, file) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post(`/campaigns/${campaignId}/results-csv`, fd, {
+    headers: { "Content-Type": "multipart/form-data" }, timeout: 120000,
+  }).then((r) => r.data);
+};
+
+export const getSampleSummary = (campaignId) =>
+  api.get(`/campaigns/${campaignId}/sample-summary`).then((r) => r.data);
+export const getSampleReadiness = (campaignId) =>
+  api.get(`/campaigns/${campaignId}/sample-readiness`).then((r) => r.data);
+export const getLandUseComparison = (campaignId) =>
+  api.get(`/campaigns/${campaignId}/land-use-comparison`).then((r) => r.data);
