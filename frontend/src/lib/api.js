@@ -401,10 +401,11 @@ export const ingestResultsGrid = (campaignId, payload) =>
   api.post(`/campaigns/${campaignId}/results-grid`, payload).then((r) => r.data);
 // The CSV goes up as multipart, so the JSON content type set on the shared
 // client has to be overridden here or the server rejects the body.
-export const ingestResultsCsv = (campaignId, file) => {
+export const ingestResultsCsv = (campaignId, file, addParametersToScope = true) => {
   const fd = new FormData();
   fd.append("file", file);
   return api.post(`/campaigns/${campaignId}/results-csv`, fd, {
+    params: { add_parameters_to_scope: addParametersToScope },
     headers: { "Content-Type": "multipart/form-data" }, timeout: 120000,
   }).then((r) => r.data);
 };
