@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  AlertTriangle, ArrowLeft, Check, ChevronRight, FlaskConical, Loader2,
-  Plus, Trash2, Upload,
+  AlertTriangle, ArrowLeft, Check, ChevronRight, FileText, FlaskConical,
+  Loader2, Plus, Trash2, Upload,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -14,8 +14,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  createCampaign, createLabSample, deleteLabSample, getCampaign,
-  getLandUseComparison, getSampleReadiness, getSampleSettings,
+  createCampaign, createLabSample, deleteLabSample, generateSampleReport,
+  getCampaign, getLandUseComparison, getSampleReadiness, getSampleSettings,
   getSampleSummary, ingestResultsCsv, listAnalytes, listLabSamples,
   listParameterProfiles, listSampleStandards, saveSampleSettings,
   updateLabSample,
@@ -156,6 +156,7 @@ export default function SoilWaterCampaign() {
   const [summary, setSummary] = useState(null);
   const [readiness, setReadiness] = useState(null);
   const [comparison, setComparison] = useState(null);
+  const [generating, setGenerating] = useState(false);
 
   // The medium is chosen, not inferred. A campaign is one medium and one
   // report — soil samples and water samples from the same site are two
@@ -354,6 +355,41 @@ export default function SoilWaterCampaign() {
       toast.error(err?.response?.data?.detail || "Upload failed");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const generate = async (format) => {
+    setGenerating(true);
+    try {
+      const out = await generateSampleReport(campaignId, format);
+      if (out.info) {
+        // A member generated it. The file exists and is versioned; the
+        // reviewing engineer downloads it.
+        toast.success(out.info.detail || "Report generated");
+        return;
+      }
+      const url = URL.createObjectURL(out.file);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = out.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Report generated");
+    } catch (err) {
+      // The error body is a blob on this request, so the usual
+      // err.response.data.detail is not readable without decoding it.
+      let detail = "Report generation failed";
+      try {
+        const blob = err?.response?.data;
+        if (blob && typeof blob.text === "function") {
+          detail = JSON.parse(await blob.text()).detail || detail;
+        }
+      } catch {
+        /* keep the generic message */
+      }
+      toast.error(detail);
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -560,18 +596,19 @@ export default function SoilWaterCampaign() {
 
             {grouped.map((g) => (
               <div key={g.key}>
-                <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-2">
+                <p className="text-[11px] uppercase tracking-wider font-medium text-foreground/70 mb-2">
                   {g.label}
                 </p>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-2">
                   {g.items.map((a) => {
                     const on = selected.has(a.key);
                     return (
                       <button key={a.key} onClick={() => toggleAnalyte(a.key)}
-                              className={`text-xs px-2.5 py-1 rounded-sm border transition-colors ${
-                                on ? "border-primary bg-primary/10 text-foreground"
-                                   : "border-border text-muted-foreground hover:border-primary/50"}`}>
-                        {on && <Check className="w-3 h-3 inline mr-1" />}
+                              className={`text-[13px] px-2.5 py-1.5 rounded-sm border transition-colors ${
+                                on
+                                  ? "border-primary bg-primary/15 text-foreground font-medium"
+                                  : "border-foreground/25 text-foreground hover:border-primary hover:bg-primary/5"}`}>
+                        {on && <Check className="w-3.5 h-3.5 inline mr-1" />}
                         {a.name}
                       </button>
                     );
@@ -895,13 +932,25 @@ export default function SoilWaterCampaign() {
             </div>
           )}
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap items-center">
             <Button variant="outline" className="rounded-sm"
                     onClick={() => setStep(3)}>Back</Button>
-            <Button variant="outline" className="rounded-sm"
-                    onClick={() => nav(`/campaigns/${campaignId}`)}>
-              Open campaign
+            <Button className="rounded-sm" disabled={generating}
+                    onClick={() => generate("docx")}>
+              {generating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          : <FileText className="w-4 h-4 mr-2" />}
+              Generate report
             </Button>
+            <Button variant="outline" className="rounded-sm"
+                    disabled={generating} onClick={() => generate("pdf")}>
+              PDF
+            </Button>
+            {readiness && !readiness.ready && (
+              <span className="text-xs text-muted-foreground">
+                The report will generate, and will state plainly where no
+                verdict could be reached.
+              </span>
+            )}
           </div>
         </section>
       )}
