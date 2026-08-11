@@ -151,6 +151,7 @@ export default function SoilWaterCampaign() {
   const [samples, setSamples] = useState([]);
   const [newSample, setNewSample] = useState({ code: "", label: "" });
   const [file, setFile] = useState(null);
+  const [addToScope, setAddToScope] = useState(true);
   const [ingest, setIngest] = useState(null);
   const [summary, setSummary] = useState(null);
   const [readiness, setReadiness] = useState(null);
@@ -339,9 +340,15 @@ export default function SoilWaterCampaign() {
     if (!file) return;
     setBusy(true);
     try {
-      const rep = await ingestResultsCsv(campaignId, file);
+      const rep = await ingestResultsCsv(campaignId, file, addToScope);
       setIngest(rep);
       setSamples(await listLabSamples(campaignId));
+      // The upload may have widened the campaign's parameter list, so the
+      // saved settings are reloaded rather than left showing the old ticks.
+      if (rep.parameters_added?.length) {
+        const fresh = await getSampleSettings(campaignId);
+        setSettings((prev) => ({ ...prev, analyte_keys: fresh.analyte_keys }));
+      }
       toast.success(`${rep.values_stored} results stored`);
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Upload failed");
@@ -672,7 +679,21 @@ export default function SoilWaterCampaign() {
               column is the parameter name. Columns headed Unit, Method, LOQ or
               MU% are read as metadata; every other heading is treated as a
               sample code, and any code not already present is created.
+              Uploading a second file adds to what is already stored rather
+              than replacing it, so a laboratory that sends organics and
+              metals on separate sheets works.
             </p>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="checkbox" className="mt-0.5"
+                     checked={addToScope}
+                     onChange={(e) => setAddToScope(e.target.checked)} />
+              <span className="text-xs text-muted-foreground leading-relaxed">
+                Add any parameter found in the file to this campaign's list.
+                Parameters already ticked are kept whether the file contains
+                them or not — a parameter that was in the scope and was not
+                determined prints as an empty row rather than disappearing.
+              </span>
+            </label>
             <div className="flex items-center gap-3 flex-wrap">
               <Input type="file" accept=".csv,text/csv"
                      className="rounded-sm max-w-sm"
@@ -693,9 +714,33 @@ export default function SoilWaterCampaign() {
                 {ingest.samples_matched.length + ingest.samples_created.length} samples.
                 {ingest.samples_created.length > 0
                   && ` ${ingest.samples_created.length} sample(s) created: ${ingest.samples_created.join(", ")}.`}
+                {ingest.values_replaced > 0
+                  && ` ${ingest.values_replaced} replaced an earlier result for the same parameter.`}
                 {ingest.values_below_loq > 0
                   && ` ${ingest.values_below_loq} result(s) below the limit of quantification.`}
               </p>
+              {ingest.parameters_added?.length > 0 && (
+                <div className="border border-border rounded-sm p-3 bg-secondary/20">
+                  <p className="text-xs font-medium">
+                    {ingest.parameters_added.length} parameter(s) added to the campaign
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {ingest.parameters_added.join(", ")}
+                  </p>
+                </div>
+              )}
+              {ingest.parameters_wrong_medium?.length > 0 && (
+                <div className="border border-amber-900/50 bg-amber-950/20 rounded-sm p-3">
+                  <p className="text-xs text-amber-300 font-medium">
+                    Not {medium} parameters
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {ingest.parameters_wrong_medium.join(", ")} — stored with
+                    their results but not added to the parameter list, because
+                    this is a {medium} campaign.
+                  </p>
+                </div>
+              )}
               {ingest.parameters_unresolved.length > 0 && (
                 <div className="border border-amber-900/50 bg-amber-950/20 rounded-sm p-3">
                   <p className="text-xs text-amber-300 font-medium">
