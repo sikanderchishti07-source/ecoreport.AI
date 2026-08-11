@@ -30,6 +30,19 @@ const TYPE_LABELS = {
   soil_water: "Soil & water",
 };
 
+// A soil-and-water campaign is one medium and one report. The badge says
+// which, taken from the campaign's own settings rather than guessed, so a
+// soil job and a water job for the same client are told apart at a glance.
+const MEDIUM_LABELS = { soil: "Soil", water: "Water", sediment: "Sediment" };
+
+function typeLabel(c) {
+  if (c?.campaign_type === "soil_water") {
+    const m = c?.sample_settings?.medium;
+    return MEDIUM_LABELS[m] || TYPE_LABELS.soil_water;
+  }
+  return TYPE_LABELS[c?.campaign_type] || TYPE_LABELS.air;
+}
+
 const statusVariant = {
   draft: "bg-accent text-muted-foreground border-border",
   ingested: "bg-sky-950/50 text-sky-300 border-sky-900",
@@ -271,7 +284,7 @@ export default function CampaignsList() {
                 <span>{c.project_name}</span>
                 <Badge variant="outline"
                        className="rounded-sm text-[10px] uppercase tracking-wider">
-                  {TYPE_LABELS[c.campaign_type] || TYPE_LABELS.air}
+                  {typeLabel(c)}
                 </Badge>
                 <StatusPill value={c.status} />
               </div>
