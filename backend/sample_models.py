@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -291,6 +291,17 @@ class SampleCampaignSettings(BaseModel):
     all-defaults, which means: no standard chosen, so no verdicts.
     """
     model_config = ConfigDict(extra="ignore")
+    # What this campaign is a report of. One campaign is one medium and one
+    # report: a site that produces soil and water samples gets a soil
+    # campaign and a water campaign, because the two are issued separately
+    # and cannot share a results table — mg/kg and mg/L do not belong in the
+    # same columns.
+    #
+    # Held separately from `standard` rather than inferred from it. The
+    # generator needs to know which report it is producing even when no
+    # standard has been chosen, and a reader of the screen needs to be told
+    # rather than left to work it out from a dropdown.
+    medium: str = "soil"              # one of SAMPLE_MEDIA
     standard: str = "none"
     decision_rule: str = "simple_acceptance"
     analyte_keys: List[str] = Field(default_factory=list)
@@ -301,3 +312,25 @@ class SampleCampaignSettings(BaseModel):
     # usually one land use and one soil type; per-sample overrides exist for
     # the job where it is not.
     default_context: SampleContext = Field(default_factory=SampleContext)
+
+
+# The standards that can be applied to each medium. A water campaign should
+# never be offered the soil table, and choosing a standard from the wrong
+# medium is the same class of error as choosing the wrong land use.
+STANDARDS_BY_MEDIUM: Dict[str, Tuple[str, ...]] = {
+    "soil": ("ncec_soil", "none"),
+    "water": ("ncec_water_ambient", "ncec_water_discharge", "none"),
+    "sediment": ("ads_81_2017", "none"),
+}
+
+MEDIUM_LABELS: Dict[str, str] = {
+    "soil": "Soil",
+    "water": "Water",
+    "sediment": "Sediment",
+}
+
+MEDIUM_REPORT_TITLES: Dict[str, str] = {
+    "soil": "Soil monitoring campaign",
+    "water": "Water monitoring campaign",
+    "sediment": "Sediment monitoring campaign",
+}
