@@ -143,25 +143,32 @@ export default function SoilWaterCampaign() {
   const [profiles, setProfiles] = useState([]);
 
   const [settings, setSettings] = useState({
-    standard: "none", decision_rule: "simple_acceptance",
+    medium: "soil", standard: "none", decision_rule: "simple_acceptance",
     analyte_keys: [], profile_id: null, laboratory: "",
     lab_accreditation: "", default_context: BLANK_CONTEXT,
   });
 
   const [samples, setSamples] = useState([]);
-  const [newSample, setNewSample] = useState({ code: "", label: "", medium: "soil" });
+  const [newSample, setNewSample] = useState({ code: "", label: "" });
   const [file, setFile] = useState(null);
   const [ingest, setIngest] = useState(null);
   const [summary, setSummary] = useState(null);
   const [readiness, setReadiness] = useState(null);
   const [comparison, setComparison] = useState(null);
 
-  const medium = useMemo(() => {
-    if (settings.standard === "ncec_soil") return "soil";
-    if (settings.standard === "ads_81_2017") return "sediment";
-    if (settings.standard.startsWith("ncec_water")) return "water";
-    return "soil";
-  }, [settings.standard]);
+  // The medium is chosen, not inferred. A campaign is one medium and one
+  // report — soil samples and water samples from the same site are two
+  // separate campaigns, because they are two separate issued reports.
+  const medium = settings.medium || "soil";
+  const mediumInfo = useMemo(
+    () => (options?.media || []).find((m) => m.key === medium) || null,
+    [options, medium],
+  );
+  const allowedStandards = useMemo(() => {
+    if (!options) return [];
+    const allowed = mediumInfo?.standards || [];
+    return options.standards.filter((s) => allowed.includes(s.key));
+  }, [options, mediumInfo]);
 
   useEffect(() => {
     (async () => {
@@ -193,6 +200,7 @@ export default function SoilWaterCampaign() {
     setCampaign(c);
     setSettings({
       ...s,
+      medium: s.medium || "soil",
       laboratory: s.laboratory || "",
       lab_accreditation: s.lab_accreditation || "",
       default_context: { ...BLANK_CONTEXT, ...(s.default_context || {}) },
@@ -250,12 +258,14 @@ export default function SoilWaterCampaign() {
     try {
       const payload = {
         ...next,
+        medium: next.medium || "soil",
         laboratory: next.laboratory || null,
         lab_accreditation: next.lab_accreditation || null,
       };
       const saved = await saveSampleSettings(campaignId, payload);
       setSettings({
         ...saved,
+        medium: saved.medium || "soil",
         laboratory: saved.laboratory || "",
         lab_accreditation: saved.lab_accreditation || "",
         default_context: { ...BLANK_CONTEXT, ...(saved.default_context || {}) },
@@ -293,10 +303,12 @@ export default function SoilWaterCampaign() {
         campaign_id: campaignId,
         code: newSample.code.trim(),
         label: newSample.label.trim(),
-        medium: newSample.medium,
+        // The server sets the medium from the campaign; sending one here
+        // would only be a second source of truth to disagree with it.
+        medium,
         context: BLANK_CONTEXT,
       });
-      setNewSample({ code: "", label: "", medium });
+      setNewSample({ code: "", label: "" });
       setSamples(await listLabSamples(campaignId));
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Could not add the sample");
@@ -361,7 +373,7 @@ export default function SoilWaterCampaign() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
             <FlaskConical className="w-5 h-5 text-primary" />
-            Soil &amp; water campaign
+            {mediumInfo?.title || "Soil & water campaign"}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             {campaign
@@ -431,6 +443,35 @@ export default function SoilWaterCampaign() {
       {step === 1 && options && (
         <section className="space-y-4">
           <div className="border border-border rounded-sm p-5 space-y-4">
+            <div>
+              <Label className="text-xs">What is this a report of?</Label>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {(options.media || []).map((m) => (
+                  <button key={m.key}
+                          onClick={() => setSettings({
+                            ...settings, medium: m.key,
+                            // A standard from another medium cannot survive
+                            // the switch — the server refuses it, and leaving
+                            // it selected would look like it had been kept.
+                            standard: m.standards.includes(settings.standard)
+                              ? settings.standard : "none",
+                            analyte_keys: [], profile_id: null,
+                          })}
+                          className={`text-sm px-4 py-2 rounded-sm border transition-colors ${
+                            medium === m.key
+                              ? "border-primary bg-primary/10 font-medium"
+                              : "border-border text-muted-foreground hover:border-primary/50"}`}>
+                    {medium === m.key && <Check className="w-3.5 h-3.5 inline mr-1.5" />}
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-2">
+                One campaign is one medium and one report. Soil and water
+                samples from the same site are two separate campaigns.
+              </p>
+            </div>
+
             <div className="grid sm:grid-cols-2 gap-4">
               <div>
                 <Label className="text-xs">Standard</Label>
@@ -440,7 +481,7 @@ export default function SoilWaterCampaign() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {options.standards.map((s) => (
+                    {allowedStandards.map((s) => (
                       <SelectItem key={s.key} value={s.key}>{s.label}</SelectItem>
                     ))}
                   </SelectContent>
@@ -548,7 +589,13 @@ export default function SoilWaterCampaign() {
       {step === 2 && options && (
         <section className="space-y-4">
           <div className="border border-border rounded-sm p-5 space-y-3">
-            <h2 className="text-sm font-semibold">Add a sample</h2>
+            <h2 className="text-sm font-semibold">
+              Add a {mediumInfo?.label?.toLowerCase() || "sample"} sample
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {samples.length} {mediumInfo?.label?.toLowerCase() || ""} sample
+              {samples.length === 1 ? "" : "s"} in this campaign.
+            </p>
             <div className="grid sm:grid-cols-4 gap-3">
               <div className="sm:col-span-2">
                 <Label className="text-xs">Sample code</Label>
@@ -703,7 +750,7 @@ export default function SoilWaterCampaign() {
 
           <div className="grid sm:grid-cols-4 gap-3">
             {[
-              ["Samples", summary.samples.length],
+              [`${mediumInfo?.label || "Sample"} samples`, summary.samples.length],
               ["Exceedances", summary.total_exceedances],
               ["Standard", summary.standard.replace(/_/g, " ")],
               ["Decision rule", summary.decision_rule.replace(/_/g, " ")],
