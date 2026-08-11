@@ -416,3 +416,28 @@ export const getSampleReadiness = (campaignId) =>
   api.get(`/campaigns/${campaignId}/sample-readiness`).then((r) => r.data);
 export const getLandUseComparison = (campaignId) =>
   api.get(`/campaigns/${campaignId}/land-use-comparison`).then((r) => r.data);
+
+// The soil and water report has its own endpoint rather than a branch inside
+// /campaigns/{id}/report: it needs none of what that route collects. Storage,
+// versioning and the review workflow downstream are the same.
+export const generateSampleReport = async (campaignId, format = "docx") => {
+  const res = await api.post(`/campaigns/${campaignId}/sample-report`, null, {
+    params: { format },
+    // A member gets JSON explaining that the reviewing engineer handles
+    // downloads; an admin gets the file. Both arrive as a blob, so the type
+    // is inspected rather than assumed.
+    responseType: "blob",
+    timeout: 600000,
+  });
+  const type = res.data?.type || "";
+  if (type.includes("application/json")) {
+    return { file: null, info: JSON.parse(await res.data.text()) };
+  }
+  const disposition = res.headers?.["content-disposition"] || "";
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)/i.exec(disposition);
+  return {
+    file: res.data,
+    filename: match ? decodeURIComponent(match[1]) : `report.${format}`,
+    info: null,
+  };
+};
