@@ -386,6 +386,13 @@ class GridPayload(BaseModel):
     # paste can bring its own columns with it.
     create_missing_samples: bool = True
     medium: str = "soil"
+    # Parameters found in the sheet are added to the campaign's scope.
+    #
+    # Only ever added. A parameter ticked by hand that the laboratory did not
+    # report stays in the scope and prints as an empty row, which is the
+    # honest outcome — it was in the scope of work and was not determined.
+    # Silently dropping it would hide that.
+    add_parameters_to_scope: bool = True
 
 
 class GridIngestReport(BaseModel):
@@ -396,7 +403,15 @@ class GridIngestReport(BaseModel):
     samples_created: List[str] = Field(default_factory=list)
     parameters_resolved: int = 0
     parameters_unresolved: List[str] = Field(default_factory=list)
+    # Names added to the campaign's parameter list by this upload.
+    parameters_added: List[str] = Field(default_factory=list)
+    # Resolved, but not valid for this campaign's medium — a soil parameter
+    # on a water campaign. Stored with the result, never added to the scope.
+    parameters_wrong_medium: List[str] = Field(default_factory=list)
     values_stored: int = 0
+    # Values that overwrote an existing result for the same parameter and
+    # sample. Everything else was added alongside what was already there.
+    values_replaced: int = 0
     values_below_loq: int = 0
     values_unparsed: List[str] = Field(default_factory=list)
 
@@ -406,7 +421,8 @@ class GridIngestReport(BaseModel):
 async def ingest_grid(campaign_id: str, payload: GridPayload,
                       x_user: str = Depends(current_username)) -> GridIngestReport:
     """Store a rectangle of results: parameters down, sample codes across."""
-    await _campaign_or_404(campaign_id)
+    campaign = await _campaign_or_404(campaign_id)
+    settings = _settings_of(campaign)
     report = GridIngestReport()
 
     existing = {s.code: s for s in await _samples_of(campaign_id)}
@@ -431,10 +447,21 @@ async def ingest_grid(campaign_id: str, payload: GridPayload,
         report.samples_created.append(code)
         position += 1
 
-    # Results are rebuilt per sample rather than merged, so a re-upload
-    # replaces a sheet instead of leaving stale rows from the previous one
-    # sitting underneath the new numbers.
-    collected: Dict[str, List[AnalyteResult]] = {c: [] for c in existing}
+    # Results are merged per parameter, not rebuilt per sample.
+    #
+    # A laboratory commonly sends one sheet per method group — organics on
+    # one, metals on another. Rebuilding the sample wholesale meant the
+    # second upload silently erased the first, with the report looking
+    # complete and simply missing half its rows. Merging by parameter means a
+    # re-upload of the same sheet replaces those parameters and leaves the
+    # rest standing.
+    collected: Dict[str, Dict[str, AnalyteResult]] = {
+        code: {(r.analyte_key if r.resolved else (r.reported_name or r.analyte_key)): r
+               for r in sample.results}
+        for code, sample in existing.items()
+    }
+    replaced = 0
+    found_keys: List[str] = []
 
     for row in payload.rows:
         analyte = L.resolve_analyte(row.parameter)
@@ -443,6 +470,11 @@ async def ingest_grid(campaign_id: str, payload: GridPayload,
                 report.parameters_unresolved.append(row.parameter)
         else:
             report.parameters_resolved += 1
+            if settings.medium not in analyte.media:
+                if analyte.name not in report.parameters_wrong_medium:
+                    report.parameters_wrong_medium.append(analyte.name)
+            elif analyte.key not in found_keys:
+                found_keys.append(analyte.key)
         for cell in row.cells:
             if cell.sample_code not in collected:
                 continue
@@ -453,7 +485,10 @@ async def ingest_grid(campaign_id: str, payload: GridPayload,
                 label = f"{row.parameter} / {cell.sample_code}: {raw}"
                 if label not in report.values_unparsed:
                     report.values_unparsed.append(label)
-            collected[cell.sample_code].append(AnalyteResult(
+            slot = (analyte.key if analyte else row.parameter)
+            if slot in collected[cell.sample_code]:
+                replaced += 1
+            collected[cell.sample_code][slot] = (AnalyteResult(
                 analyte_key=analyte.key if analyte else row.parameter,
                 reported_name=row.parameter,
                 value=value,
@@ -469,18 +504,34 @@ async def ingest_grid(campaign_id: str, payload: GridPayload,
             if below:
                 report.values_below_loq += 1
 
-    for code, results in collected.items():
+    for code, table in collected.items():
         sample = existing[code]
         await db.lab_samples.update_one(
             {"id": sample.id},
-            {"$set": to_mongo({"results": [r.model_dump() for r in results],
+            {"$set": to_mongo({"results": [r.model_dump() for r in table.values()],
                                "updated_at": utcnow()})},
         )
+    report.values_replaced = replaced
+
+    # Extend the scope with whatever the sheet turned out to contain. Union,
+    # in the order the campaign already had, then anything new.
+    if payload.add_parameters_to_scope and found_keys:
+        scope = list(settings.analyte_keys)
+        added = [k for k in found_keys if k not in scope]
+        if added:
+            settings.analyte_keys = scope + added
+            await db.campaigns.update_one(
+                {"id": campaign_id},
+                {"$set": to_mongo({"sample_settings": settings.model_dump(),
+                                   "updated_at": utcnow()})},
+            )
+            report.parameters_added = [L.ANALYTES_BY_KEY[k].name for k in added]
 
     await audit("sample.grid_ingest", "campaign", campaign_id, x_user, {
         "samples": len(collected),
         "values": report.values_stored,
         "unresolved": report.parameters_unresolved,
+        "added_to_scope": report.parameters_added,
     })
     if report.parameters_unresolved:
         log.info("Grid ingest on %s: %d parameter name(s) not resolved: %s",
@@ -493,6 +544,7 @@ async def ingest_grid(campaign_id: str, payload: GridPayload,
              response_model=GridIngestReport)
 async def ingest_csv(campaign_id: str,
                      file: UploadFile = File(...),
+                     add_parameters_to_scope: bool = True,
                      x_user: str = Depends(current_username)) -> GridIngestReport:
     """Same rectangle, uploaded as CSV.
 
@@ -556,9 +608,11 @@ async def ingest_csv(campaign_id: str,
 
     campaign = await _campaign_or_404(campaign_id)
     settings = _settings_of(campaign)
-    return await ingest_grid(campaign_id,
-                             GridPayload(rows=rows, medium=settings.medium),
-                             x_user)
+    return await ingest_grid(
+        campaign_id,
+        GridPayload(rows=rows, medium=settings.medium,
+                    add_parameters_to_scope=add_parameters_to_scope),
+        x_user)
 
 
 # ---------------------------------------------------------------------------
