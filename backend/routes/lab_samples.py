@@ -29,17 +29,21 @@ from __future__ import annotations
 import csv
 import io
 import logging
-from datetime import datetime
+import os
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import (APIRouter, Depends, File, HTTPException, Response,
                      UploadFile, status)
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 import sample_calc
 import soil_water_limits as L
 from audit import audit
-from auth import current_username
+from auth import current_user, current_username
 from db import db, from_mongo, to_mongo
 from sample_models import (
     MEDIUM_LABELS,
@@ -716,3 +720,158 @@ async def sample_readiness(campaign_id: str) -> Dict[str, Any]:
         "standard": settings.standard,
         "decision_rule": settings.decision_rule,
     }
+
+
+# ---------------------------------------------------------------------------
+# Report generation
+#
+# A separate endpoint from /campaigns/{id}/report rather than another branch
+# inside it. That function is long and shared by the air and noise
+# generators, and this report needs none of what it collects — no readings,
+# no capture rate, no meteorology. Everything downstream is still shared:
+# the same storage, the same report_logs record, the same versioning, so the
+# review workflow and the on-screen reader treat it like any other report.
+# ---------------------------------------------------------------------------
+REPORT_DIR = os.environ.get("REPORT_DIR", "/data/reports")
+
+
+@router.post("/campaigns/{campaign_id}/sample-report")
+async def create_sample_report(campaign_id: str, format: str = "docx",
+                               x_user: str = Depends(current_username),
+                               user: dict = Depends(current_user)):
+    if format not in ("docx", "pdf"):
+        raise HTTPException(status_code=422,
+                            detail="format must be docx or pdf")
+
+    from models import Campaign
+    from report.generate import convert_to_pdf
+    from report.sample_charts import generate_sample_charts
+    from report.sample_generate import generate_sample_report
+    import storage
+
+    campaign_doc = await _campaign_or_404(campaign_id)
+    campaign = Campaign(**campaign_doc)
+    settings = _settings_of(campaign_doc)
+    samples = await _samples_of(campaign_id)
+    if not samples:
+        raise HTTPException(status_code=400,
+                            detail="No samples recorded for this campaign")
+    if not any(s.results for s in samples):
+        raise HTTPException(status_code=400,
+                            detail="No laboratory results have been entered")
+
+    # The number is allocated at the first report, not at campaign creation:
+    # the date inside it is the issue date, and a campaign that never
+    # produces a report should never consume a number.
+    try:
+        from report_numbers import ensure_report_number
+        await ensure_report_number(campaign, campaign_id)
+    except Exception:  # noqa: BLE001
+        log.warning("report number allocation unavailable", exc_info=True)
+
+    summary = sample_calc.evaluate(campaign_id, settings, samples)
+
+    out_dir = os.path.join(REPORT_DIR, campaign_id)
+    os.makedirs(out_dir, exist_ok=True)
+    version = 1 + await db.report_logs.count_documents(
+        {"campaign_id": campaign_id})
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    label = MEDIUM_LABELS.get(settings.medium, "Sample")
+    fname = (f"{label}_Report_{campaign_id[:8]}_v{version:03d}_en_"
+             f"{stamp}.docx")
+    out_path = os.path.join(out_dir, fname)
+    charts_dir = os.path.join(out_dir, "charts")
+
+    figs = await run_in_threadpool(generate_sample_charts, summary, charts_dir)
+
+    # Attachments, collected the way the air and noise reports collect them,
+    # so an operator who has already uploaded a cover photograph or a licence
+    # sees them appear without doing anything differently.
+    atts = await db.attachments.find({"campaign_id": campaign_id},
+                                     {"_id": 0}) \
+        .sort([("order", 1), ("uploaded_at", 1)]).to_list(length=500)
+    by_kind: Dict[str, List[dict]] = {}
+    for a in atts:
+        by_kind.setdefault(a["kind"], []).append(a)
+
+    def _paths(kind: str) -> List[str]:
+        return [a["path"] for a in by_kind.get(kind, [])
+                if os.path.exists(a.get("path", ""))]
+
+    site_photos = _paths("site_photo")
+    licence = _paths("license")
+    cover = next(iter(_paths("cover_photo")), None)
+    site_map = next(iter(_paths("site_map")), None)
+    cal_items = [{"title": a.get("caption") or "Calibration certificate",
+                  "path": a["path"]}
+                 for a in by_kind.get("calibration", [])
+                 if os.path.exists(a.get("path", ""))]
+
+    if not site_map and campaign.latitude and campaign.longitude:
+        try:
+            from report.sitemap import fetch_site_map
+            site_map = await run_in_threadpool(
+                fetch_site_map, campaign.latitude, campaign.longitude,
+                os.path.join(out_dir, "site_map.png"),
+                label=(samples[0].label or "S01"))
+        except Exception:  # noqa: BLE001
+            log.warning("site map unavailable for the sample report",
+                        exc_info=True)
+
+    try:
+        await run_in_threadpool(
+            generate_sample_report, campaign, settings, samples, summary,
+            figs, out_path, site_map, site_photos, cover, cal_items,
+            licence, charts_dir)
+        from report.fields import build_indexes, populate_field_caches
+        await run_in_threadpool(populate_field_caches, out_path)
+        await run_in_threadpool(build_indexes, out_path, convert_to_pdf)
+        if format == "pdf":
+            out_path = await run_in_threadpool(convert_to_pdf, out_path)
+            fname = os.path.basename(out_path)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.exception("sample report generation failed")
+        raise HTTPException(status_code=500,
+                            detail=f"Report generation failed: {exc}")
+
+    storage_meta = await run_in_threadpool(
+        storage.store_report, out_path, campaign_id, fname)
+    report_id = str(uuid.uuid4())
+    await db.report_logs.insert_one(to_mongo({
+        "id": report_id,
+        "storage": storage_meta["storage"],
+        "s3_key": storage_meta["s3_key"],
+        "campaign_id": campaign_id,
+        "project_name": campaign.project_name,
+        "version": version,
+        "filename": fname,
+        "path": out_path,
+        "lang": "en",
+        "format": format,
+        "generated_by": x_user,
+        "generated_at": datetime.now(timezone.utc),
+        "readings_count": sum(len(s.results) for s in samples),
+        "size_bytes": os.path.getsize(out_path),
+    }))
+    await audit("report.generate", "report", report_id, x_user,
+                {"campaign_id": campaign_id, "version": version,
+                 "format": format, "filename": fname,
+                 "type": f"soil_water:{settings.medium}",
+                 "exceedances": summary.total_exceedances})
+
+    # Members generate but do not download. The reviewing engineer handles
+    # issue, exactly as for the air and noise reports.
+    if user.get("role") != "admin":
+        return JSONResponse({
+            "download": False, "report_id": report_id, "filename": fname,
+            "version": version, "format": format, "lang": "en",
+            "size_bytes": os.path.getsize(out_path),
+            "detail": ("Report generated. Downloads are handled by the "
+                       "reviewing engineer \u2014 use Submit for review "
+                       "when the campaign is ready.")})
+    media = ("application/pdf" if format == "pdf" else
+             "application/vnd.openxmlformats-officedocument"
+             ".wordprocessingml.document")
+    return FileResponse(out_path, media_type=media, filename=fname)
