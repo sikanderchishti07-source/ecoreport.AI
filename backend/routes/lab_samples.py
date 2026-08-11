@@ -42,6 +42,10 @@ from audit import audit
 from auth import current_username
 from db import db, from_mongo, to_mongo
 from sample_models import (
+    MEDIUM_LABELS,
+    MEDIUM_REPORT_TITLES,
+    SAMPLE_MEDIA,
+    STANDARDS_BY_MEDIUM,
     AnalyteResult,
     LabSample,
     ParameterProfile,
@@ -133,6 +137,10 @@ async def list_standards() -> Dict[str, Any]:
     one requires. The frontend uses this to decide which fields to show and
     which are mandatory before a verdict is possible."""
     return {
+        "media": [{"key": m, "label": MEDIUM_LABELS[m],
+                   "title": MEDIUM_REPORT_TITLES[m],
+                   "standards": list(STANDARDS_BY_MEDIUM[m])}
+                  for m in SAMPLE_MEDIA],
         "standards": [
             {"key": "ncec_soil",
              "label": "NCEC — soil (Prevention and Remediation of Soil Pollution, Appendix 1)",
@@ -247,17 +255,39 @@ async def put_settings(campaign_id: str, payload: SampleCampaignSettings,
                        x_user: str = Depends(current_username)
                        ) -> SampleCampaignSettings:
     await _campaign_or_404(campaign_id)
+    if payload.medium not in STANDARDS_BY_MEDIUM:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown medium: {payload.medium}. "
+                   f"Expected one of {', '.join(STANDARDS_BY_MEDIUM)}.")
+    allowed = STANDARDS_BY_MEDIUM[payload.medium]
+    if payload.standard not in allowed:
+        # A water campaign judged against the soil table would produce a
+        # compliance conclusion against the wrong document entirely. Refused
+        # here rather than left to the engine to shrug at.
+        raise HTTPException(
+            status_code=400,
+            detail=f"The standard {payload.standard} does not apply to a "
+                   f"{payload.medium} campaign.")
     unknown = [k for k in payload.analyte_keys if k not in L.ANALYTES_BY_KEY]
     if unknown:
         raise HTTPException(status_code=400,
                             detail=f"Unknown parameters: {', '.join(unknown)}")
+    wrong_medium = [k for k in payload.analyte_keys
+                    if payload.medium not in L.ANALYTES_BY_KEY[k].media]
+    if wrong_medium:
+        names = ", ".join(L.ANALYTES_BY_KEY[k].name for k in wrong_medium)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not {payload.medium} parameters: {names}")
     await db.campaigns.update_one(
         {"id": campaign_id},
         {"$set": to_mongo({"sample_settings": payload.model_dump(),
                            "updated_at": utcnow()})},
     )
     await audit("campaign.sample_settings", "campaign", campaign_id, x_user,
-                {"standard": payload.standard,
+                {"medium": payload.medium,
+                 "standard": payload.standard,
                  "decision_rule": payload.decision_rule,
                  "parameters": len(payload.analyte_keys)})
     return payload
@@ -276,10 +306,14 @@ async def list_samples(campaign_id: str) -> List[LabSample]:
              status_code=status.HTTP_201_CREATED)
 async def create_sample(campaign_id: str, payload: SampleCreate,
                         x_user: str = Depends(current_username)) -> LabSample:
-    await _campaign_or_404(campaign_id)
+    campaign = await _campaign_or_404(campaign_id)
     existing = await db.lab_samples.count_documents({"campaign_id": campaign_id})
     data = payload.model_dump()
     data["campaign_id"] = campaign_id
+    # A sample in a water campaign is a water sample. Taking the medium from
+    # the campaign rather than the request means a stale default in the
+    # caller cannot put a soil sample in a water report.
+    data["medium"] = _settings_of(campaign).medium
     sample = LabSample(**data, position=existing)
     if not sample.label:
         sample.label = f"S{existing + 1:02d}"
@@ -521,12 +555,9 @@ async def ingest_csv(campaign_id: str,
         ))
 
     campaign = await _campaign_or_404(campaign_id)
-    medium = "soil"
     settings = _settings_of(campaign)
-    if settings.standard.startswith("ncec_water"):
-        medium = "water"
     return await ingest_grid(campaign_id,
-                             GridPayload(rows=rows, medium=medium),
+                             GridPayload(rows=rows, medium=settings.medium),
                              x_user)
 
 
@@ -625,6 +656,9 @@ async def sample_readiness(campaign_id: str) -> Dict[str, Any]:
         "blocking": blocking,
         "warnings": sorted(set(warnings)),
         "sample_count": len(samples),
+        "medium": settings.medium,
+        "medium_label": MEDIUM_LABELS.get(settings.medium, settings.medium),
+        "report_title": MEDIUM_REPORT_TITLES.get(settings.medium, "Monitoring campaign"),
         "standard": settings.standard,
         "decision_rule": settings.decision_rule,
     }
