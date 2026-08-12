@@ -410,6 +410,18 @@ export const ingestResultsCsv = (campaignId, file, addParametersToScope = true) 
   }).then((r) => r.data);
 };
 
+// The laboratory's own Certificate of Analysis workbook — one sheet per
+// sample, in the format they already produce for every job. Nothing is
+// retyped or reshaped.
+export const ingestResultsCoa = (campaignId, file, addParametersToScope = true) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post(`/campaigns/${campaignId}/results-coa`, fd, {
+    params: { add_parameters_to_scope: addParametersToScope },
+    headers: { "Content-Type": "multipart/form-data" }, timeout: 180000,
+  }).then((r) => r.data);
+};
+
 export const getSampleSummary = (campaignId) =>
   api.get(`/campaigns/${campaignId}/sample-summary`).then((r) => r.data);
 export const getSampleReadiness = (campaignId) =>
