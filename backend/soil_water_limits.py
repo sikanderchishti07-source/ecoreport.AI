@@ -141,14 +141,29 @@ class Limit:
     high: Optional[float] = None
     source: str = ""
     note: Optional[str] = None
+    # True where a negative value is physically meaningful: the pH scale
+    # admits them, and a temperature or pH difference from background is a
+    # difference, not a concentration.
+    allows_negative: bool = False
 
     def verdict(self, result: Optional[float]) -> str:
         """complies | exceeds | not_assessed.
 
         A result of None (not determined, or reported below the laboratory
         limit of quantification) is never called an exceedance.
+
+        A negative concentration is not a measurement. It comes from a
+        blank-subtracted export, a transcription slip, or an instrument
+        fault, and it must not reach a verdict either way: against a
+        ceiling it would print COMPLIANT, and against a minimum it would
+        print an exceedance that is equally meaningless. Both are worse
+        than saying nothing. pH is exempt because the scale itself admits
+        negative values, and so is any parameter judged against a range or
+        expressed as a difference from background.
         """
         if not self.assessable or result is None:
+            return "not_assessed"
+        if result < 0 and self.direction != "range" and not self.allows_negative:
             return "not_assessed"
         if self.direction == "min":
             return "complies" if result >= (self.value or 0.0) else "exceeds"
@@ -159,6 +174,15 @@ class Limit:
         if self.value is None:
             return "not_assessed"
         return "complies" if result <= self.value else "exceeds"
+
+    def negative_reason(self, result: Optional[float]) -> Optional[str]:
+        """Why a negative result was not judged, in words fit to print."""
+        if (result is not None and result < 0
+                and self.direction != "range" and not self.allows_negative):
+            return ("A negative value was reported. This is not a physically "
+                    "possible concentration, so no compliance conclusion is "
+                    "drawn; confirm the result with the laboratory.")
+        return None
 
     def printed(self) -> str:
         """The limit as it should appear in the report's limit column."""
@@ -995,6 +1019,28 @@ def resolve_analyte(text: str) -> Optional[Analyte]:
     return ANALYTES_BY_KEY.get(key) if key else None
 
 
+def default_unit(analyte: Analyte, medium: Optional[str]) -> str:
+    """The unit a parameter is reported in for a given medium.
+
+    Most analytes are determined in both soil and water, and the library
+    carries one default unit each. Left alone, a soil report printed
+    calcium in mg/L — correct for water, meaningless for soil, and
+    invisible on the page because the parameters that happened to carry a
+    limit took their unit from the limit table and looked right.
+
+    Only the concentration units are switched. A percentage, a pH unit or a
+    plate count means the same thing in either medium.
+    """
+    unit = analyte.unit
+    if unit not in ("mg/L", "mg/kg"):
+        return unit
+    if medium in ("soil", "sediment"):
+        return "mg/kg"
+    if medium == "water":
+        return "mg/L"
+    return unit
+
+
 def analytes_for(media: str) -> List[Analyte]:
     return [a for a in ANALYTES if media in a.media]
 
@@ -1069,6 +1115,18 @@ def _soil_rows(analyte: str, depth: Optional[str]) -> List[SoilRow]:
     return rows
 
 
+# Analyte keys whose values may legitimately be negative.
+NEGATIVE_OK = frozenset({"ph", "temperature"})
+
+
+def _negative_ok(analyte: str) -> bool:
+    """Whether a negative value is meaningful for this parameter."""
+    if analyte in NEGATIVE_OK:
+        return True
+    resolved = resolve_analyte(analyte)
+    return bool(resolved and resolved.key in NEGATIVE_OK)
+
+
 def soil_limit(analyte: str, particle_size: Optional[str],
                land_use: Optional[str], depth: Optional[str] = None) -> Limit:
     """The Appendix (1) soil limit for one analyte in one context.
@@ -1097,7 +1155,8 @@ def soil_limit(analyte: str, particle_size: Optional[str],
                      note=row["note"])  # type: ignore[arg-type]
     return Limit(analyte=analyte, unit=unit, assessable=True,
                  direction=str(row["direction"]), value=float(value),
-                 source=SOIL_SOURCE, note=row["note"])  # type: ignore[arg-type]
+                 source=SOIL_SOURCE, note=row["note"],  # type: ignore[arg-type]
+                 allows_negative=_negative_ok(analyte))
 
 
 def water_ambient_limit(analyte: str, media: Optional[str]) -> Limit:
@@ -1124,7 +1183,8 @@ def water_ambient_limit(analyte: str, media: Optional[str]) -> Limit:
                          reason=_NO_ROW, source=WATER_AMBIENT_SOURCE, note=note)
         return Limit(analyte=analyte, unit=unit, assessable=True,
                      direction="range", low=float(band[0]), high=float(band[1]),
-                     source=WATER_AMBIENT_SOURCE, note=note)
+                     source=WATER_AMBIENT_SOURCE, note=note,
+                     allows_negative=_negative_ok(analyte))
     value = row["values"][idx]  # type: ignore[index]
     if value is None:
         return Limit(analyte=analyte, unit=unit, assessable=False,
@@ -1134,7 +1194,8 @@ def water_ambient_limit(analyte: str, media: Optional[str]) -> Limit:
                      reason=_NBL_REASON, source=WATER_AMBIENT_SOURCE, note=note)
     return Limit(analyte=analyte, unit=unit, assessable=True,
                  direction=direction, value=float(value),  # type: ignore[arg-type]
-                 source=WATER_AMBIENT_SOURCE, note=note)
+                 source=WATER_AMBIENT_SOURCE, note=note,
+                 allows_negative=_negative_ok(analyte))
 
 
 def discharge_limit(analyte: str, destination: Optional[str],
@@ -1163,7 +1224,8 @@ def discharge_limit(analyte: str, destination: Optional[str],
     if direction == "range":
         return Limit(analyte=analyte, unit=unit, assessable=True,
                      direction="range", low=row["low"], high=row["high"],  # type: ignore[arg-type]
-                     source=src, note=note)
+                     source=src, note=note,
+                     allows_negative=_negative_ok(analyte))
     if single_sample:
         smax = row["smax"]
         if smax is None:
@@ -1178,14 +1240,16 @@ def discharge_limit(analyte: str, destination: Optional[str],
                          reason=_NBL_REASON, source=src, note=note)
         return Limit(analyte=analyte, unit=unit, assessable=True,
                      direction=direction, value=float(smax),  # type: ignore[arg-type]
-                     source=src, note=note)
+                     source=src, note=note,
+                     allows_negative=_negative_ok(analyte))
     avg = row["avg"]
     if avg is None:
         return Limit(analyte=analyte, unit=unit, assessable=False,
                      reason=_NO_ROW, source=src, note=note)
     return Limit(analyte=analyte, unit=unit, assessable=True,
                  direction=direction, value=float(avg),  # type: ignore[arg-type]
-                 source=src, note=note)
+                 source=src, note=note,
+                 allows_negative=_negative_ok(analyte))
 
 
 def soil_limit_row(analyte: str, particle_size: str,
@@ -1210,9 +1274,10 @@ __all__ = [
     "DEPTHS", "DEPTH_LABELS", "WATER_MEDIA", "WATER_MEDIA_LABELS",
     "DISCHARGE_DESTINATIONS", "DISCHARGE_DESTINATION_LABELS",
     "INTERVALS", "INTERVAL_LABELS", "NBL", "Limit", "Analyte", "ANALYTES",
-    "ANALYTES_BY_KEY", "resolve_analyte", "analytes_for",
+    "ANALYTES_BY_KEY", "resolve_analyte", "analytes_for", "default_unit",
     "SOIL_LIMITS", "WATER_AMBIENT", "DISCHARGE_LIMITS",
     "SOIL_BY_KEY", "WATER_BY_KEY", "DISCHARGE_BY_KEY", "UNLINKED_LIMIT_ROWS",
     "SOIL_SOURCE", "WATER_AMBIENT_SOURCE", "DISCHARGE_SOURCE",
     "soil_limit", "water_ambient_limit", "discharge_limit", "soil_limit_row",
+    "NEGATIVE_OK",
 ]
