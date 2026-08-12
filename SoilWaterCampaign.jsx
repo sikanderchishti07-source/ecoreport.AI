@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  AlertTriangle, ArrowLeft, Check, ChevronRight, FlaskConical, Loader2,
-  Plus, Trash2, Upload,
+  AlertTriangle, ArrowLeft, Check, ChevronRight, FileText, FlaskConical,
+  Loader2, Plus, Trash2, Upload,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -14,9 +14,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  createCampaign, createLabSample, deleteLabSample, getCampaign,
-  getLandUseComparison, getSampleReadiness, getSampleSettings,
-  getSampleSummary, ingestResultsCsv, listAnalytes, listLabSamples,
+  createCampaign, createLabSample, deleteLabSample, generateSampleReport,
+  getCampaign, getLandUseComparison, getSampleReadiness, getSampleSettings,
+  getSampleSummary, ingestResultsCoa, ingestResultsCsv, listAnalytes, listLabSamples,
   listParameterProfiles, listSampleStandards, saveSampleSettings,
   updateLabSample,
 } from "@/lib/api";
@@ -151,10 +151,12 @@ export default function SoilWaterCampaign() {
   const [samples, setSamples] = useState([]);
   const [newSample, setNewSample] = useState({ code: "", label: "" });
   const [file, setFile] = useState(null);
+  const [addToScope, setAddToScope] = useState(true);
   const [ingest, setIngest] = useState(null);
   const [summary, setSummary] = useState(null);
   const [readiness, setReadiness] = useState(null);
   const [comparison, setComparison] = useState(null);
+  const [generating, setGenerating] = useState(false);
 
   // The medium is chosen, not inferred. A campaign is one medium and one
   // report — soil samples and water samples from the same site are two
@@ -339,14 +341,61 @@ export default function SoilWaterCampaign() {
     if (!file) return;
     setBusy(true);
     try {
-      const rep = await ingestResultsCsv(campaignId, file);
+      // An Excel workbook is the laboratory's own certificate, one sheet per
+      // sample. A CSV is the results grid. The file decides which, so there
+      // is one upload box rather than two the operator has to choose between.
+      const isWorkbook = /\.xlsx?$/i.test(file.name || "");
+      const rep = isWorkbook
+        ? await ingestResultsCoa(campaignId, file, addToScope)
+        : await ingestResultsCsv(campaignId, file, addToScope);
       setIngest(rep);
       setSamples(await listLabSamples(campaignId));
+      // The upload may have widened the campaign's parameter list, so the
+      // saved settings are reloaded rather than left showing the old ticks.
+      if (rep.parameters_added?.length) {
+        const fresh = await getSampleSettings(campaignId);
+        setSettings((prev) => ({ ...prev, analyte_keys: fresh.analyte_keys }));
+      }
       toast.success(`${rep.values_stored} results stored`);
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Upload failed");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const generate = async (format) => {
+    setGenerating(true);
+    try {
+      const out = await generateSampleReport(campaignId, format);
+      if (out.info) {
+        // A member generated it. The file exists and is versioned; the
+        // reviewing engineer downloads it.
+        toast.success(out.info.detail || "Report generated");
+        return;
+      }
+      const url = URL.createObjectURL(out.file);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = out.filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Report generated");
+    } catch (err) {
+      // The error body is a blob on this request, so the usual
+      // err.response.data.detail is not readable without decoding it.
+      let detail = "Report generation failed";
+      try {
+        const blob = err?.response?.data;
+        if (blob && typeof blob.text === "function") {
+          detail = JSON.parse(await blob.text()).detail || detail;
+        }
+      } catch {
+        /* keep the generic message */
+      }
+      toast.error(detail);
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -553,18 +602,19 @@ export default function SoilWaterCampaign() {
 
             {grouped.map((g) => (
               <div key={g.key}>
-                <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-2">
+                <p className="text-[11px] uppercase tracking-wider font-medium text-foreground/70 mb-2">
                   {g.label}
                 </p>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-2">
                   {g.items.map((a) => {
                     const on = selected.has(a.key);
                     return (
                       <button key={a.key} onClick={() => toggleAnalyte(a.key)}
-                              className={`text-xs px-2.5 py-1 rounded-sm border transition-colors ${
-                                on ? "border-primary bg-primary/10 text-foreground"
-                                   : "border-border text-muted-foreground hover:border-primary/50"}`}>
-                        {on && <Check className="w-3 h-3 inline mr-1" />}
+                              className={`text-[13px] px-2.5 py-1.5 rounded-sm border transition-colors ${
+                                on
+                                  ? "border-primary bg-primary/15 text-foreground font-medium"
+                                  : "border-foreground/25 text-foreground hover:border-primary hover:bg-primary/5"}`}>
+                        {on && <Check className="w-3.5 h-3.5 inline mr-1" />}
                         {a.name}
                       </button>
                     );
@@ -666,15 +716,44 @@ export default function SoilWaterCampaign() {
       {step === 3 && (
         <section className="space-y-4">
           <div className="border border-border rounded-sm p-5 space-y-3">
-            <h2 className="text-sm font-semibold">Upload the results grid</h2>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              A CSV with parameters down and sample codes across. The first
-              column is the parameter name. Columns headed Unit, Method, LOQ or
-              MU% are read as metadata; every other heading is treated as a
-              sample code, and any code not already present is created.
-            </p>
+            <h2 className="text-sm font-semibold">Upload the laboratory results</h2>
+            <div className="text-xs text-muted-foreground leading-relaxed space-y-2">
+              <p>
+                <span className="text-foreground font-medium">
+                  The laboratory's own certificate (.xlsx).
+                </span>{" "}
+                The F-BR-29 Final Test Report, or the non-accredited variant —
+                one sheet per sample, exactly as the lab already produces it.
+                Sample code, dates and site are read from the header block.
+                Nothing needs retyping.
+              </p>
+              <p>
+                <span className="text-foreground font-medium">
+                  Or a results grid (.csv).
+                </span>{" "}
+                Parameters down, sample codes across. The first column is the
+                parameter name; columns headed Unit, Method, LOQ or MU% are
+                metadata, every other heading is a sample code.
+              </p>
+              <p>
+                Either way, a second upload adds to what is already stored
+                rather than replacing it, so a laboratory that sends organics
+                and metals separately works.
+              </p>
+            </div>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input type="checkbox" className="mt-0.5"
+                     checked={addToScope}
+                     onChange={(e) => setAddToScope(e.target.checked)} />
+              <span className="text-xs text-muted-foreground leading-relaxed">
+                Add any parameter found in the file to this campaign's list.
+                Parameters already ticked are kept whether the file contains
+                them or not — a parameter that was in the scope and was not
+                determined prints as an empty row rather than disappearing.
+              </span>
+            </label>
             <div className="flex items-center gap-3 flex-wrap">
-              <Input type="file" accept=".csv,text/csv"
+              <Input type="file" accept=".csv,.xlsx,.xls,text/csv"
                      className="rounded-sm max-w-sm"
                      onChange={(e) => setFile(e.target.files?.[0] || null)} />
               <Button className="rounded-sm" disabled={!file || busy} onClick={upload}>
@@ -690,13 +769,75 @@ export default function SoilWaterCampaign() {
               <h3 className="text-sm font-semibold">What was read</h3>
               <p className="text-xs text-muted-foreground">
                 {ingest.values_stored} values across{" "}
-                {ingest.samples_matched.length + ingest.samples_created.length} samples.
-                {ingest.samples_created.length > 0
+                {(ingest.samples_matched?.length || 0)
+                 + (ingest.samples_created?.length || 0)} samples.
+                {ingest.samples_created?.length > 0
                   && ` ${ingest.samples_created.length} sample(s) created: ${ingest.samples_created.join(", ")}.`}
+                {ingest.values_replaced > 0
+                  && ` ${ingest.values_replaced} replaced an earlier result for the same parameter.`}
                 {ingest.values_below_loq > 0
                   && ` ${ingest.values_below_loq} result(s) below the limit of quantification.`}
               </p>
-              {ingest.parameters_unresolved.length > 0 && (
+              {ingest.parameters_added?.length > 0 && (
+                <div className="border border-border rounded-sm p-3 bg-secondary/20">
+                  <p className="text-xs font-medium">
+                    {ingest.parameters_added.length} parameter(s) added to the campaign
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {ingest.parameters_added.join(", ")}
+                  </p>
+                </div>
+              )}
+              {ingest.suggested_context?.length > 0 && (
+                <div className="border border-border rounded-sm p-3 bg-secondary/20">
+                  <p className="text-xs font-medium">
+                    Read from the sample description — confirm before issuing
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {ingest.suggested_context.map((c) => (
+                      <li key={c.sample_code} className="text-xs text-muted-foreground">
+                        {c.sample_code}: &ldquo;{c.description}&rdquo; suggests{" "}
+                        {[c.particle_size, c.depth].filter(Boolean).join(", ")}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    Not applied automatically. Set it on the samples step —
+                    it decides which column of the standard every result is
+                    judged against.
+                  </p>
+                </div>
+              )}
+              {ingest.warnings?.length > 0 && (
+                <div className="border border-amber-900/50 bg-amber-950/20 rounded-sm p-3">
+                  <p className="text-xs text-amber-300 font-medium">
+                    Worth checking
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {ingest.warnings.map((w) => (
+                      <li key={w} className="text-xs text-muted-foreground">— {w}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {ingest.sheets_skipped?.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Sheets skipped: {ingest.sheets_skipped.join(", ")}
+                </p>
+              )}
+              {ingest.parameters_wrong_medium?.length > 0 && (
+                <div className="border border-amber-900/50 bg-amber-950/20 rounded-sm p-3">
+                  <p className="text-xs text-amber-300 font-medium">
+                    Not {medium} parameters
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {ingest.parameters_wrong_medium.join(", ")} — stored with
+                    their results but not added to the parameter list, because
+                    this is a {medium} campaign.
+                  </p>
+                </div>
+              )}
+              {ingest.parameters_unresolved?.length > 0 && (
                 <div className="border border-amber-900/50 bg-amber-950/20 rounded-sm p-3">
                   <p className="text-xs text-amber-300 font-medium">
                     Not matched to a known parameter
@@ -708,7 +849,7 @@ export default function SoilWaterCampaign() {
                   </p>
                 </div>
               )}
-              {ingest.values_unparsed.length > 0 && (
+              {ingest.values_unparsed?.length > 0 && (
                 <p className="text-xs text-muted-foreground">
                   Kept as text: {ingest.values_unparsed.slice(0, 6).join("; ")}
                 </p>
@@ -850,13 +991,25 @@ export default function SoilWaterCampaign() {
             </div>
           )}
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap items-center">
             <Button variant="outline" className="rounded-sm"
                     onClick={() => setStep(3)}>Back</Button>
-            <Button variant="outline" className="rounded-sm"
-                    onClick={() => nav(`/campaigns/${campaignId}`)}>
-              Open campaign
+            <Button className="rounded-sm" disabled={generating}
+                    onClick={() => generate("docx")}>
+              {generating ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          : <FileText className="w-4 h-4 mr-2" />}
+              Generate report
             </Button>
+            <Button variant="outline" className="rounded-sm"
+                    disabled={generating} onClick={() => generate("pdf")}>
+              PDF
+            </Button>
+            {readiness && !readiness.ready && (
+              <span className="text-xs text-muted-foreground">
+                The report will generate, and will state plainly where no
+                verdict could be reached.
+              </span>
+            )}
           </div>
         </section>
       )}
