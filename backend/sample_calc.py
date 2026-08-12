@@ -162,6 +162,8 @@ def _percent_of_limit(value: Optional[float], limit: L.Limit) -> Optional[float]
         return None
     if limit.direction != "max" or not limit.value:
         return None
+    if value < 0 and not limit.allows_negative:
+        return None
     return round(100.0 * value / limit.value, 1)
 
 
@@ -279,8 +281,17 @@ def evaluate(campaign_id: str,
             verdict = limit.verdict(judged)
             if below_loq and limit.assessable:
                 verdict = "complies"
+            # A negative concentration is not a measurement. The limit
+            # refuses to judge it; the reason has to reach the report, or
+            # the cell is indistinguishable from a parameter that simply has
+            # no limit.
+            cell_reason = limit.reason
+            negative = limit.negative_reason(judged)
+            if negative:
+                cell_reason = negative
 
-            unit = getattr(result, "unit", None) or limit.unit or analyte.unit
+            unit = (getattr(result, "unit", None) or limit.unit
+                    or L.default_unit(analyte, s.medium))
             row_unit = unit or row_unit
             printed_limit = limit.printed()
             if printed_limit not in limit_displays:
@@ -301,7 +312,7 @@ def evaluate(campaign_id: str,
                 limit_high=limit.high,
                 direction=limit.direction,
                 verdict=verdict,
-                reason=limit.reason,
+                reason=cell_reason,
                 percent_of_limit=_percent_of_limit(value, limit),
                 source=limit.source or None,
             )
@@ -358,6 +369,9 @@ def evaluate(campaign_id: str,
         ))
 
     blocking = _blocking_note(standard, evaluations, guard_band, mu_missing)
+    negatives = _negative_summary(cells)
+    if negatives:
+        blocking = f"{blocking} {negatives}" if blocking else negatives
 
     return SampleCampaignSummary(
         campaign_id=campaign_id,
@@ -370,6 +384,19 @@ def evaluate(campaign_id: str,
         unresolved_names=unresolved,
         blocking_note=blocking,
     )
+
+
+def _negative_summary(cells: List[CellEvaluation]) -> Optional[str]:
+    """Name the parameters reported as negative, so they are chased."""
+    names = sorted({c.analyte_name for c in cells
+                    if c.value is not None and c.value < 0
+                    and c.verdict == "not_assessed"})
+    if not names:
+        return None
+    return ("Negative values were reported for: " + ", ".join(names)
+            + ". These are not physically possible concentrations and were "
+              "not assessed; confirm them with the laboratory before "
+              "issuing.")
 
 
 def _blocking_note(standard: str, evaluations: List[SampleEvaluation],
