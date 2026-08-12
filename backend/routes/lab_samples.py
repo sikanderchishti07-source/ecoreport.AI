@@ -29,6 +29,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import re
 import os
 import uuid
 from datetime import datetime, timezone
@@ -258,7 +259,7 @@ async def get_settings(campaign_id: str) -> SampleCampaignSettings:
 async def put_settings(campaign_id: str, payload: SampleCampaignSettings,
                        x_user: str = Depends(current_username)
                        ) -> SampleCampaignSettings:
-    await _campaign_or_404(campaign_id)
+    campaign_doc = await _campaign_or_404(campaign_id)
     if payload.medium not in STANDARDS_BY_MEDIUM:
         raise HTTPException(
             status_code=400,
@@ -273,6 +274,23 @@ async def put_settings(campaign_id: str, payload: SampleCampaignSettings,
             status_code=400,
             detail=f"The standard {payload.standard} does not apply to a "
                    f"{payload.medium} campaign.")
+
+    # Changing the medium after results are loaded leaves soil results in a
+    # water campaign, judged against water limits, in the units of neither.
+    # The samples have to go first — which is a deliberate act, not a
+    # dropdown someone changes while looking at something else.
+    current = _settings_of(campaign_doc)
+    if current.medium != payload.medium:
+        loaded = await db.lab_samples.count_documents(
+            {"campaign_id": campaign_id, "results.0": {"$exists": True}})
+        if loaded:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"This campaign already holds results for {loaded} "
+                        f"{current.medium} sample(s). Delete them before "
+                        f"changing it to a {payload.medium} campaign, or "
+                        f"start a separate campaign — soil and water are "
+                        f"issued as separate reports."))
     unknown = [k for k in payload.analyte_keys if k not in L.ANALYTES_BY_KEY]
     if unknown:
         raise HTTPException(status_code=400,
@@ -617,6 +635,201 @@ async def ingest_csv(campaign_id: str,
         GridPayload(rows=rows, medium=settings.medium,
                     add_parameters_to_scope=add_parameters_to_scope),
         x_user)
+
+
+class CoaIngestReport(BaseModel):
+    """What the certificate import did.
+
+    The same posture as the CSV report: never a bare success. What was
+    matched, what was created, what could not be read, and what the sheet
+    said that was deliberately not used.
+    """
+    samples_matched: List[str] = Field(default_factory=list)
+    samples_created: List[str] = Field(default_factory=list)
+    sheets_skipped: List[str] = Field(default_factory=list)
+    parameters_resolved: int = 0
+    parameters_unresolved: List[str] = Field(default_factory=list)
+    parameters_added: List[str] = Field(default_factory=list)
+    parameters_wrong_medium: List[str] = Field(default_factory=list)
+    values_stored: int = 0
+    values_replaced: int = 0
+    values_below_loq: int = 0
+    warnings: List[str] = Field(default_factory=list)
+    # Context read from the sample description, offered for confirmation.
+    # Never applied: it decides which column of the standard every result is
+    # judged against, and a guess there is the defect this system exists to
+    # prevent.
+    suggested_context: List[Dict[str, Any]] = Field(default_factory=list)
+    limits_ignored: bool = False
+
+
+@router.post("/campaigns/{campaign_id}/results-coa",
+             response_model=CoaIngestReport)
+async def ingest_coa(campaign_id: str,
+                     file: UploadFile = File(...),
+                     add_parameters_to_scope: bool = True,
+                     x_user: str = Depends(current_username)
+                     ) -> CoaIngestReport:
+    """Import the laboratory's own Certificate of Analysis workbook.
+
+    One sheet per sample, which is how the laboratory already writes it.
+    Nothing has to be retyped or reshaped: the file the lab produces for
+    the job is the file that goes in.
+    """
+    from xlsx_coa import parse_coa_workbook
+
+    campaign = await _campaign_or_404(campaign_id)
+    settings = _settings_of(campaign)
+    raw = await file.read()
+    try:
+        parsed = await run_in_threadpool(parse_coa_workbook, raw)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("certificate workbook could not be read", exc_info=True)
+        raise HTTPException(
+            status_code=400,
+            detail=f"The workbook could not be read: {exc}") from exc
+
+    if not parsed.samples:
+        raise HTTPException(
+            status_code=400,
+            detail=("No completed certificate sheets were found. "
+                    + " ".join(parsed.warnings)).strip())
+
+    report = CoaIngestReport(sheets_skipped=parsed.skipped_sheets,
+                             warnings=list(parsed.warnings),
+                             limits_ignored=parsed.limits_ignored)
+    if parsed.limits_ignored:
+        report.warnings.append(
+            "The workbook carries its own limit columns. They were not "
+            "imported: limits are read from the regulation so that a limit "
+            "mistyped on a certificate cannot reach a report.")
+
+    existing = {s.code: s for s in await _samples_of(campaign_id)}
+    position = len(existing)
+    found_keys: List[str] = []
+
+    def _label_for(code: str, index: int) -> str:
+        """The short column heading used across the report's tables.
+
+        Sample codes carry a date — "BSA 03-08-2026S02" — and the last
+        whitespace-separated token of that, truncated, reads "03-08-2026S0",
+        which is neither the code nor a usable column heading. Where the
+        code ends in a sample number that number is used; otherwise the
+        position in the campaign is.
+        """
+        # The letter must not be the tail of a longer word: "Sample 7"
+        # would otherwise yield "LE07" and "ABC123" would yield "BC123".
+        m = re.search(r"(?<![A-Za-z])([A-Za-z]{1,2})\s*[-_]?\s*(\d{1,3})\s*$",
+                      code or "")
+        if m:
+            return f"{m.group(1).upper()}{int(m.group(2)):02d}"
+        return f"S{index + 1:02d}"
+
+    for ps in parsed.samples:
+        code = ps.sample_code or ps.sheet
+        sample = existing.get(code)
+        if sample is None:
+            sample = LabSample(
+                campaign_id=campaign_id, code=code,
+                label=_label_for(code, position),
+                medium=settings.medium, position=position,
+                location_name=ps.site, laboratory=settings.laboratory,
+                coc_number=ps.coc, sampled_by=ps.sampled_by,
+                sampled_at=ps.sampled_at, received_at=ps.received_at,
+                reported_at=ps.reported_at, note=ps.description)
+            await db.lab_samples.insert_one(to_mongo(sample.model_dump()))
+            existing[code] = sample
+            report.samples_created.append(code)
+            position += 1
+        else:
+            report.samples_matched.append(code)
+            changes: Dict[str, Any] = {}
+            for field_name, value in (("sampled_at", ps.sampled_at),
+                                      ("received_at", ps.received_at),
+                                      ("reported_at", ps.reported_at),
+                                      ("location_name", ps.site),
+                                      ("coc_number", ps.coc)):
+                if value and not getattr(sample, field_name, None):
+                    changes[field_name] = value
+            if changes:
+                changes["updated_at"] = utcnow()
+                await db.lab_samples.update_one({"id": sample.id},
+                                                {"$set": to_mongo(changes)})
+
+        for note in ps.notes:
+            report.warnings.append(f"{code}: {note}")
+
+        if ps.suggested_particle_size or ps.suggested_depth:
+            report.suggested_context.append({
+                "sample_code": code,
+                "description": ps.description,
+                "particle_size": ps.suggested_particle_size,
+                "depth": ps.suggested_depth,
+            })
+
+        # Merge by parameter, as the CSV ingest does, so a laboratory that
+        # sends organics and metals as separate workbooks keeps both.
+        table = {(r.analyte_key if r.resolved
+                  else (r.reported_name or r.analyte_key)): r
+                 for r in sample.results}
+        for pr in ps.results:
+            analyte = L.resolve_analyte(pr.parameter)
+            if analyte is None:
+                if pr.parameter not in report.parameters_unresolved:
+                    report.parameters_unresolved.append(pr.parameter)
+            else:
+                report.parameters_resolved += 1
+                if settings.medium not in analyte.media:
+                    if analyte.name not in report.parameters_wrong_medium:
+                        report.parameters_wrong_medium.append(analyte.name)
+                elif analyte.key not in found_keys:
+                    found_keys.append(analyte.key)
+            slot = analyte.key if analyte else pr.parameter
+            if slot in table:
+                report.values_replaced += 1
+            table[slot] = AnalyteResult(
+                analyte_key=slot,
+                reported_name=pr.parameter,
+                value=pr.value,
+                raw_value=pr.raw_value,
+                below_loq=pr.below_loq,
+                unit=pr.unit or (analyte.unit if analyte else None),
+                method=pr.method or (analyte.method if analyte else None),
+                loq=pr.loq,
+                mu_percent=pr.mu_percent,
+                resolved=analyte is not None,
+            )
+            report.values_stored += 1
+            if pr.below_loq:
+                report.values_below_loq += 1
+
+        await db.lab_samples.update_one(
+            {"id": sample.id},
+            {"$set": to_mongo({
+                "results": [r.model_dump() for r in table.values()],
+                "updated_at": utcnow()})},
+        )
+
+    if add_parameters_to_scope and found_keys:
+        scope = list(settings.analyte_keys)
+        added = [k for k in found_keys if k not in scope]
+        if added:
+            settings.analyte_keys = scope + added
+            await db.campaigns.update_one(
+                {"id": campaign_id},
+                {"$set": to_mongo({"sample_settings": settings.model_dump(),
+                                   "updated_at": utcnow()})},
+            )
+            report.parameters_added = [L.ANALYTES_BY_KEY[k].name
+                                       for k in added]
+
+    await audit("sample.coa_ingest", "campaign", campaign_id, x_user, {
+        "samples": len(parsed.samples),
+        "values": report.values_stored,
+        "unresolved": report.parameters_unresolved,
+        "added_to_scope": report.parameters_added,
+    })
+    return report
 
 
 # ---------------------------------------------------------------------------
