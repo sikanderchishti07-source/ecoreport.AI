@@ -65,6 +65,18 @@ export default function CertificatesPanel({ lab }) {
   // a bare `lab.instruments || []` creates a new array on every render.
   const instruments = useMemo(() => lab.instruments || [], [lab.instruments]);
 
+  // Only instruments that can be identified belong in the picker.
+  //
+  // The parent passes its live editing rows straight through, so the moment
+  // someone presses "Add instrument" a blank row arrives here with no serial
+  // number and no parameter. Rendering it produced a SelectItem with
+  // value="", which Radix rejects by throwing — taking the whole page down
+  // to a white screen. A half-typed row simply is not selectable yet.
+  const selectable = useMemo(
+    () => instruments.filter((i) => String(i.sn || i.parameter || "").trim()),
+    [instruments],
+  );
+
   const refresh = useCallback(() => {
     setLoading(true);
     listStationCertificates(lab.id)
@@ -208,11 +220,20 @@ export default function CertificatesPanel({ lab }) {
                 <SelectValue placeholder="Select analyser…" />
               </SelectTrigger>
               <SelectContent>
-                {instruments.map((i) => (
-                  <SelectItem key={i.sn || i.parameter} value={i.sn || i.parameter}>
-                    {i.parameter} — S/N {i.sn || "—"}
-                  </SelectItem>
-                ))}
+                {selectable.length === 0 ? (
+                  <div className="px-2 py-2 text-xs text-muted-foreground">
+                    Name an instrument and save before attaching a certificate.
+                  </div>
+                ) : (
+                  selectable.map((i) => {
+                    const value = String(i.sn || i.parameter).trim();
+                    return (
+                      <SelectItem key={value} value={value}>
+                        {i.parameter || "(unnamed)"} — S/N {i.sn || "—"}
+                      </SelectItem>
+                    );
+                  })
+                )}
               </SelectContent>
             </Select>
           </div>
