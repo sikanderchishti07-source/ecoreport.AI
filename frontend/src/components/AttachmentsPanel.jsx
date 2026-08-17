@@ -34,6 +34,12 @@ const SECTIONS = [
 ];
 
 function Section({ campaignId, section, items, instruments, onChange }) {
+  // An instrument with neither a serial number nor a parameter cannot be
+  // identified, and rendering it as a SelectItem produces value="", which
+  // Radix rejects by throwing — a white screen rather than a missing row.
+  const selectable = (instruments || []).filter(
+    (i) => String(i.sn || i.parameter || "").trim(),
+  );
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [sn, setSn] = useState("");
@@ -136,17 +142,20 @@ function Section({ campaignId, section, items, instruments, onChange }) {
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        {section.kind === "calibration" && instruments.length > 0 && (
+        {section.kind === "calibration" && selectable.length > 0 && (
           <Select value={sn} onValueChange={setSn}>
             <SelectTrigger className="w-[280px] rounded-sm h-9 text-xs">
               <SelectValue placeholder="Link upload to analyser (optional)…" />
             </SelectTrigger>
             <SelectContent>
-              {instruments.map((i) => (
-                <SelectItem key={i.sn || i.parameter} value={i.sn || i.parameter}>
-                  {i.parameter} — S/N {i.sn || "—"}
-                </SelectItem>
-              ))}
+              {selectable.map((i) => {
+                const value = String(i.sn || i.parameter).trim();
+                return (
+                  <SelectItem key={value} value={value}>
+                    {i.parameter || "(unnamed)"} — S/N {i.sn || "—"}
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         )}
@@ -239,11 +248,14 @@ function Section({ campaignId, section, items, instruments, onChange }) {
                     <SelectValue placeholder="Not linked" />
                   </SelectTrigger>
                   <SelectContent>
-                    {instruments.map((i) => (
-                      <SelectItem key={i.sn || i.parameter} value={i.sn || i.parameter}>
-                        {i.parameter} — S/N {i.sn || "—"}
-                      </SelectItem>
-                    ))}
+                    {selectable.map((i) => {
+                      const value = String(i.sn || i.parameter).trim();
+                      return (
+                        <SelectItem key={value} value={value}>
+                          {i.parameter || "(unnamed)"} — S/N {i.sn || "—"}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               )}
