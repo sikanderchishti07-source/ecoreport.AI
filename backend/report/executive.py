@@ -138,7 +138,7 @@ def pollutant_verdict_line(p, lang: str = "en") -> str:
                 f"ميكروغرام/م³ مقابل حد {_fmt(gov.limit_ugm3, 0)}، أي "
                 f"{ratio * 100:,.0f}% من الحد المسموح به.")
     return (f"{per} maximum of {_fmt(v)} µg/m³ against a limit of "
-            f"{_fmt(gov.limit_ugm3, 0)} µg/m³ — {ratio * 100:,.0f}% of the "
+            f"{_fmt(gov.limit_ugm3, 0)} µg/m³, {ratio * 100:,.0f}% of the "
             f"permissible level.")
 
 
