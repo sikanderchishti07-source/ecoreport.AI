@@ -46,9 +46,9 @@ OUT = os.path.join(os.path.dirname(__file__), "master_template.docx")
 # Brand palette — blue-dominant with a restrained green accent
 NAVY = RGBColor(0x0F, 0x3D, 0x6E)
 BLUE = RGBColor(0x1F, 0x6F, 0xB2)
+WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 GREEN = RGBColor(0x2F, 0x9E, 0x63)
 DARK = RGBColor(0x1F, 0x1F, 0x1F)
-WHITE = RGBColor(0xFF, 0xFF, 0xFF)
 NAVY_FILL = "0F3D6E"
 BLUE_FILL = "1F6FB2"
 SKY_FILL = "E8F1F9"
@@ -247,7 +247,7 @@ def _merge_row(table, row_idx, start, end):
     return a
 
 
-def _p(doc, text="", size=11, bold=False, italic=False, align="left",
+def _p(doc, text="", size=12, bold=False, italic=False, align="left",
        style=None, space_after=6, color=None):
     p = doc.add_paragraph(style=style)
     p.alignment = {"left": WD_ALIGN_PARAGRAPH.LEFT,
@@ -276,24 +276,36 @@ def _heading(doc, text, level=1):
     p.paragraph_format.keep_with_next = True
     p.paragraph_format.keep_together = True
     if level == 1:
+        # A full-width filled bar with white text, rather than small blue text
+        # over a hairline rule. Side by side with a manually prepared report
+        # the old treatment read as faint and unstructured; a solid band is
+        # what makes a section boundary visible at arm's length.
         num, _, rest = text.partition(" ")
         if num.rstrip(".").replace(".", "").isdigit():
-            r0 = p.add_run(num.rstrip(".") + "  ")
-            r0.font.color.rgb = BLUE
+            r0 = p.add_run(num.rstrip(".") + "   ")
+            r0.font.color.rgb = WHITE
             r0.bold = True
             r1 = p.add_run(rest)
             r1.bold = True
+            r1.font.color.rgb = WHITE
         else:
-            p.add_run(text).bold = True
+            r0 = p.add_run(text)
+            r0.bold = True
+            r0.font.color.rgb = WHITE
         pPr = p._p.get_or_add_pPr()
-        bdr = OxmlElement("w:pBdr")
-        bot = OxmlElement("w:bottom")
-        bot.set(qn("w:val"), "single")
-        bot.set(qn("w:sz"), "10")
-        bot.set(qn("w:space"), "4")
-        bot.set(qn("w:color"), BLUE_FILL)
-        bdr.append(bot)
-        pPr.append(bdr)
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), BLUE_FILL)
+        pPr.append(shd)
+        # The bar needs breathing room inside itself, and a hair of indent so
+        # the text is not flush against the shaded edge.
+        p.paragraph_format.space_before = Pt(14)
+        p.paragraph_format.space_after = Pt(8)
+        p.paragraph_format.left_indent = Cm(0.18)
+        ind = OxmlElement("w:ind")
+        ind.set(qn("w:right"), "-40")
+        pPr.append(ind)
     else:
         p.add_run(text).bold = True
     return p
@@ -376,16 +388,45 @@ def _summary_table(doc, rows, ncec_cols):
     for j, (period, _) in enumerate(ncec_cols):
         _cell_text(tbl.cell(1, 2 + j), period, bold=True, size=10, align="center")
         _shade(tbl.cell(1, 2 + j))
-    # Data rows; NCEC limit cells merged vertically across all data rows
+    # Data rows.
+    #
+    # The limit columns were previously merged vertically across every data
+    # row, on the reasoning that the limit is one value for the whole table.
+    # In practice Word renders that as a single tall cell with the number
+    # floating at the top and a large empty area beneath it, which is the
+    # first thing the eye lands on. The limit is now printed on the row it
+    # actually governs and left blank elsewhere, so the table reads as a
+    # table.
+    # Pin the layout: the descriptor column carries sentences, the limit
+    # columns carry three digits. Left to autofit they come out near-equal,
+    # which is what made the limit columns read as large empty panels.
+    desc_w, val_w = 6.2, 3.2
+    lim_w = max(2.4, (16.4 - desc_w - val_w) / n_ncec)
+    _fixed_widths(tbl, (desc_w, val_w) + (lim_w,) * n_ncec)
+    limit_row = _limit_row_index(rows)
     for i, (label, value) in enumerate(rows):
         _cell_text(tbl.cell(2 + i, 0), label, size=10)
         _cell_text(tbl.cell(2 + i, 1), value, size=10, align="center")
-    for j, (_, limit_ph) in enumerate(ncec_cols):
-        top = tbl.cell(2, 2 + j)
-        bottom = tbl.cell(1 + len(rows), 2 + j)
-        merged = top.merge(bottom)
-        _cell_text(merged, limit_ph, size=10, align="center")
+        for j, (_, limit_ph) in enumerate(ncec_cols):
+            cell = tbl.cell(2 + i, 2 + j)
+            if i == limit_row:
+                _cell_text(cell, limit_ph, size=10, align="center", bold=True)
+            else:
+                _cell_text(cell, "", size=10, align="center")
     return tbl
+
+
+def _limit_row_index(rows) -> int:
+    """Which data row the limit belongs beside.
+
+    The limit governs the maximum, so it sits next to the maximum row where
+    there is one. Falling back to the first row keeps the value visible on
+    any table whose rows are named differently.
+    """
+    for i, (label, _) in enumerate(rows):
+        if "maximum" in str(label).lower():
+            return i
+    return 0
 
 
 def _tr_tag_row(table, row_idx, tag):
@@ -533,20 +574,34 @@ def _modernise_settings(doc):
 
 
 
-def _verdict_box(doc, body_key):
-    """Single-line finding under a pollutant table, in a tinted panel with a
-    green left edge and a tick — the reader's takeaway for that section."""
+def _verdict_box(doc, prefix):
+    """Single-line finding under a pollutant table — the reader's takeaway.
+
+    The panel was previously hardcoded green with a tick. That meant an
+    exceedance — the one thing in a survey that must not be missed —
+    was announced inside a green pass box with a tick beside it. The colour
+    and the mark are now supplied with the verdict itself, so a finding of
+    non-compliance is red and marked, and a pass is green.
+
+    `prefix` is the context key stem, e.g. "so2"; the template reads
+    `{{ so2.verdict_mark }}` and `{{ so2.verdict_line }}` and the shading is
+    chosen by a conditional on `{{ so2.verdict_status }}`.
+    """
     t = doc.add_table(rows=1, cols=1)
     t.alignment = WD_TABLE_ALIGNMENT.CENTER
     c = t.rows[0].cells[0]
     tcPr = c._tc.get_or_add_tcPr()
     shd = OxmlElement("w:shd")
     shd.set(qn("w:val"), "clear")
-    shd.set(qn("w:fill"), "F1F7F2")
+    # docxtpl substitutes inside attribute values, so the fill and the edge
+    # colour are driven by the same data that writes the sentence.
+    shd.set(qn("w:fill"), "{{ %s.verdict_fill }}" % prefix)
     tcPr.append(shd)
     bdrs = OxmlElement("w:tcBorders")
-    for side, colour, sz in (("left", "2F7D32", "18"), ("top", "DDE7DE", "4"),
-                             ("bottom", "DDE7DE", "4"), ("right", "DDE7DE", "4")):
+    for side, colour, sz in (("left", "{{ %s.verdict_edge }}" % prefix, "18"),
+                             ("top", "DDE7DE", "4"),
+                             ("bottom", "DDE7DE", "4"),
+                             ("right", "DDE7DE", "4")):
         el = OxmlElement(f"w:{side}")
         el.set(qn("w:val"), "single")
         el.set(qn("w:sz"), sz)
@@ -556,17 +611,54 @@ def _verdict_box(doc, body_key):
     _cell_pad(t, top=0.14, bottom=0.14, left=0.28, right=0.22)
     p = c.paragraphs[0]
     p.paragraph_format.space_after = Pt(0)
-    tick = p.add_run("\u2713  ")
-    tick.bold = True
-    tick.font.size = Pt(10)
-    tick.font.color.rgb = OK_GREEN
-    r = p.add_run(body_key)
-    r.font.size = Pt(9.5)
+    mark = p.add_run("{{ %s.verdict_mark }}  " % prefix)
+    mark.bold = True
+    mark.font.size = Pt(11)
+    r = p.add_run("{{ %s.verdict_line }}" % prefix)
+    r.font.size = Pt(10.5)
     r.font.color.rgb = DARK
     _p(doc, space_after=6)
     return t
 
 
+
+
+
+def _fixed_widths(table, widths_cm):
+    """Pin a table's column widths so the renderer cannot re-balance them.
+
+    Setting `cell.width` alone is a hint: without a fixed layout algorithm
+    and a `w:tblGrid`, Word and LibreOffice both fall back to autofit and
+    distribute the columns near-equally — which is why "PARAMETER" kept
+    breaking across two lines however wide its column was set. The grid and
+    the layout mode below are what make the widths binding.
+    """
+    tblPr = table._tbl.tblPr
+    for old in tblPr.findall(qn("w:tblLayout")):
+        tblPr.remove(old)
+    layout = OxmlElement("w:tblLayout")
+    layout.set(qn("w:type"), "fixed")
+    tblPr.append(layout)
+
+    for old in tblPr.findall(qn("w:tblW")):
+        tblPr.remove(old)
+    total = OxmlElement("w:tblW")
+    total.set(qn("w:w"), str(int(sum(widths_cm) * 567)))
+    total.set(qn("w:type"), "dxa")
+    tblPr.append(total)
+
+    for old in table._tbl.findall(qn("w:tblGrid")):
+        table._tbl.remove(old)
+    grid = OxmlElement("w:tblGrid")
+    for w in widths_cm:
+        col = OxmlElement("w:gridCol")
+        col.set(qn("w:w"), str(int(w * 567)))
+        grid.append(col)
+    table._tbl.insert(list(table._tbl).index(tblPr) + 1, grid)
+
+    for j, w in enumerate(widths_cm):
+        for row in table.rows:
+            row.cells[j].width = Cm(w)
 
 
 def _no_word_split(table):
@@ -970,23 +1062,18 @@ def build(out_path: str = OUT) -> str:
     st.paragraph_format.line_spacing = 1.15
     st.paragraph_format.space_after = Pt(6)
     st.font.name = "Times New Roman"
-    st.font.size = Pt(11)
+    # 12 pt body, not 11. Set against a manually prepared report of the same
+    # survey, an 11 pt body read as noticeably fainter and denser; 12 pt is
+    # what the reports this system replaces have always used.
+    st.font.size = Pt(12)
     for lvl in range(1, 4):
         hs = doc.styles[f"Heading {lvl}"]
         hs.font.name = "Times New Roman"
-        hs.font.color.rgb = {1: NAVY, 2: NAVY, 3: BLUE}[lvl]
-        hs.font.size = Pt({1: 14, 2: 12, 3: 11}[lvl])
+        hs.font.color.rgb = {1: WHITE, 2: NAVY, 3: BLUE}[lvl]
+        hs.font.size = Pt({1: 16, 2: 13.5, 3: 12}[lvl])
         hs.font.bold = True
-    # accent rule under every level-1 heading
-    h1 = doc.styles["Heading 1"]
-    pPr = h1.element.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    bot = OxmlElement("w:bottom")
-    bot.set(qn("w:val"), "single")
-    bot.set(qn("w:sz"), "12")
-    bot.set(qn("w:color"), BLUE_FILL)
-    pBdr.append(bot)
-    pPr.append(pBdr)
+    # No rule under level 1: the heading itself is now a filled bar, and a
+    # border beneath a shaded band reads as a smudge rather than a rule.
 
     sec = doc.sections[0]
     sec.page_width, sec.page_height = Cm(21.0), Cm(29.7)  # A4
@@ -1532,27 +1619,41 @@ def build(out_path: str = OUT) -> str:
     _caption(doc, "Table", "Compliance Summary Matrix")
     cs = doc.add_table(rows=4, cols=7)
     cs.style = "Table Grid"
-    _polish(cs)
-    for j, h in enumerate(["POLLUTANT", "HOURLY MAX", "8-HR MAX", "DAILY AVG",
-                           "APPLICABLE LIMIT", "% OF LIMIT", "STATUS"]):
-        _cell_text(cs.cell(0, j), h, bold=True, size=8.5, align="center")
+    # zebra off: the row fill is supplied per row by the data, and an
+    # alternating band underneath it would override the exceedance shading.
+    _polish(cs, zebra=False)
+    # Shorter labels, not smaller type. "APPLICABLE LIMIT" and "EXCEEDANCE"
+    # are both wider than their column at any readable size, and Word breaks
+    # them mid-word into "APPLICABL / E LIMIT". Suppressing hyphenation does
+    # not help — the word simply does not fit, so the wording is shortened
+    # and the columns that hold long values are widened.
+    for j, h in enumerate(["PARAMETER", "HOURLY MAX", "8-HR MAX", "DAILY AVG",
+                           "LIMIT", "% OF LIMIT", "STATUS"]):
+        _cell_text(cs.cell(0, j), h, bold=True, size=9, align="center")
         _shade(cs.cell(0, j))
     # Explicit widths proportional to content. With seven equal columns Word
     # has to break "APPLICABLE" mid-word to fit it, which is why the header
     # printed as "APPLICABL / E LIMIT".
-    for j, w in enumerate((2.6, 2.2, 2.0, 2.1, 3.1, 2.0, 2.4)):
-        for r_ in cs.rows:
-            r_.cells[j].width = Cm(w)
+    _fixed_widths(cs, (3.0, 1.9, 1.8, 1.9, 2.8, 1.8, 3.1))
     _no_word_split(cs)
     _tr_tag_row(cs, 1, "{%tr for r in compliance_rows %}")
     row = cs.rows[2]
-    _cell_text(row.cells[0], "{{ r.pollutant }}", size=9, bold=True)
+    # Every cell in the row carries the row's own fill, so a pollutant that
+    # exceeded its limit is shaded across the full width. Previously the
+    # exceedance was a plain row identical to the compliant ones, with only
+    # the word STATUS to distinguish it — the single finding of the survey
+    # sitting unmarked among six passes.
+    for cell in row.cells:
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:fill"), "{{ r.row_fill }}")
+        tcPr.append(shd)
+    _cell_text(row.cells[0], "{{ r.pollutant }}", size=9.5, bold=True)
     for k, key in enumerate(["hourly_max", "rolling_8h", "daily_avg", "limit",
                              "pct_of_limit"], start=1):
-        _cell_text(row.cells[k], "{{ r.%s }}" % key, size=9, align="center")
-    # Status is supplied as a RichText value so its colour is set with the
-    # verdict itself; inline Jinja colour tags would break the row loop.
-    _cell_text(cs.cell(2, 6), "{{ r.verdict }}", size=8.5, align="center",
+        _cell_text(row.cells[k], "{{ r.%s }}" % key, size=9.5, align="center")
+    _cell_text(cs.cell(2, 6), "{{ r.verdict }}", size=9, align="center",
                bold=True)
     _tr_tag_row(cs, 3, "{%tr endfor %}")
 
@@ -1562,7 +1663,7 @@ def build(out_path: str = OUT) -> str:
     for label, colour in (("\u25A0 COMPLIANT", OK_GREEN),
                           ("\u25A0 SEE NOTE \u2014 above limit, allowance not yet reached",
                            WARN_AMBER),
-                          ("\u25A0 EXCEEDANCE", BAD_RED)):
+                          ("\u25A0 EXCEEDED", BAD_RED)):
         rr = lg.add_run(label + "     ")
         rr.font.size = Pt(7.5)
         rr.font.color.rgb = colour
@@ -1598,7 +1699,7 @@ def build(out_path: str = OUT) -> str:
         ("Hourly value > {{ so2.limit_1h }} (ug/m³)", "{{ so2.exceed_1h }}"),
     ], [("1 Hour", "{{ so2.limit_1h }}"), ("24 Hour", "{{ so2.limit_24h }}")])
     _p(doc, "{{ so2.footnote }}", size=9, italic=True)
-    _verdict_box(doc, "{{ so2.verdict_line }}")
+    _verdict_box(doc, "so2")
     _figure(doc, "fig_so2", "SO2 Hourly Concentration at the location.")
 
     # 5.1.2 NO/NO2/NOx
@@ -1672,7 +1773,7 @@ def build(out_path: str = OUT) -> str:
     na2 = nx.cell(12, 2).merge(nx.cell(15, 2))
     _cell_text(na2, "NA", size=10, align="center")
     _p(doc, "{{ nox_group.footnote }}", size=9, italic=True)
-    _verdict_box(doc, "{{ nox_group.verdict_line }}")
+    _verdict_box(doc, "nox_group")
     _figure(doc, "fig_no", "NO Hourly Concentration at the location.")
     _figure(doc, "fig_no2", "NO2 Hourly Concentration at the location.")
     _figure(doc, "fig_nox", "NOX Hourly Concentration at the location.")
@@ -1699,7 +1800,7 @@ def build(out_path: str = OUT) -> str:
         ("Daily average (ug/m³)", "{{ co.daily_avg }}"),
     ], [("1 Hour", "{{ co.limit_1h }}"), ("8 Hour", "{{ co.limit_8h }}")])
     _p(doc, "{{ co.footnote }}", size=9, italic=True)
-    _verdict_box(doc, "{{ co.verdict_line }}")
+    _verdict_box(doc, "co")
     _figure(doc, "fig_co", "CO Hourly Concentration at the location.")
     _figure(doc, "fig_co8h", "CO 8 Hour Rolling Average Concentrations at the location.")
 
@@ -1719,7 +1820,7 @@ def build(out_path: str = OUT) -> str:
         ("Daily Average (µg/m³)", "{{ h2s.daily_avg }}"),
     ], [("1 Hour", "{{ h2s.limit_1h }}"), ("24 Hour", "{{ h2s.limit_24h }}")])
     _p(doc, "{{ h2s.footnote }}", size=9, italic=True)
-    _verdict_box(doc, "{{ h2s.verdict_line }}")
+    _verdict_box(doc, "h2s")
     _figure(doc, "fig_h2s", "H2S Hourly Concentration at the location.")
 
     # 5.1.5 O3
@@ -1744,7 +1845,7 @@ def build(out_path: str = OUT) -> str:
         ("Daily average (ug/m³)", "{{ o3.daily_avg }}"),
     ], [("8 Hour", "{{ o3.limit_8h }}")])
     _p(doc, "{{ o3.footnote }}", size=9, italic=True)
-    _verdict_box(doc, "{{ o3.verdict_line }}")
+    _verdict_box(doc, "o3")
     _figure(doc, "fig_o3", "O3 Hourly Concentration at the location.")
     _figure(doc, "fig_o38h", "O3 8 Hour Rolling Average Concentrations at the location.")
     _figure(doc, "fig_no2_o3", "NO2 vs. O3 Hourly Concentrations at the location.")
@@ -1773,7 +1874,7 @@ def build(out_path: str = OUT) -> str:
         ("Daily average (ug/m³)", "{{ pm10.daily_avg }}"),
     ], [("24 Hour", "{{ pm10.limit_24h }}")])
     _p(doc, "{{ pm10.footnote }}", size=9, italic=True)
-    _verdict_box(doc, "{{ pm10.verdict_line }}")
+    _verdict_box(doc, "pm10")
     _caption(doc, "Table", "Summary of PM2.5 Results.")
     _summary_table(doc, [
         ("Percentage data capture (Hourly Values)", "{{ pm25.capture }}"),
@@ -1783,7 +1884,7 @@ def build(out_path: str = OUT) -> str:
         ("Daily average (ug/m³)", "{{ pm25.daily_avg }}"),
     ], [("24 Hour", "{{ pm25.limit_24h }}")])
     _p(doc, "{{ pm25.footnote }}", size=9, italic=True)
-    _verdict_box(doc, "{{ pm25.verdict_line }}")
+    _verdict_box(doc, "pm25")
     _figure(doc, "fig_pm10", "PM10 Hourly Concentrations at the location.")
     _figure(doc, "fig_pm25", "PM2.5 Hourly Concentrations at the location.")
 
