@@ -401,7 +401,12 @@ def _caption(doc, kind: str, text: str):
         run.font.size = Pt(10)
         run.bold = True
         run.italic = False
-    r2 = p.add_run(chem(f" \u2014 {text}"))
+    # A colon, not an em dash. The hand-built reports this system replaces
+    # use "Table 1: Percent of Data Captured" throughout and contain no em
+    # dash anywhere; ours carried 92, of which this one line produced about
+    # eighty. Set side by side, the dash is what makes the document read as
+    # machine-written.
+    r2 = p.add_run(chem(f": {text}"))
     r2.bold = True
     r2.font.size = Pt(10)
     r2.font.color.rgb = DARK
@@ -543,8 +548,8 @@ def _header_footer(section):
     rp2.paragraph_format.space_after = Pt(0)
     # project, report number and revision on one line: enough for a reader to
     # identify a loose page without a second trip to the cover
-    r2 = rp2.add_run("{{ project_name }}  \u00b7  {{ report_number }}"
-                     "  \u00b7  Rev {{ revision }}")
+    r2 = rp2.add_run("{{ project_name }}  |  {{ report_number }}"
+                     "  |  Rev {{ revision }}")
     r2.font.size = Pt(7.5)
     r2.font.color.rgb = MUTED_GREY
 
@@ -596,7 +601,7 @@ def _header_footer(section):
     ftop.set(qn("w:color"), "C9D6E2")
     fBdr.append(ftop)
     fpr.append(fBdr)
-    fl_run = flp.add_run("CONFIDENTIAL  \u00b7  {{ provider_legal_name }}")
+    fl_run = flp.add_run("CONFIDENTIAL  |  {{ provider_legal_name }}")
     fl_run.font.size = Pt(7)
     fl_run.font.color.rgb = MUTED_GREY
 
@@ -1598,7 +1603,7 @@ def build(out_path: str = OUT) -> str:
         p = _p(doc, "", align="justify")
         r = p.add_run(lead)
         r.bold = True
-        p.add_run(" — " + body)
+        p.add_run(": " + body)
     _p(doc, "Outliers are values that lie outside most of the other values in a set "
             "of data. Outliers treated as valid/suspect until proven invalid. The "
             "first assumption upon finding a measurement that is inconsistent with "
@@ -1727,7 +1732,7 @@ def build(out_path: str = OUT) -> str:
     lg.paragraph_format.space_before = Pt(3)
     lg.paragraph_format.space_after = Pt(2)
     for label, colour in (("\u25A0 COMPLIANT", OK_GREEN),
-                          ("\u25A0 SEE NOTE \u2014 above limit, allowance not yet reached",
+                          ("\u25A0 SEE NOTE: above limit, allowance not yet reached",
                            WARN_AMBER),
                           ("\u25A0 EXCEEDED", BAD_RED)):
         rr = lg.add_run(label + "     ")
@@ -1793,7 +1798,7 @@ def build(out_path: str = OUT) -> str:
     hdr = _merge_row(nx, 0, 0, 1)
     _cell_text(hdr, "NO₂ Concentration at sampling point", bold=True, size=10)
     _shade(hdr)
-    _cell_text(nx.cell(0, 2), "NCEC Exceedance Level µg/m³ — 1 Hour", bold=True,
+    _cell_text(nx.cell(0, 2), "NCEC Exceedance Level µg/m³, 1 Hour", bold=True,
                size=9, align="center")
     _shade(nx.cell(0, 2))
     no2_rows = [
@@ -2190,7 +2195,7 @@ def build(out_path: str = OUT) -> str:
     _p(doc, "{{ c.image }}", align="center")
     _p(doc, "{%p endfor %}", size=1, space_after=0)
     _p(doc, "{%p else %}", size=1, space_after=0)
-    _p(doc, "[Calibration certificates to be attached — upload scanned "
+    _p(doc, "[Calibration certificates to be attached. Upload scanned "
             "certificates for this campaign.]", italic=True)
     _p(doc, "{%p endif %}", size=1, space_after=0)
     _heading(doc, "Appendix 4 Environmental license for the institution", 1)
@@ -2199,7 +2204,7 @@ def build(out_path: str = OUT) -> str:
     _p(doc, "{{ img }}", align="center")
     _p(doc, "{%p endfor %}", size=1, space_after=0)
     _p(doc, "{%p else %}", size=1, space_after=0)
-    _p(doc, "[Environmental license to be attached — upload scanned license for "
+    _p(doc, "[Environmental license to be attached. Upload scanned license for "
             "this provider.]", italic=True)
     _p(doc, "{%p endif %}", size=1, space_after=0)
 
@@ -2231,7 +2236,7 @@ def build(out_path: str = OUT) -> str:
     er.font.color.rgb = NAVY
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    sr = sub.add_run("{{ report_number }}  \u00b7  Rev {{ revision }}  \u00b7  "
+    sr = sub.add_run("{{ report_number }}  |  Rev {{ revision }}  |  "
                      "{{ project_name }}")
     sr.font.size = Pt(8)
     sr.font.color.rgb = MUTED_GREY
