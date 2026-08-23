@@ -309,6 +309,14 @@ async def create_indexes() -> None:
     await db.lab_samples.create_index([("campaign_id", 1), ("position", 1)])
     await db.lab_samples.create_index([("campaign_id", 1), ("code", 1)], unique=True)
     await db.parameter_profiles.create_index("id", unique=True)
+    # Share links are now resolved by their short code on every portal call,
+    # so that lookup has to be indexed. Unique, because two live shares with
+    # the same code would hand one client another client's reports; sparse,
+    # because links issued before the short code existed have no code field
+    # and a plain unique index would reject all but the first of them.
+    await db.shares.create_index("id", unique=True)
+    await db.shares.create_index("code", unique=True, sparse=True)
+    await db.shares.create_index([("campaign_id", 1), ("created_at", -1)])
     await db.parameter_profiles.create_index([("medium", 1), ("client", 1)])
     await migrate_campaigns()
     await seed_parameter_profiles()
