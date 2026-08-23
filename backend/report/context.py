@@ -112,6 +112,55 @@ def _tidy(ctx: dict) -> dict:
     return ctx
 
 
+
+# ---------------------------------------------------------------------------
+# Verdict presentation
+#
+# The panel beneath each pollutant table used to be hardcoded green with a
+# tick, so an exceedance was announced inside a pass box. The colour and the
+# mark are now derived from the same evaluation that writes the sentence, and
+# travel with it into the template.
+# ---------------------------------------------------------------------------
+VERDICT_STYLE = {
+    # status:      (fill,     left edge, mark)
+    "ok":          ("F1F7F2", "2F7D32", "\u2713"),
+    "bad":         ("FDECEA", "B03A2E", "\u26A0"),
+    "warn":        ("FFF7E6", "B06A00", "!"),
+    "nr":          ("F3F4F6", "6B7280", "\u2014"),
+}
+
+# Row fills for the compliance matrix. White rather than no fill, so a
+# compliant row is explicitly clear rather than inheriting a zebra band.
+ROW_FILL = {"ok": "FFFFFF", "bad": "FDECEA", "warn": "FFF7E6", "nr": "F3F4F6"}
+
+
+def _verdict_status(p) -> str:
+    """ok | bad | warn | nr for one pollutant, on the same rules the
+    compliance matrix uses, so the panel and the matrix never disagree."""
+    periods = [e for e in p.period_evaluations
+               if e.averaging_period != "1 Year"]
+    if (p.hourly_capture_pct or 0) < 75:
+        return "nr"
+    if any(e.verdict == "non-compliant" for e in periods):
+        return "bad"
+    if sum(e.exceedance_count for e in periods):
+        return "warn"
+    return "ok"
+
+
+def _verdict_fields(p, lang: str = "en") -> Dict:
+    """The four presentation values the verdict panel needs."""
+    status = _verdict_status(p)
+    fill, edge, mark = VERDICT_STYLE[status]
+    return {
+        "verdict_line": pollutant_verdict_line(p, lang),
+        "verdict_status": status,
+        "verdict_fill": fill,
+        "verdict_edge": edge,
+        "verdict_mark": mark,
+    }
+
+
 def build_context(campaign: Campaign, summary: CampaignSummary,
                   lang: str = "en") -> Dict:
     D = DYN[lang]
@@ -145,7 +194,7 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
             "h_max": fmtm(p.hourly_max),
             "h_min": fmtm(p.hourly_min),
             "daily_avg": fmtm(_daily_avg(p)),
-            "verdict_line": pollutant_verdict_line(p, lang),
+            **_verdict_fields(p, lang),
             "footnote": _footnote(evs, lang) + (
                 ("\n" + D["mdl_footnote"].format(
                     mdl=f"{_mdl:.1f}", n=getattr(p, "below_mdl_count", 0))
@@ -203,7 +252,7 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
                                    PERIOD_ADJ[lang]["1 Hour"], lang)
             + D["nox_supporting"]),
         "footnote": _footnote([_period(P["NO2"], "1 Hour")], lang),
-        "verdict_line": pollutant_verdict_line(P["NO2"], lang),
+        **_verdict_fields(P["NO2"], lang),
     }
     pm_group = {
         "narrative": (
@@ -212,7 +261,7 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
             + _compliance_sentence(
                 [_period(P["PM10"], "24 Hour"), _period(P["PM25"], "24 Hour")],
                 PERIOD_ADJ[lang]["24 Hour"], lang)),
-        "verdict_line": pollutant_verdict_line(P["PM10"], lang),
+        **_verdict_fields(P["PM10"], lang),
     }
 
     # Table 1 — data capture rows
@@ -270,8 +319,11 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
                     if wr.total_valid else 0.0 for c in non_calm]
         wind_pct_rows.append({
             "direction": f"{i} {row.direction}",
-            "vals": [f"{v:.5f}" if v else "0.00" for v in pct_vals],
-            "total": f"{sum(pct_vals):.5f}" if sum(pct_vals) else "0.00",
+            # One decimal, not five. A wind frequency printed as 25.00000
+            # implies a precision the measurement does not have and reads as
+            # unfinished output rather than a result.
+            "vals": [f"{v:.1f}" if v else "0.0" for v in pct_vals],
+            "total": f"{sum(pct_vals):.1f}" if sum(pct_vals) else "0.0",
         })
         cnt_vals = [row.counts_by_class.get(c, 0) for c in non_calm]
         wind_count_rows.append({
@@ -279,7 +331,7 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
             "vals": [str(v) for v in cnt_vals],
             "total": str(sum(cnt_vals)),
         })
-    pct_totals = [f"{wr.class_frequency_pct.get(c, 0.0):.5f}" for c in non_calm]
+    pct_totals = [f"{wr.class_frequency_pct.get(c, 0.0):.1f}" for c in non_calm]
     cnt_totals = [str(wr.class_totals.get(c, 0)) for c in non_calm]
     non_calm_total = sum(wr.class_totals.get(c, 0) for c in non_calm)
 
