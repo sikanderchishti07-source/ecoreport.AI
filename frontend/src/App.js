@@ -29,6 +29,12 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          {/* A client link is now a twelve-character code rather than a
+              signed token, so it is short enough for the path itself to be
+              worth shortening: aeconreport.com/r/K7M2P9XQ4RTW reads as a
+              professional link where the old one wrapped across three lines
+              of an email. /share/ stays for the links already sent out. */}
+          <Route path="/r/:token" element={<PortalPage />} />
           <Route path="/share/:token" element={<PortalPage />} />
           {/* Site capture runs outside the office shell — no navigation, no
               side rail, its own dark theme — because it is used one-handed in
