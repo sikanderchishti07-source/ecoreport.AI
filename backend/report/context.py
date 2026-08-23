@@ -109,7 +109,31 @@ def _tidy(ctx: dict) -> dict:
         v = ctx.get(key)
         if isinstance(v, str) and v not in ("", "\u2014"):
             ctx[key] = _tidy_name(v)
+    # Chemical formulas and the micro sign, applied to the whole context.
+    # Every value bound into the document passes through here, so nothing
+    # written elsewhere in this module can escape it.
+    #
+    # Excluded: the InlineImage objects and the colour codes carried by the
+    # verdict panel. A six-digit hex fill contains no formula token, but it
+    # is not text a reader ever sees and has no business being rewritten.
+    skip = {"verdict_fill", "verdict_edge", "row_fill", "status"}
+    for key, value in list(ctx.items()):
+        if key in skip:
+            continue
+        ctx[key] = _chem_deep_safe(value, skip)
     return ctx
+
+
+def _chem_deep_safe(value, skip):
+    """_chem_deep, leaving non-text objects and colour codes untouched."""
+    if isinstance(value, str):
+        return _chem(value)
+    if isinstance(value, dict):
+        return {k: (v if k in skip else _chem_deep_safe(v, skip))
+                for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_chem_deep_safe(v, skip) for v in value)
+    return value
 
 
 
@@ -159,6 +183,55 @@ def _verdict_fields(p, lang: str = "en") -> Dict:
         "verdict_edge": edge,
         "verdict_mark": mark,
     }
+
+
+
+# ---------------------------------------------------------------------------
+# Chemical formulas in rendered text
+#
+# The template normalises the fixed prose it carries, but narrative sentences,
+# verdict lines and conclusions are assembled here at render time and reach the
+# page through docxtpl placeholders — past the template's own normalisation. The
+# same rule is applied to them, so "SO2" written in a narrative string comes out
+# as SO₂ on the page like everything else.
+# ---------------------------------------------------------------------------
+_SUB_FORMULAS = (
+    ("PM2.5", "PM\u2082.\u2085"), ("PM10", "PM\u2081\u2080"),
+    ("H2SO4", "H\u2082SO\u2084"), ("H2S", "H\u2082S"),
+    ("SO3", "SO\u2083"), ("SO2", "SO\u2082"), ("NO2", "NO\u2082"),
+    ("NOx", "NO\u2093"), ("NOX", "NO\u2093"), ("CO2", "CO\u2082"),
+    ("O3", "O\u2083"),
+)
+_SUB_RE = re.compile(
+    r"(?<![A-Za-z0-9\u2080-\u2089])(" +
+    "|".join(re.escape(k) for k, _ in _SUB_FORMULAS) +
+    r")(?![A-Za-z0-9\u2080-\u2089]|\.[0-9])")
+_SUB_MAP = dict(_SUB_FORMULAS)
+
+
+def _chem(text):
+    """Subscript chemical formulas and correct the micro sign."""
+    if not isinstance(text, str) or not text:
+        return text
+    out = _SUB_RE.sub(lambda m: _SUB_MAP[m.group(1)], text)
+    return out.replace("ug/m", "\u00b5g/m")
+
+
+def _chem_deep(value):
+    """Apply _chem through the whole context — strings, lists and dicts alike.
+
+    Walking the finished context is what makes this complete. Applying it at
+    each of the several dozen places a sentence is built would leave whichever
+    one was missed reading differently from the rest, which is the state this
+    change exists to end.
+    """
+    if isinstance(value, str):
+        return _chem(value)
+    if isinstance(value, dict):
+        return {k: _chem_deep(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_chem_deep(v) for v in value)
+    return value
 
 
 def build_context(campaign: Campaign, summary: CampaignSummary,
