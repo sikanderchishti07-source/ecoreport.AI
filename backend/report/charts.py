@@ -8,6 +8,7 @@ log scale for CO charts.
 from __future__ import annotations
 
 import math
+import re
 import os
 from datetime import datetime
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -38,6 +39,41 @@ def _xy(readings: List[Reading], field: str) -> Tuple[List[datetime], List[Optio
     return xs, ys
 
 
+
+# ---------------------------------------------------------------------------
+# Chemical formulas in chart text
+#
+# Chart titles, axis labels and legends are rendered into the image, so they
+# cannot be corrected by the document template the way prose can. Left alone
+# they read "SO2" and "ug/m3" beside a caption saying SO₂ and µg/m³.
+#
+# DejaVu Sans — matplotlib's default — carries every subscript glyph used
+# here, so the characters are written directly rather than through mathtext,
+# which would change the typeface mid-label.
+# ---------------------------------------------------------------------------
+_CHART_FORMULAS = (
+    ("PM2.5", "PM\u2082.\u2085"), ("PM 2.5", "PM\u2082.\u2085"),
+    ("PM10", "PM\u2081\u2080"), ("H2S", "H\u2082S"),
+    ("SO2", "SO\u2082"), ("NO2", "NO\u2082"), ("NOX", "NO\u2093"),
+    ("NOx", "NO\u2093"), ("O3", "O\u2083"), ("CO2", "CO\u2082"),
+)
+_CHART_RE = re.compile(
+    r"(?<![A-Za-z0-9\u2080-\u2089])(" +
+    "|".join(re.escape(k) for k, _ in _CHART_FORMULAS) +
+    r")(?![A-Za-z0-9\u2080-\u2089]|\.[0-9])")
+_CHART_MAP = dict(_CHART_FORMULAS)
+
+
+def chem_label(text):
+    """Subscript formulas and correct units in a chart label."""
+    if not isinstance(text, str) or not text:
+        return text
+    out = _CHART_RE.sub(lambda m: _CHART_MAP[m.group(1)], text)
+    out = out.replace("ug/m3", "\u00b5g/m\u00b3").replace("ug/m", "\u00b5g/m")
+    # "(0C)" was a stand-in for the degree sign.
+    return out.replace("(0C)", "(\u00b0C)")
+
+
 def _has_valid(readings, field=None, values=None) -> bool:
     """True when at least one usable number exists for this series.
 
@@ -53,7 +89,7 @@ def _has_valid(readings, field=None, values=None) -> bool:
 
 
 def _fmt_axes(ax, ylabel: str):
-    ax.set_ylabel(ylabel, fontsize=9)
+    ax.set_ylabel(chem_label(ylabel), fontsize=9)
     ax.set_xlabel(X_LABEL, fontsize=9)
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%-m-%-d-%y %H:%M"))
     ax.tick_params(labelsize=8)
@@ -100,6 +136,8 @@ def timeseries_chart(
     if not log:
         T.gradient_under(ax, xn, [math.nan if v is None else v for v in ys])
     exceeded = T.exceedance_fill(ax, xn, ys, limit) if limit is not None else False
+    series_label = chem_label(series_label)
+    limit_label = chem_label(limit_label)
     T.series_line(ax, xs, ys, label=series_label)
     if limit is not None:
         T.limit_line(ax, limit, limit_label or "NCEC limit", xn, ys)
