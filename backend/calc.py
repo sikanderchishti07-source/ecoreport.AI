@@ -26,10 +26,13 @@ Governing rules (locked with the user):
 """
 from __future__ import annotations
 
+import logging
 import math
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
+
+log = logging.getLogger(__name__)
 
 from units_mdl import apply_mdl, mdl_map
 from models import (
@@ -534,6 +537,104 @@ def _period_sort_key(h: Optional[float]) -> int:
     return order.get(int(h) if h else -1, 3)  # None (annual) sorts last
 
 
+
+# ---------------------------------------------------------------------------
+# Barometric pressure units
+#
+# Analysers report barometric pressure in whatever unit their software was
+# configured for, and the file carries no unit with it. A station logging in
+# kilopascals produced "92.3" where the true value is 923 hPa, and the report
+# printed 92.3 hPa — a pressure found at about 16 km altitude. It looked like
+# an ordinary number and nothing flagged it.
+#
+# Unlike gas concentrations, atmospheric pressure at ground level cannot be
+# ambiguous. Every reading ever taken at the surface of the Earth lies
+# between roughly 870 hPa (the deepest recorded cyclone) and 1085 hPa (the
+# highest recorded anticyclone). Expressed in the three units in common use,
+# those bands do not overlap:
+#
+#     hPa / mbar   870 - 1085
+#     kPa           87 - 108.5
+#     inHg          25.7 - 32.0
+#
+# so the unit can be identified from the magnitude without guessing. A value
+# that falls in none of the bands is left exactly as recorded and reported as
+# suspect, because a number that cannot be interpreted must not be quietly
+# rewritten into one that can.
+# ---------------------------------------------------------------------------
+PRESSURE_BANDS = (
+    # (low, high, factor to hPa, unit name)
+    (870.0, 1085.0, 1.0, "hPa"),
+    (87.0, 108.5, 10.0, "kPa"),
+    (25.7, 32.0, 33.8639, "inHg"),
+)
+
+
+def detect_pressure_unit(values: Sequence[float]) -> Optional[Tuple[float, str]]:
+    """Identify the unit of a set of barometric pressure readings.
+
+    Returns (factor to hPa, unit name), or None where the readings do not sit
+    within any plausible band. The median is used rather than the mean so a
+    single spurious reading cannot move the decision.
+    """
+    usable = sorted(v for v in values if v is not None)
+    if not usable:
+        return None
+    mid = usable[len(usable) // 2]
+    for low, high, factor, name in PRESSURE_BANDS:
+        if low <= mid <= high:
+            return factor, name
+    return None
+
+
+def normalise_pressure(values: Sequence[float]) -> Tuple[List[float], Optional[str]]:
+    """Convert barometric pressure readings to hPa.
+
+    Returns the converted values and the unit they were recorded in, or None
+    for that unit where no conversion was applied.
+    """
+    detected = detect_pressure_unit(values)
+    if detected is None:
+        lo = min((v for v in values if v is not None), default=None)
+        hi = max((v for v in values if v is not None), default=None)
+        if lo is not None:
+            log.warning(
+                "Barometric pressure readings (%s to %s) match no recognised "
+                "unit. They are reported exactly as recorded and should be "
+                "checked against the analyser configuration before issue.",
+                lo, hi)
+        return list(values), None
+    factor, name = detected
+    converted = ([None if v is None else v * factor for v in values]
+                 if factor != 1.0 else list(values))
+
+    # A reading that is not in the file's own unit — a logging glitch, or a
+    # unit changed part-way through a run — becomes absurd once the file's
+    # factor is applied to it. One stray 1013 in a kilopascal file converts
+    # to 10130 hPa and, being the largest number present, becomes the
+    # reported maximum. Anything that cannot be a surface pressure after
+    # conversion is excluded from the statistics rather than carried into
+    # them; it is counted and reported, never silently corrected to
+    # something plausible.
+    low, high = PRESSURE_BANDS[0][0], PRESSURE_BANDS[0][1]
+    kept, dropped = [], 0
+    for v in converted:
+        if v is None or low <= v <= high:
+            kept.append(v)
+        else:
+            dropped += 1
+    if dropped:
+        log.warning(
+            "%d barometric pressure reading(s) fall outside the range of a "
+            "surface measurement (%g-%g hPa) once the recorded unit was "
+            "applied, and were excluded from the pressure statistics.",
+            dropped, low, high)
+    if factor != 1.0:
+        log.info("Barometric pressure recorded in %s; converted to hPa for "
+                 "reporting (x%g).", name, factor)
+    return kept, (name if factor != 1.0 else None)
+
+
 def _meteorology_summary(readings: List[Reading], monitored_hours: int,
                          slots: Optional[int] = None) -> MeteorologySummary:
     denom = slots or monitored_hours
@@ -546,7 +647,12 @@ def _meteorology_summary(readings: List[Reading], monitored_hours: int,
 
     t_cap, t_max, t_min, t_mean, _ = stats("Temp")
     rh_cap, rh_max, rh_min, rh_mean, _ = stats("RH")
-    p_cap, p_max, p_min, p_mean, _ = stats("Pressure")
+    # Pressure is normalised to hPa before any statistic is taken, so the
+    # maximum, the minimum and the mean are all in the unit the report says
+    # they are in.
+    p_cap, _, _, _, p_vals_raw = stats("Pressure")
+    p_vals, p_recorded_unit = normalise_pressure(p_vals_raw)
+    p_max, p_min, p_mean = _maxminmean(p_vals)
     ws_cap, ws_max, ws_min, ws_mean, _ = stats("WindSpeed")
     wd_vals = [v for v in (_effective(r, "WindDirection") for r in readings) if v is not None]
     wd_cap = min((len(wd_vals) / denom * 100.0) if denom else 0.0, 100.0)
