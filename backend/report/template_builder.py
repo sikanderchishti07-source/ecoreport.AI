@@ -8,6 +8,8 @@ Rebuild any time with:  python -m report.template_builder
 """
 from __future__ import annotations
 
+import re
+
 import os
 
 from docx import Document
@@ -69,6 +71,70 @@ _DARK_FILLS = {NAVY_FILL, BLUE_FILL}
 # ---------------------------------------------------------------------------
 # Low-level helpers
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Chemical formulas and units
+#
+# Formulas were written as plain text throughout — "SO2", "PM2.5", "H2S" —
+# while a handful of places used proper subscripts. The result was a document
+# that disagreed with itself: "Table 7 - Summary of SO₂ Results" three lines
+# above "Figure 2 - SO2 Hourly Concentration". The same happened to the micro
+# sign, with "ug/m³" in 34 places and "µg/m³" in 52.
+#
+# Rather than hand-correct every literal, text is normalised as it enters the
+# document. One function, applied at the point of writing, so a formula typed
+# either way in the source comes out the same on the page.
+#
+# The replacements are anchored on word boundaries. Without that, "NO2" inside
+# "H2SO4" or a serial number would be rewritten, and a report is not the place
+# to discover that.
+# ---------------------------------------------------------------------------
+SUB = str.maketrans("0123456789.", "\u2080\u2081\u2082\u2083\u2084"
+                                   "\u2085\u2086\u2087\u2088\u2089.")
+
+FORMULAS = (
+    # longest first, so PM2.5 is matched before PM2
+    ("PM2.5", "PM\u2082.\u2085"),
+    ("PM10",  "PM\u2081\u2080"),
+    ("H2SO4", "H\u2082SO\u2084"),
+    ("H2S",   "H\u2082S"),
+    ("SO3",   "SO\u2083"),
+    ("SO2",   "SO\u2082"),
+    ("NO2",   "NO\u2082"),
+    ("NOx",   "NO\u2093"),
+    ("NOX",   "NO\u2093"),
+    ("CO2",   "CO\u2082"),
+    ("O3",    "O\u2083"),
+)
+
+_FORMULA_RE = re.compile(
+    r"(?<![A-Za-z0-9\u2080-\u2089])(" +
+    "|".join(re.escape(k) for k, _ in FORMULAS) +
+    r")(?![A-Za-z0-9\u2080-\u2089]|\.[0-9])")
+_FORMULA_MAP = dict(FORMULAS)
+
+
+def chem(text):
+    """Normalise chemical formulas and the micro sign in a run of text.
+
+    Applied to everything written into the document, so a formula typed as
+    "SO2" or "SO₂" in the source reads the same on the page. Values that are
+    not text — a docxtpl placeholder is still text, but numbers are not —
+    pass through untouched.
+    """
+    if not isinstance(text, str) or not text:
+        return text
+    # A Jinja placeholder must survive verbatim: "{{ so2.h_max }}" contains
+    # no formula token by these rules, but guarding is cheaper than trusting
+    # the regex to stay correct if the placeholders are ever renamed.
+    if "{{" in text or "{%" in text:
+        return text.replace("ug/m", "\u00b5g/m")
+    out = _FORMULA_RE.sub(lambda m: _FORMULA_MAP[m.group(1)], text)
+    # The micro sign, not a lower-case u. U+00B5 is what the regulation and
+    # every certificate use.
+    return out.replace("ug/m", "\u00b5g/m").replace("um)", "\u00b5m)")
+
+
 def _field(paragraph, instr: str, cached: str = " "):
     """Insert a Word field (TOC, PAGE, SEQ...) into a paragraph.
 
@@ -233,7 +299,7 @@ def _cell_text(cell, text, bold=False, size=10, align="left", italic=False):
     p.alignment = {"left": WD_ALIGN_PARAGRAPH.LEFT,
                    "center": WD_ALIGN_PARAGRAPH.CENTER,
                    "right": WD_ALIGN_PARAGRAPH.RIGHT}[align]
-    run = p.add_run(text)
+    run = p.add_run(chem(text))
     run.bold = bold
     run.italic = italic
     run.font.size = Pt(size)
@@ -256,7 +322,7 @@ def _p(doc, text="", size=12, bold=False, italic=False, align="left",
                    "justify": WD_ALIGN_PARAGRAPH.JUSTIFY}[align]
     p.paragraph_format.space_after = Pt(space_after)
     if text:
-        r = p.add_run(text)
+        r = p.add_run(chem(text))
         r.bold = bold
         r.italic = italic
         r.font.size = Pt(size)
@@ -285,11 +351,11 @@ def _heading(doc, text, level=1):
             r0 = p.add_run(num.rstrip(".") + "   ")
             r0.font.color.rgb = WHITE
             r0.bold = True
-            r1 = p.add_run(rest)
+            r1 = p.add_run(chem(rest))
             r1.bold = True
             r1.font.color.rgb = WHITE
         else:
-            r0 = p.add_run(text)
+            r0 = p.add_run(chem(text))
             r0.bold = True
             r0.font.color.rgb = WHITE
         pPr = p._p.get_or_add_pPr()
@@ -307,7 +373,7 @@ def _heading(doc, text, level=1):
         ind.set(qn("w:right"), "-40")
         pPr.append(ind)
     else:
-        p.add_run(text).bold = True
+        p.add_run(chem(text)).bold = True
     return p
 
 
@@ -335,7 +401,7 @@ def _caption(doc, kind: str, text: str):
         run.font.size = Pt(10)
         run.bold = True
         run.italic = False
-    r2 = p.add_run(f" \u2014 {text}")
+    r2 = p.add_run(chem(f" \u2014 {text}"))
     r2.bold = True
     r2.font.size = Pt(10)
     r2.font.color.rgb = DARK
@@ -1376,7 +1442,7 @@ def build(out_path: str = OUT) -> str:
               "Particulate matter with aerodynamic diameters less than 2.5 microns (PM2.5),",
               "Sulfur dioxide (SO₂).", "Hydrogen Sulfide (H₂S).",
               "Oxides of Nitrogen (NO2).", "Ozone (O3).", "Carbon Monoxide (CO)."]:
-        doc.add_paragraph(b, style="List Bullet")
+        doc.add_paragraph(chem(b), style="List Bullet")
     _p(doc, "In addition, meteorological data for wind speed, wind direction, ambient "
             "temperature, relative humidity, and barometric pressure were also "
             "measured.", align="justify")
@@ -1545,17 +1611,17 @@ def build(out_path: str = OUT) -> str:
               "Observations at other sites", "Audits and inter-laboratory comparisons",
               "Instrument performance history", "Calibration drift",
               "Site characteristics", "Meteorology", "Exceptional events"]:
-        doc.add_paragraph(b, style="List Bullet")
+        doc.add_paragraph(chem(b), style="List Bullet")
     _p(doc, "Visual Data Review: Time Series are visually inspected for the below:")
     for b in ["Jumps, dips.", "Periodicity of peaks", "Calibration gas, carryover",
               "Expected diurnal pattern.", "Expected relationships.",
               "High concentrations of less abundant species or low concentrations "
               "of more abundant species"]:
-        doc.add_paragraph(b, style="List Bullet")
+        doc.add_paragraph(chem(b), style="List Bullet")
     _p(doc, "Data is put into perspective of:")
     for b in ["Local, regional, or national averages", "Trends over time",
               "Comparison to nearby sites, similar areas", "Detection limits"]:
-        doc.add_paragraph(b, style="List Bullet")
+        doc.add_paragraph(chem(b), style="List Bullet")
     _heading(doc, "2.5.4 Reporting", 3)
     _p(doc, "The reported data is provided in a Microsoft Excel spreadsheet. The "
             "data contained in these reports is based on Kingdom of Saudi Arabia "
