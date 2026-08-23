@@ -253,7 +253,9 @@ export const portalView = (token) =>
   api.get(`/portal/${token}`).then((r) => r.data);
 export const portalDownloadUrl = (token, reportId) =>
   `${API_BASE}/portal/${token}/reports/${reportId}`;
-export const shareUrl = (token) => `${window.location.origin}/share/${token}`;
+// The short path for a short code. Links already issued use /share/ and that
+// route is still mounted, so nothing in a client's inbox stops working.
+export const shareUrl = (token) => `${window.location.origin}/r/${token}`;
 
 
 // Calibration certificates held against a mobile lab
@@ -407,18 +409,6 @@ export const ingestResultsCsv = (campaignId, file, addParametersToScope = true) 
   return api.post(`/campaigns/${campaignId}/results-csv`, fd, {
     params: { add_parameters_to_scope: addParametersToScope },
     headers: { "Content-Type": "multipart/form-data" }, timeout: 120000,
-  }).then((r) => r.data);
-};
-
-// The laboratory's own Certificate of Analysis workbook — one sheet per
-// sample, in the format they already produce for every job. Nothing is
-// retyped or reshaped.
-export const ingestResultsCoa = (campaignId, file, addParametersToScope = true) => {
-  const fd = new FormData();
-  fd.append("file", file);
-  return api.post(`/campaigns/${campaignId}/results-coa`, fd, {
-    params: { add_parameters_to_scope: addParametersToScope },
-    headers: { "Content-Type": "multipart/form-data" }, timeout: 180000,
   }).then((r) => r.data);
 };
 
