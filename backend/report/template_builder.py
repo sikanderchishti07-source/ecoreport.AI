@@ -64,7 +64,16 @@ CALLOUT_FILL = "EEF4FA"      # key-finding panel
 CALLOUT_EDGE = "1F6FB2"
 RULE_GREY = "D9E1E8"
 MUTED_GREY = RGBColor(0x6B, 0x6B, 0x6B)
-GRAY_FILL = NAVY_FILL   # legacy alias: all header cells now use the navy fill
+# Every table header cell, in every table. Deliberately one value with no
+# exception for the compliance matrix: that table already marks an exceedance
+# with a red row, which is far stronger than a header shade, and a table
+# header darker than every other would read as meaning something it does not.
+# Colour carries information here — navy for a section boundary, blue for a
+# table header, red only where something failed.
+#
+# White text on this blue is a contrast ratio of 5.3 to 1, above the 4.5
+# threshold, so the header survives printing and photocopying.
+GRAY_FILL = BLUE_FILL   # legacy alias, kept so callers need not change
 _DARK_FILLS = {NAVY_FILL, BLUE_FILL}
 
 
@@ -362,7 +371,11 @@ def _heading(doc, text, level=1):
         shd = OxmlElement("w:shd")
         shd.set(qn("w:val"), "clear")
         shd.set(qn("w:color"), "auto")
-        shd.set(qn("w:fill"), BLUE_FILL)
+        # The darker of the two blues. A section heading sits above every
+        # table it introduces, so it should carry the stronger colour; with
+        # the heading lighter than the table header beneath it, the page read
+        # upside down.
+        shd.set(qn("w:fill"), NAVY_FILL)
         pPr.append(shd)
         # The bar needs breathing room inside itself, and a hair of indent so
         # the text is not flush against the shaded edge.
