@@ -78,7 +78,7 @@ def compliance_rows(summary, lang: str = "en") -> List[Dict]:
         if insufficient:
             status, verdict = "nr", ("غير قابل للإبلاغ" if ar else "NOT REPORTABLE")
         elif exceeded:
-            status, verdict = "bad", ("تجاوز" if ar else "EXCEEDANCE")
+            status, verdict = "bad", ("تجاوز" if ar else "EXCEEDED")
         elif above:
             status, verdict = "warn", ("للعلم فقط" if ar else "SEE NOTE")
         else:
@@ -89,6 +89,11 @@ def compliance_rows(summary, lang: str = "en") -> List[Dict]:
                       if e.averaging_period == "24 Hour"), None)
         rows.append({
             "status": status,
+            # Fill for the whole row, so an exceedance is shaded across the
+            # full width rather than distinguished only by the word in the
+            # final column.
+            "row_fill": {"ok": "FFFFFF", "bad": "FDECEA",
+                         "warn": "FFF7E6", "nr": "F3F4F6"}[status],
             "pollutant": DISPLAY.get(p.pollutant, p.pollutant),
             "hourly_max": _fmt(p.hourly_max),
             "rolling_8h": r8,
