@@ -78,7 +78,7 @@ DYN = {
                          "value(s) were below the MDL and were substituted "
                          "with half the MDL in the calculations, per USEPA "
                          "practice."),
-        "nr_footnote": ("*N/R: insufficient data — not reportable (data capture "
+        "nr_footnote": ("*N/R: insufficient data, not reportable (data capture "
                         "below 75% for this averaging period)."),
         "fn_noncompliant": ("*Exceedance(s) of the NCEC standard were recorded "
                             "for the {periods} averaging period(s)."),
@@ -160,7 +160,7 @@ DYN = {
                          "الساعية دون حد الكشف {n} قيمة، واستُبدلت بنصف حد "
                          "الكشف في الحسابات وفقاً لممارسات وكالة حماية البيئة "
                          "الأمريكية."),
-        "nr_footnote": ("*N/R: بيانات غير كافية — غير قابلة للإبلاغ (نسبة التقاط "
+        "nr_footnote": ("*N/R: بيانات غير كافية، غير قابلة للإبلاغ (نسبة التقاط "
                         "البيانات أقل من 75% لفترة المتوسط هذه)."),
         "fn_noncompliant": ("*سُجلت تجاوزات لمعيار NCEC لفترة (فترات) المتوسط: "
                             "{periods}."),
