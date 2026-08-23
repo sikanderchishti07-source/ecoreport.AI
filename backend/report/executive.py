@@ -29,7 +29,7 @@ COMPASS_16 = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
               "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
 
 DISPLAY = {"SO2": "SO₂", "NO2": "NO₂", "NOx": "NOₓ", "NO": "NO", "CO": "CO",
-           "O3": "O₃", "H2S": "H₂S", "PM10": "PM10", "PM25": "PM2.5"}
+           "O3": "O₃", "H2S": "H₂S", "PM10": "PM₁₀", "PM25": "PM₂.₅"}
 
 # Default expanded uncertainty from the gas calibration certificates
 DEFAULT_UNCERTAINTY = "±2% (k = 2, approximately 95% confidence)"
