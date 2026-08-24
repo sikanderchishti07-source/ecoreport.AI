@@ -318,13 +318,23 @@ def wind_rose_chart(
             fontsize=7.4, color="white", fontweight="bold", zorder=7,
             linespacing=1.2)
 
-    prevailing = COMPASS_16[int(np.argmax(stacked))] if stacked.max() else "\u2014"
+    # The same rule the tables and the conclusions use, rather than a third
+    # independent argmax. This line is what labelled the figure "prevailing N"
+    # while the conclusions three pages later said NNW: argmax silently
+    # returns the first index on a tie, and N and NNW were tied at 37.5%.
+    from calc import prevailing_label
+    prevailing = prevailing_label(
+        {d: int(v) for d, v in zip(COMPASS_16, stacked)}) or "\u2014"
+    # The arrow marks the leading sector. Where sectors tie, all of them are
+    # marked: an arrow over one of two equal sectors asserts a difference
+    # that is not in the data.
     if stacked.max():
-        pi = int(np.argmax(stacked))
-        ax.annotate("", xy=(th[pi], top * 1.02 + hole),
-                    xytext=(th[pi], top * 1.10 + hole),
-                    arrowprops=dict(arrowstyle="-|>", color=RED, lw=2.2),
-                    zorder=8)
+        peak = stacked.max()
+        for pi in [i for i, v in enumerate(stacked) if v == peak]:
+            ax.annotate("", xy=(th[pi], top * 1.02 + hole),
+                        xytext=(th[pi], top * 1.10 + hole),
+                        arrowprops=dict(arrowstyle="-|>", color=RED, lw=2.2),
+                        zorder=8)
 
     for lbl, ang in (("N", 0), ("NE", 45), ("E", 90), ("SE", 135),
                      ("S", 180), ("SW", 225), ("W", 270), ("NW", 315)):
