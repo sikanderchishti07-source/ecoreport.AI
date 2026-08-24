@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -112,6 +112,67 @@ def _compass_bin(degrees: float) -> str:
     deg = degrees % 360
     idx = int(round(deg / 22.5)) % 16
     return COMPASS_16[idx]
+
+
+
+# ---------------------------------------------------------------------------
+# Prevailing wind direction
+#
+# This was computed in two places by two different rules, and the two
+# disagreed inside the same document: the wind rose figure was labelled
+# "prevailing N" while the conclusions three pages later said NNW. One path
+# counted every direction reading; the other counted only those that fell
+# into a speed class, excluding air below the lowest bin.
+#
+# One rule now, used by both. Calms are excluded, because a vane reading
+# taken in near-still air records where the vane happened to be pointing
+# rather than where the wind was coming from, and including that noise moves
+# the answer.
+#
+# The tie matters more than it looks. On the survey that exposed this, N and
+# NNW were both at exactly 37.5%, and the winner was whichever sector
+# happened to appear first in the file — so the same data in a different row
+# order gave a different prevailing direction. A wind rose is how a client
+# decides whether a source sits upwind of a receptor, and "it depends on the
+# row order" is not an answer. Where sectors genuinely tie, the report says
+# so.
+#
+# Note on convention: a bearing here is the direction the wind blows FROM,
+# which is the meteorological standard and what the USEPA and NCEC methods
+# require. A north wind comes from the north. Reported the other way round
+# every direction in the report is 180 degrees out, and the error is
+# invisible unless someone checks it against the site.
+# ---------------------------------------------------------------------------
+def prevailing_direction(counts: Dict[str, int]) -> Optional[str]:
+    """The most frequent compass sector, or None where none stands alone.
+
+    Returns None on an empty set and on a tie, so a caller has to decide what
+    to print rather than being handed an arbitrary winner.
+    """
+    if not counts or not any(counts.values()):
+        return None
+    top = max(counts.values())
+    leaders = [d for d in COMPASS_16 if counts.get(d, 0) == top]
+    return leaders[0] if len(leaders) == 1 else None
+
+
+def prevailing_label(counts: Dict[str, int]) -> Optional[str]:
+    """The prevailing direction as it should be printed.
+
+    A single winner prints as itself. Two or three sectors sharing the lead
+    print as all of them, because that is what the data says.
+    """
+    if not counts or not any(counts.values()):
+        return None
+    top = max(counts.values())
+    leaders = [d for d in COMPASS_16 if counts.get(d, 0) == top]
+    if len(leaders) == 1:
+        return leaders[0]
+    if len(leaders) > 3:
+        # More sectors than that sharing a lead means no prevailing direction
+        # worth naming, not a list four items long.
+        return None
+    return " and ".join([", ".join(leaders[:-1]), leaders[-1]])
 
 
 def _speed_class(ws: float, bins: List[WindClassBin]) -> Optional[str]:
@@ -636,7 +697,9 @@ def normalise_pressure(values: Sequence[float]) -> Tuple[List[float], Optional[s
 
 
 def _meteorology_summary(readings: List[Reading], monitored_hours: int,
-                         slots: Optional[int] = None) -> MeteorologySummary:
+                         slots: Optional[int] = None,
+                         wind_rose: Optional[WindRoseSummary] = None
+                         ) -> MeteorologySummary:
     denom = slots or monitored_hours
 
     def stats(field: str):
@@ -656,10 +719,10 @@ def _meteorology_summary(readings: List[Reading], monitored_hours: int,
     ws_cap, ws_max, ws_min, ws_mean, _ = stats("WindSpeed")
     wd_vals = [v for v in (_effective(r, "WindDirection") for r in readings) if v is not None]
     wd_cap = min((len(wd_vals) / denom * 100.0) if denom else 0.0, 100.0)
-    prevailing = None
-    if wd_vals:
-        counts = Counter(_compass_bin(d) for d in wd_vals)
-        prevailing = counts.most_common(1)[0][0]
+    # Taken from the wind rose rather than counted again here. Two independent
+    # counts of the same thing is how the figure came to be labelled
+    # "prevailing N" while the conclusions said NNW.
+    prevailing = wind_rose.prevailing_direction if wind_rose else None
 
     return MeteorologySummary(
         monitoring_hours=monitored_hours,
@@ -717,11 +780,10 @@ def _wind_rose_summary(
         k: ((v / total_valid * 100.0) if total_valid else 0.0)
         for k, v in class_totals.items()
     }
-    prevailing = (
-        max(direction_rows, key=lambda r: r.total).direction
-        if (direction_rows and total_valid)
-        else None
-    )
+    # Counts per sector, excluding anything that did not fall into a speed
+    # class — which is what removes the calms.
+    sector_counts = {r.direction: r.total for r in direction_rows}
+    prevailing = prevailing_direction(sector_counts)
     mean_ws = (sum(ws for ws, _ in valid_pairs) / total_valid) if total_valid else None
 
     return WindRoseSummary(
@@ -840,8 +902,10 @@ def build_campaign_summary(
             slots=slots,
         ))
 
-    met = _meteorology_summary(readings, m_hours, slots=slots)
+    # The rose is built first: the meteorology summary takes its prevailing
+    # direction from it rather than counting the sectors a second time.
     wr = _wind_rose_summary(readings, campaign.wind_rose_bins, slots)
+    met = _meteorology_summary(readings, m_hours, slots=slots, wind_rose=wr)
 
     manually_flagged = sum(1 for r in readings if not r.valid)
     auto_flagged = sum(1 for r in readings if r.auto_flagged_fields)
