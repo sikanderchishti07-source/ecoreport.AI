@@ -381,7 +381,10 @@ def site_geometry_text(campaign, summary, lang: str = "en") -> Optional[str]:
     compass = COMPASS_16[int(round(bearing / 22.5)) % 16]
     dist = (f"{dist_km * 1000:,.0f} m" if dist_km < 1
             else f"{dist_km:,.1f} km")
-    prevailing = summary.wind_rose.prevailing_direction
+    # The printed form, so a tie reads as a tie rather than as one sector.
+    from calc import prevailing_label
+    prevailing = prevailing_label(
+        {r.direction: r.total for r in summary.wind_rose.direction_rows})
     if lang == "ar":
         ar_dist = (f"{dist_km * 1000:,.0f} متر" if dist_km < 1
                    else f"{dist_km:,.1f} كم")
