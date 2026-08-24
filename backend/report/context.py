@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 
+from calc import prevailing_label
+
 from typing import Dict, List, Optional
 
 from models import Campaign, CampaignSummary, PeriodEvaluation, PollutantEvaluation
@@ -232,6 +234,23 @@ def _chem_deep(value):
     if isinstance(value, (list, tuple)):
         return type(value)(_chem_deep(v) for v in value)
     return value
+
+
+
+def _prevailing_text(summary) -> str:
+    """The prevailing wind direction as it should be printed.
+
+    A single leading sector prints as itself. Two or three sharing the lead
+    print as all of them: on the survey that exposed this, N and NNW were both
+    at exactly 37.5% and the winner was decided by which appeared first in the
+    file. Naming one of a tie as the prevailing direction is a statement the
+    data does not support.
+    """
+    rose = getattr(summary, "wind_rose", None)
+    if rose is None:
+        return "\u2014"
+    counts = {r.direction: r.total for r in rose.direction_rows}
+    return prevailing_label(counts) or "no single prevailing direction"
 
 
 def build_context(campaign: Campaign, summary: CampaignSummary,
@@ -526,7 +545,9 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
             "ws_capture": fmt(met.wind_speed_capture_pct),
             "ws_max": fmt(met.wind_speed_max), "ws_min": fmt(met.wind_speed_min),
             "ws_mean": fmt(met.wind_speed_mean),
-            "prevailing": met.prevailing_wind_direction or "—",
+            # Where two sectors share the lead there is no single prevailing
+            # direction, and the label says so rather than naming one.
+            "prevailing": _prevailing_text(summary),
         },
         "met_conclusion_1": D["met1"].format(mx=fmt(met.temp_max),
                                              mn=fmt(met.temp_min)),
