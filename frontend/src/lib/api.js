@@ -443,3 +443,36 @@ export const generateSampleReport = async (campaignId, format = "docx") => {
     info: null,
   };
 };
+
+// --- Clients ---------------------------------------------------------------
+// A client record is optional. A campaign keeps the client name typed on it,
+// and gains a link only when someone makes one; reports fall back to the text
+// wherever no record exists.
+export const listClients = (params = {}) =>
+  api.get("/clients", { params }).then((r) => r.data);
+export const createClient = (payload) =>
+  api.post("/clients", payload).then((r) => r.data);
+export const updateClient = (id, payload) =>
+  api.put(`/clients/${id}`, payload).then((r) => r.data);
+export const deleteClient = (id) => api.delete(`/clients/${id}`);
+export const getClient = (id) => api.get(`/clients/${id}`).then((r) => r.data);
+export const clientCampaigns = (id) =>
+  api.get(`/clients/${id}/campaigns`).then((r) => r.data);
+
+// Client names typed on campaigns that have no record behind them, with the
+// record each one probably means.
+export const listClientSuggestions = () =>
+  api.get("/clients/suggestions").then((r) => r.data);
+
+// Adopt a spelling as an alias and link every campaign that uses it.
+export const absorbSpelling = (clientId, text) =>
+  api.post(`/clients/${clientId}/absorb`,
+           { apply_to_matching_text: text }).then((r) => r.data);
+
+// Link or unlink one campaign. Passing applyToMatchingText links every other
+// campaign carrying the same client text in the same action.
+export const linkCampaignClient = (campaignId, clientId, applyToMatchingText) =>
+  api.post(`/clients/link/${campaignId}`, {
+    client_id: clientId,
+    apply_to_matching_text: applyToMatchingText || null,
+  }).then((r) => r.data);
