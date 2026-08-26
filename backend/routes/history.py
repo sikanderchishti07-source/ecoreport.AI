@@ -83,7 +83,11 @@ async def download_report(report_id: str,
     media = ("application/pdf" if doc.get("format") == "pdf" else
              "application/vnd.openxmlformats-officedocument"
              ".wordprocessingml.document")
-    return FileResponse(path, media_type=media, filename=doc["filename"])
+    # The readable name where the record carries one. Reports generated
+    # before this existed have only the stored name, so that is the
+    # fallback and nothing in the archive becomes undownloadable.
+    return FileResponse(path, media_type=media,
+                        filename=doc.get("download_name") or doc["filename"])
 
 
 

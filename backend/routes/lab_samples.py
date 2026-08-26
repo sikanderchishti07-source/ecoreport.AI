@@ -46,6 +46,7 @@ import soil_water_limits as L
 from audit import audit
 from auth import current_user, current_username
 from db import db, from_mongo, to_mongo
+from report_filename import report_filename
 from sample_models import (
     MEDIUM_LABELS,
     MEDIUM_REPORT_TITLES,
@@ -996,6 +997,11 @@ async def create_sample_report(campaign_id: str, format: str = "docx",
     label = MEDIUM_LABELS.get(settings.medium, "Sample")
     fname = (f"{label}_Report_{campaign_id[:8]}_v{version:03d}_en_"
              f"{stamp}.docx")
+    # The readable name the browser saves. The stored file keeps its unique
+    # form so nothing already archived can be overwritten.
+    download_name = report_filename(campaign, kind=settings.medium,
+                                    version=version, lang="en", fmt="docx",
+                                    client_name=campaign.client)
     out_path = os.path.join(out_dir, fname)
     charts_dir = os.path.join(out_dir, "charts")
 
@@ -1046,6 +1052,7 @@ async def create_sample_report(campaign_id: str, format: str = "docx",
         if format == "pdf":
             out_path = await run_in_threadpool(convert_to_pdf, out_path)
             fname = os.path.basename(out_path)
+            download_name = download_name.rsplit(".", 1)[0] + ".pdf"
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -1064,6 +1071,10 @@ async def create_sample_report(campaign_id: str, format: str = "docx",
         "project_name": campaign.project_name,
         "version": version,
         "filename": fname,
+        # The readable name. Kept on the record so the archive and the
+        # client portal offer the same name the generator did, without
+        # having to rebuild it from a campaign that may since have changed.
+        "download_name": download_name,
         "path": out_path,
         "lang": "en",
         "format": format,
@@ -1075,6 +1086,10 @@ async def create_sample_report(campaign_id: str, format: str = "docx",
     await audit("report.generate", "report", report_id, x_user,
                 {"campaign_id": campaign_id, "version": version,
                  "format": format, "filename": fname,
+        # The readable name. Kept on the record so the archive and the
+        # client portal offer the same name the generator did, without
+        # having to rebuild it from a campaign that may since have changed.
+        "download_name": download_name,
                  "type": f"soil_water:{settings.medium}",
                  "exceedances": summary.total_exceedances})
 
@@ -1083,6 +1098,10 @@ async def create_sample_report(campaign_id: str, format: str = "docx",
     if user.get("role") != "admin":
         return JSONResponse({
             "download": False, "report_id": report_id, "filename": fname,
+        # The readable name. Kept on the record so the archive and the
+        # client portal offer the same name the generator did, without
+        # having to rebuild it from a campaign that may since have changed.
+        "download_name": download_name,
             "version": version, "format": format, "lang": "en",
             "size_bytes": os.path.getsize(out_path),
             "detail": ("Report generated. Downloads are handled by the "
@@ -1091,4 +1110,5 @@ async def create_sample_report(campaign_id: str, format: str = "docx",
     media = ("application/pdf" if format == "pdf" else
              "application/vnd.openxmlformats-officedocument"
              ".wordprocessingml.document")
-    return FileResponse(out_path, media_type=media, filename=fname)
+    return FileResponse(out_path, media_type=media,
+                        filename=download_name)

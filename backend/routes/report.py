@@ -210,6 +210,10 @@ async def create_report(campaign_id: str, lang: str = "en",
         raise HTTPException(status_code=404, detail="Campaign not found")
     campaign = Campaign(**campaign_doc)
     await resolve_client_name(campaign)
+    # After resolution this is the recorded legal name where the campaign is
+    # linked to a client, and the typed text where it is not, so the saved
+    # file is named the same way the report itself is.
+    resolved_client = campaign.client
 
     # The number is allocated here, at the first report, and not when the
     # campaign was created: the date inside it is the issue date, and a
@@ -265,7 +269,13 @@ async def create_report(campaign_id: str, lang: str = "en",
     version = await db.report_logs.count_documents(
         {"campaign_id": campaign_id}) + 1
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    # Two names. The stored file keeps its unique form so a redeploy or a
+    # second generation in the same second cannot overwrite an archived
+    # report; `download_name` is what the browser is told to save it as.
     fname = f"AAQ_Report_{campaign_id[:8]}_v{version:03d}_{lang}_{ts}.docx"
+    download_name = report_filename(campaign, kind="air", version=version,
+                                    lang=lang, fmt="docx",
+                                    client_name=resolved_client)
     out_path = os.path.join(REPORT_DIR, campaign_id, fname)
 
     # Attachments: field photos (Figure 2), certificates (Appendix 3),
@@ -370,6 +380,9 @@ async def create_report(campaign_id: str, lang: str = "en",
         if format == "pdf":
             out_path = await run_in_threadpool(convert_to_pdf, out_path)
             fname = os.path.basename(out_path)
+            # The extension changes with the file, so the download name has
+            # to follow it or a PDF is offered under a .docx name.
+            download_name = download_name.rsplit(".", 1)[0] + ".pdf"
     except Exception as exc:  # noqa: BLE001
         log.exception("report generation failed")
         raise HTTPException(status_code=500, detail=f"Report generation failed: {exc}")
@@ -386,6 +399,10 @@ async def create_report(campaign_id: str, lang: str = "en",
         "project_name": campaign.project_name,
         "version": version,
         "filename": fname,
+        # The readable name. Kept on the record so the archive and the
+        # client portal offer the same name the generator did, without
+        # having to rebuild it from a campaign that may since have changed.
+        "download_name": download_name,
         "path": out_path,
         "lang": lang,
         "format": format,
@@ -408,6 +425,10 @@ async def create_report(campaign_id: str, lang: str = "en",
             "download": False,
             "report_id": report_id,
             "filename": fname,
+        # The readable name. Kept on the record so the archive and the
+        # client portal offer the same name the generator did, without
+        # having to rebuild it from a campaign that may since have changed.
+        "download_name": download_name,
             "version": version,
             "format": format,
             "lang": lang,
@@ -420,7 +441,8 @@ async def create_report(campaign_id: str, lang: str = "en",
     media = ("application/pdf" if format == "pdf" else
              "application/vnd.openxmlformats-officedocument"
              ".wordprocessingml.document")
-    return FileResponse(out_path, media_type=media, filename=fname)
+    return FileResponse(out_path, media_type=media,
+                        filename=download_name)
 
 
 @router.get("/campaigns/{campaign_id}/reports")
@@ -443,6 +465,7 @@ async def preview_report(campaign_id: str):
         raise HTTPException(status_code=404, detail="Campaign not found")
     campaign = Campaign(**campaign_doc)
     await resolve_client_name(campaign)
+    resolved_client = campaign.client
 
     if getattr(campaign, "campaign_type", "air") == "noise":
         # The noise summary endpoint already says everything a pre-flight
@@ -605,6 +628,9 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     fname = (f"Noise_Report_{campaign_id[:8]}_v{version:03d}_"
              f"{lang}_{stamp}.docx")
+    download_name = report_filename(campaign, kind="noise", version=version,
+                                    lang=lang, fmt="docx",
+                                    client_name=resolved_client)
     out_path = os.path.join(out_dir, fname)
     charts_dir = os.path.join(out_dir, "charts")
 
@@ -706,6 +732,9 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
         if format == "pdf":
             out_path = await run_in_threadpool(convert_to_pdf, out_path)
             fname = os.path.basename(out_path)
+            # The extension changes with the file, so the download name has
+            # to follow it or a PDF is offered under a .docx name.
+            download_name = download_name.rsplit(".", 1)[0] + ".pdf"
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -724,6 +753,10 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
         "project_name": campaign.project_name,
         "version": version,
         "filename": fname,
+        # The readable name. Kept on the record so the archive and the
+        # client portal offer the same name the generator did, without
+        # having to rebuild it from a campaign that may since have changed.
+        "download_name": download_name,
         "path": out_path,
         "lang": lang,
         "format": format,
@@ -735,11 +768,19 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
     await audit("report.generate", "report", report_id, x_user,
                 {"campaign_id": campaign_id, "version": version,
                  "lang": lang, "format": format, "filename": fname,
+        # The readable name. Kept on the record so the archive and the
+        # client portal offer the same name the generator did, without
+        # having to rebuild it from a campaign that may since have changed.
+        "download_name": download_name,
                  "type": "noise"})
 
     if user.get("role") != "admin":
         return JSONResponse({
             "download": False, "report_id": report_id, "filename": fname,
+        # The readable name. Kept on the record so the archive and the
+        # client portal offer the same name the generator did, without
+        # having to rebuild it from a campaign that may since have changed.
+        "download_name": download_name,
             "version": version, "format": format, "lang": lang,
             "size_bytes": os.path.getsize(out_path),
             "detail": ("Report generated. Downloads are handled by the "
@@ -748,4 +789,5 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
     media = ("application/pdf" if format == "pdf" else
              "application/vnd.openxmlformats-officedocument"
              ".wordprocessingml.document")
-    return FileResponse(out_path, media_type=media, filename=fname)
+    return FileResponse(out_path, media_type=media,
+                        filename=download_name)
