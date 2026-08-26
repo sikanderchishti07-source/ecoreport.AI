@@ -72,7 +72,11 @@ async def health() -> dict:
 # only purpose is to fail will eventually be found by someone who does not
 # know that.
 # ---------------------------------------------------------------------------
-@api.get("/_sentry-check", dependencies=[Depends(current_user)])
+# No login guard. The browser's session lives in the application, not on the
+# backend's own address, so visiting this URL directly arrives anonymous and
+# was refused before it could raise. It takes no input, touches no data and
+# returns nothing but the error it exists to raise.
+@api.get("/_sentry-check")
 async def sentry_check() -> dict:
     raise RuntimeError(
         "Sentry check: this error was raised on purpose to confirm error "
