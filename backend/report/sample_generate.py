@@ -531,8 +531,12 @@ def generate_sample_report(campaign, settings, samples, summary,
     ftr = body.footer
     ftr.is_linked_to_previous = False
     fp = _tight(ftr.paragraphs[0], 0, 0)
-    r = fp.add_run("CONFIDENTIAL \u00b7 Bander Said Allehiany for "
-                   "Environmental Consultancy")
+    # Derived from the campaign, so a soil or water report reissued from an
+    # older campaign carries the entity that issued it, exactly as the air
+    # and noise reports do.
+    from report.context import provider_legal_name
+    r = fp.add_run("CONFIDENTIAL  |  "
+                   + provider_legal_name(getattr(campaign, "provider", "")))
     r.font.size = Pt(7)
     r.font.color.rgb = MUT
     fp2 = _tight(ftr.add_paragraph(), 0, 0)
@@ -606,7 +610,7 @@ def generate_sample_report(campaign, settings, samples, summary,
     doc.add_page_break()
     _heading(doc, "1. Introduction", 1)
     _body(doc,
-          f"Bander Said Allehiany for Environmental Consultancy was "
+          f"{provider_legal_name(getattr(campaign, 'provider', ''))} was "
           f"appointed by {campaign.client or 'the client'} to undertake "
           f"{medium} quality monitoring at "
           f"{campaign.site_name or campaign.project_name or 'the site'}. "
