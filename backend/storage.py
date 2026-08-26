@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import tempfile
 from typing import Optional
 
@@ -85,3 +86,48 @@ def fetch_report(report_doc: dict) -> Optional[str]:
         except Exception:  # noqa: BLE001
             log.exception("S3 download failed for %s", key)
     return None
+
+
+def delete_report(report_doc: dict) -> dict:
+    """Remove a stored report's file, from disk and from the bucket.
+
+    Returns what was actually removed rather than raising. A file that has
+    already gone — a redeploy wiped local disk, or the bucket object was
+    removed by hand — is not an error worth blocking a deletion over: the
+    record is being deleted precisely because it is no longer wanted, and
+    refusing because the file is already absent would leave the archive
+    holding a row pointing at nothing.
+    """
+    out = {"local": False, "s3": False, "errors": []}
+
+    path = report_doc.get("path")
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+            out["local"] = True
+        except OSError as exc:
+            out["errors"].append(f"local: {exc}")
+
+    key = report_doc.get("s3_key")
+    if key and s3_enabled():
+        try:
+            _s3().delete_object(Bucket=S3_BUCKET, Key=key)
+            out["s3"] = True
+        except Exception as exc:  # noqa: BLE001
+            out["errors"].append(f"s3: {exc}")
+
+    # The on-screen reader caches a rendered page image per report. Left
+    # behind, those outlive the report they belong to and quietly fill the
+    # disk with pages of documents nobody can open any more.
+    cache = os.path.join(
+        os.environ.get("REPORT_DIR",
+                       os.path.join(tempfile.gettempdir(),
+                                    "ecoreport_reports")),
+        "_pages", str(report_doc.get("id", "")))
+    if report_doc.get("id") and os.path.isdir(cache):
+        try:
+            shutil.rmtree(cache)
+        except OSError as exc:
+            out["errors"].append(f"cache: {exc}")
+
+    return out
