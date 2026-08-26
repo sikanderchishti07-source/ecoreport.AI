@@ -93,6 +93,11 @@ export default function ReportsPanel({ campaignId, readingCount,
   const isNoise = campaignType === "noise";
   const [lang, setLang] = useState("en");
   const [format, setFormat] = useState("docx");
+  // The issue date. Defaults to today, because generating is issuing and
+  // that is nearly always the answer; changed only when a report is dated
+  // differently from the day it happens to be produced.
+  const [reportingDate, setReportingDate] = useState(
+    () => new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [recipient, setRecipient] = useState("");
@@ -212,7 +217,7 @@ export default function ReportsPanel({ campaignId, readingCount,
     const label = `${LANGS.find((l) => l.value === lang)?.label} ${format.toUpperCase()}`;
     toast.info(`Generating ${label} report — this can take a minute…`);
     try {
-      const out = await generateReport(campaignId, lang, format);
+      const out = await generateReport(campaignId, lang, format, reportingDate);
       if (out.downloaded) {
         toast.success(`Report ready: ${out.filename}`);
       } else {
@@ -273,6 +278,19 @@ export default function ReportsPanel({ campaignId, readingCount,
               ))}
             </SelectContent>
           </Select>
+          <label className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              Issue date
+            </span>
+            <Input
+              type="date"
+              value={reportingDate}
+              onChange={(e) => setReportingDate(e.target.value)}
+              className="rounded-sm h-9 w-[160px] font-mono"
+              title="Printed on the cover and in the document control table,
+and encoded in the report number."
+            />
+          </label>
           {!isNoise && (
           <Button
             variant="outline"
