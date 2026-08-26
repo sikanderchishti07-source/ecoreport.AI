@@ -501,3 +501,12 @@ export const linkCampaignClient = (campaignId, clientId, applyToMatchingText) =>
 // the wrong one easy to reach for.
 export const listReportArchive = (params = {}) =>
   api.get("/reports", { params }).then((r) => r.data);
+
+// Delete report versions. Admin only, and the server refuses approved
+// reports unless includeApproved is set — deleting a document that went to a
+// client is a deliberate act, not a mis-click.
+export const deleteReports = (reportIds, includeApproved = false) =>
+  api.post("/reports/delete", {
+    report_ids: reportIds,
+    include_approved: includeApproved,
+  }).then((r) => r.data);
