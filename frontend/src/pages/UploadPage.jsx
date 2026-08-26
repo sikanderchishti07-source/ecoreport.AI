@@ -1,13 +1,29 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, UploadCloud, FileSpreadsheet, CheckCircle2, AlertTriangle, ShieldAlert } from "lucide-react";
+import {
+  AlertTriangle, ArrowLeft, CalendarCheck, CheckCircle2, FileSpreadsheet,
+  Loader2, ShieldAlert, UploadCloud,
+} from "lucide-react";
 
-import { getCampaign, uploadNoiseReadings, uploadReadings } from "@/lib/api";
+import {
+  adoptDataWindow, getCampaign, uploadNoiseReadings, uploadReadings,
+} from "@/lib/api";
 import { UPLOAD } from "@/constants/testIds";
 import { Button } from "@/components/ui/button";
 
 const REQUIRED = ["timestamp"];
+
+/** A stored timestamp as a person reads it. */
+function fmtWindow(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString("en-GB", {
+    day: "numeric", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
 const EXPECTED_COLS = [
   "timestamp",
   "SO2", "NO", "NO2", "NOx", "CO", "H2S", "O3", "PM10", "PM25",
@@ -23,6 +39,7 @@ export default function UploadPage() {
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState(null);
   const [campaign, setCampaign] = useState(null);
+  const [adopting, setAdopting] = useState(false);
 
   useEffect(() => {
     getCampaign(id).then(setCampaign).catch(() => toast.error("Failed to load campaign"));
@@ -88,6 +105,26 @@ export default function UploadPage() {
       toast.error(err?.response?.data?.detail || "Upload failed");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const adoptWindow = async () => {
+    setAdopting(true);
+    try {
+      const out = await adoptDataWindow(id);
+      toast.success(
+        `Monitoring window set to ${fmtWindow(out.monitoring_start)} `
+        + `to ${fmtWindow(out.monitoring_end)}`);
+      // The panel described a disagreement that no longer exists, so it is
+      // cleared rather than left offering a choice already made.
+      setResult((prev) => (prev
+        ? { ...prev,
+            upload_log: { ...prev.upload_log, window_action: "matches" } }
+        : prev));
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Could not set the window");
+    } finally {
+      setAdopting(false);
     }
   };
 
@@ -259,6 +296,52 @@ export default function UploadPage() {
             </span>
           </header>
           <div className="p-4 space-y-3">
+            {/* The monitoring window, read from the file that defines it.
+                Shown rather than merely applied: the window decides which
+                readings a report is built from and what its capture
+                percentage is, so it should never change without being
+                seen. */}
+            {result.upload_log.window_action === "set" && (
+              <div className="flex items-start gap-2 text-sm">
+                <CalendarCheck className="w-4 h-4 mt-0.5 text-primary shrink-0" />
+                <span>
+                  Monitoring window set from the file:{" "}
+                  <span className="font-mono">
+                    {fmtWindow(result.upload_log.data_start)} to{" "}
+                    {fmtWindow(result.upload_log.data_end)}
+                  </span>
+                </span>
+              </div>
+            )}
+
+            {result.upload_log.window_action === "differs" && (
+              <div className="border border-amber-900/50 bg-amber-950/20 rounded-sm p-3 space-y-2">
+                <p className="text-sm text-amber-300">
+                  The window on this campaign does not match the file.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  The file covers{" "}
+                  <span className="font-mono">
+                    {fmtWindow(result.upload_log.data_start)} to{" "}
+                    {fmtWindow(result.upload_log.data_end)}
+                  </span>. Nothing has been changed. A report built against a
+                  window the data does not fall inside will have no readings
+                  in it.
+                </p>
+                <div className="flex gap-2">
+                  <Button size="sm" className="rounded-sm" disabled={adopting}
+                          onClick={adoptWindow}>
+                    {adopting && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                    Use the file&rsquo;s dates
+                  </Button>
+                  <Button size="sm" variant="outline" className="rounded-sm"
+                          onClick={() => nav(`/campaigns/${id}`)}>
+                    Keep mine
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {result.upload_log.rows_ingested > 0 && (
               <div className="flex items-center gap-2 text-emerald-400 text-sm">
                 <CheckCircle2 className="w-4 h-4" />
