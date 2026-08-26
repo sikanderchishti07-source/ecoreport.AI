@@ -16,7 +16,8 @@ import {
 import {
   createCampaign, createLabSample, deleteLabSample, generateSampleReport,
   getCampaign, getLandUseComparison, getSampleReadiness, getSampleSettings,
-  getSampleSummary, ingestResultsCoa, ingestResultsCsv, listAnalytes, listLabSamples,
+  getSampleSummary, ingestResultsCoa, ingestResultsCsv, listAnalytes,
+  listLabSamples,
   listParameterProfiles, listSampleStandards, saveSampleSettings,
   updateLabSample,
 } from "@/lib/api";
@@ -341,9 +342,9 @@ export default function SoilWaterCampaign() {
     if (!file) return;
     setBusy(true);
     try {
-      // An Excel workbook is the laboratory's own certificate, one sheet per
-      // sample. A CSV is the results grid. The file decides which, so there
-      // is one upload box rather than two the operator has to choose between.
+      // A workbook is the laboratory's own certificate, one sheet per sample.
+      // A CSV is the results grid. The file itself decides which, so there is
+      // one upload box rather than two the operator has to choose between.
       const isWorkbook = /\.xlsx?$/i.test(file.name || "");
       const rep = isWorkbook
         ? await ingestResultsCoa(campaignId, file, addToScope)
@@ -722,7 +723,7 @@ export default function SoilWaterCampaign() {
                 <span className="text-foreground font-medium">
                   The laboratory's own certificate (.xlsx).
                 </span>{" "}
-                The F-BR-29 Final Test Report, or the non-accredited variant —
+                The F-BR-29 Final Test Report, or the non-accredited variant,
                 one sheet per sample, exactly as the lab already produces it.
                 Sample code, dates and site are read from the header block.
                 Nothing needs retyping.
@@ -788,23 +789,32 @@ export default function SoilWaterCampaign() {
                   </p>
                 </div>
               )}
+              {ingest.limits_ignored && (
+                <p className="text-xs text-muted-foreground">
+                  The workbook carries its own limit columns. They were not
+                  imported: limits are read from the regulation, so a limit
+                  mistyped on a certificate cannot reach a report.
+                </p>
+              )}
               {ingest.suggested_context?.length > 0 && (
                 <div className="border border-border rounded-sm p-3 bg-secondary/20">
                   <p className="text-xs font-medium">
-                    Read from the sample description — confirm before issuing
+                    Read from the sample description, confirm before issuing
                   </p>
                   <ul className="mt-1 space-y-0.5">
                     {ingest.suggested_context.map((c) => (
-                      <li key={c.sample_code} className="text-xs text-muted-foreground">
+                      <li key={c.sample_code}
+                          className="text-xs text-muted-foreground">
                         {c.sample_code}: &ldquo;{c.description}&rdquo; suggests{" "}
                         {[c.particle_size, c.depth].filter(Boolean).join(", ")}
                       </li>
                     ))}
                   </ul>
                   <p className="text-xs text-muted-foreground mt-1.5">
-                    Not applied automatically. Set it on the samples step —
-                    it decides which column of the standard every result is
-                    judged against.
+                    Not applied automatically. Set it on the samples step: it
+                    decides which column of the standard every result is judged
+                    against, and a guess there is the defect this system exists
+                    to prevent.
                   </p>
                 </div>
               )}
@@ -815,7 +825,9 @@ export default function SoilWaterCampaign() {
                   </p>
                   <ul className="mt-1 space-y-0.5">
                     {ingest.warnings.map((w) => (
-                      <li key={w} className="text-xs text-muted-foreground">— {w}</li>
+                      <li key={w} className="text-xs text-muted-foreground">
+                        &mdash; {w}
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -837,7 +849,7 @@ export default function SoilWaterCampaign() {
                   </p>
                 </div>
               )}
-              {ingest.parameters_unresolved?.length > 0 && (
+              {ingest.parameters_unresolved.length > 0 && (
                 <div className="border border-amber-900/50 bg-amber-950/20 rounded-sm p-3">
                   <p className="text-xs text-amber-300 font-medium">
                     Not matched to a known parameter
@@ -849,7 +861,7 @@ export default function SoilWaterCampaign() {
                   </p>
                 </div>
               )}
-              {ingest.values_unparsed?.length > 0 && (
+              {ingest.values_unparsed.length > 0 && (
                 <p className="text-xs text-muted-foreground">
                   Kept as text: {ingest.values_unparsed.slice(0, 6).join("; ")}
                 </p>
