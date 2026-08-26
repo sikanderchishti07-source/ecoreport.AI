@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, Link, useNavigate } from "react-router-dom";
 import {
-  Bell, ChevronDown, FlaskConical, Gauge, Images, Inbox, LogOut, Ruler, Truck,
-  Users,
+  Bell, Building2, ChevronDown, FlaskConical, Gauge, Images, Inbox, LogOut, Ruler, Truck, Users,
 } from "lucide-react";
 import { NAV } from "@/constants/testIds";
 import { Toaster } from "sonner";
@@ -174,6 +173,15 @@ export default function AppShell() {
               }
             >
               <Gauge className="w-3.5 h-3.5" /> Campaigns
+            </NavLink>
+            <NavLink
+              to="/clients"
+              data-testid="nav-clients"
+              className={({ isActive }) =>
+                `${linkBase} ${isActive ? `${linkActive} ${linkRule}` : linkIdle} inline-flex items-center gap-1.5`
+              }
+            >
+              <Building2 className="w-3.5 h-3.5" /> Clients
             </NavLink>
             <NavLink
               to="/limits"
