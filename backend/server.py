@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 # Logging is configured here, ahead of everything else, for two reasons.
@@ -57,30 +57,6 @@ async def root() -> dict:
 @api.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
-
-
-# ---------------------------------------------------------------------------
-# TEMPORARY — remove once error reporting has been seen working.
-#
-# Deliberately raises, so a real error can be watched arriving in Sentry. It
-# exists because the ordinary refusals — "upload readings first", "campaign
-# not found" — are filtered out by design, which means a correctly configured
-# Sentry and a broken one look identical until something actually breaks.
-#
-# Left in place it is harmless: it is behind the login, it touches no data,
-# and it returns nothing. It is still worth deleting, because a route whose
-# only purpose is to fail will eventually be found by someone who does not
-# know that.
-# ---------------------------------------------------------------------------
-# No login guard. The browser's session lives in the application, not on the
-# backend's own address, so visiting this URL directly arrives anonymous and
-# was refused before it could raise. It takes no input, touches no data and
-# returns nothing but the error it exists to raise.
-@api.get("/_sentry-check")
-async def sentry_check() -> dict:
-    raise RuntimeError(
-        "Sentry check: this error was raised on purpose to confirm error "
-        "reporting works. Nothing is wrong.")
 
 
 # Mount domain routers under /api
