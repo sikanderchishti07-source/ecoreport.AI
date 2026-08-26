@@ -476,3 +476,13 @@ export const linkCampaignClient = (campaignId, clientId, applyToMatchingText) =>
     client_id: clientId,
     apply_to_matching_text: applyToMatchingText || null,
   }).then((r) => r.data);
+
+// --- Reports archive -------------------------------------------------------
+// Every issued version across every campaign, joined to its campaign and its
+// client. Read-only.
+//
+// Named apart from listReports above, which returns the versions of a single
+// campaign; the two answer different questions and a shared name would make
+// the wrong one easy to reach for.
+export const listReportArchive = (params = {}) =>
+  api.get("/reports", { params }).then((r) => r.data);
