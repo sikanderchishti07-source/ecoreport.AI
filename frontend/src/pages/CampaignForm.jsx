@@ -808,24 +808,32 @@ export default function CampaignForm({ mode }) {
       )}
 
       <Section title="Monitoring window">
+        {/* No longer required. The timestamps in the analyser export are the
+            record of when monitoring actually happened; a date typed here
+            before anyone has opened the file is a guess, and a guess a day
+            out produces a report with no readings inside its own window.
+            Left blank, the window is set by the first upload. */}
+        <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
+          Leave these empty and the window is read from the data file when it
+          is uploaded. Fill them in only to set a window narrower than the
+          file, for instance to exclude an instrument warming up.
+        </p>
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Start" required>
+          <Field label="Start">
             <Input
               data-testid={CAMPAIGN_FORM.monitoringStart}
               type="datetime-local"
               value={form.monitoring_start}
               onChange={(e) => { setLongWindowOk(false); set("monitoring_start")(e); }}
-              required
               className="rounded-sm font-mono"
             />
           </Field>
-          <Field label="End" required>
+          <Field label="End">
             <Input
               data-testid={CAMPAIGN_FORM.monitoringEnd}
               type="datetime-local"
               value={form.monitoring_end}
               onChange={(e) => { setLongWindowOk(false); set("monitoring_end")(e); }}
-              required
               className="rounded-sm font-mono"
             />
           </Field>
