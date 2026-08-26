@@ -318,5 +318,11 @@ async def create_indexes() -> None:
     await db.shares.create_index("code", unique=True, sparse=True)
     await db.shares.create_index([("campaign_id", 1), ("created_at", -1)])
     await db.parameter_profiles.create_index([("medium", 1), ("client", 1)])
+    # Client records. The link on a campaign is sparse: every campaign in the
+    # archive predates it, and an index that required the field would have
+    # nothing to index.
+    await db.clients.create_index("id", unique=True)
+    await db.clients.create_index("legal_name")
+    await db.campaigns.create_index("client_id", sparse=True)
     await migrate_campaigns()
     await seed_parameter_profiles()
