@@ -317,7 +317,9 @@ async def portal_view(token: str, request: Request,
             "monitoring_end": campaign.get("monitoring_end"),
         },
         "provider": {
-            "name": campaign.get("provider", "Bander Said Allehiany (BSA)"),
+            # Falls back only where a campaign somehow has no provider at
+            # all; every real one carries the name it was issued under.
+            "name": campaign.get("provider") or "Biological System Analysis (BSA)",
         },
         "expires_at": share.get("expires_at"),
         "reports": [
