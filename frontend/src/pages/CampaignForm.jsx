@@ -32,11 +32,11 @@ const DEFAULT_GAS_UNITS_MAP = {
 };
 
 const NOISE_CATEGORIES = [
-  { value: "A", label: "A — Low-density residential, parks, hospitals, schools" },
-  { value: "B", label: "B — Medium-density residential" },
-  { value: "C", label: "C — High-density residential and mixed commercial" },
-  { value: "D", label: "D — Commercial, warehouses, financial centres" },
-  { value: "roadside", label: "Roadside — main roads and highways" },
+  { value: "A", label: "A. Low-density residential, parks, hospitals, schools" },
+  { value: "B", label: "B. Medium-density residential" },
+  { value: "C", label: "C. High-density residential and mixed commercial" },
+  { value: "D", label: "D. Commercial, warehouses, financial centres" },
+  { value: "roadside", label: "Roadside, main roads and highways" },
   { value: "industrial", label: "Industrial zones" },
   { value: "construction", label: "Construction work site" },
   { value: "tbd", label: "To be determined by the consultant" },
@@ -44,11 +44,11 @@ const NOISE_CATEGORIES = [
 
 // A construction site has no standard of its own. Article (7) gives it the
 // standard of the zone around it plus a correction, so the zone has to be
-// named separately — construction cannot be its own base.
+// named separately, construction cannot be its own base.
 const CONSTRUCTION_BASE_CATEGORIES = NOISE_CATEGORIES.filter(
   (c) => c.value !== "construction" && c.value !== "tbd");
 
-// Table (4) — the correction depends on how long activities run each day.
+// Table (4). The correction depends on how long activities run each day.
 const CONSTRUCTION_BANDS = [
   { value: 2, label: "Up to 2.5 hours (+10 dB)" },
   { value: 6, label: "From 2.5 to 8 hours (+5 dB)" },
@@ -60,8 +60,8 @@ const CONSTRUCTION_BANDS = [
 // therefore its conclusion, and it is the field most easily got wrong: the
 // picker shows the month first, so 06/07 typed as "6 July" is stored as
 // 7 June. That slip has produced 720-hour reports at 3% capture more than
-// once. Echoing the dates in words was not enough — a warning that can be
-// scrolled past is a warning that gets scrolled past — so an impossible
+// once. Echoing the dates in words was not enough. A warning that can be
+// scrolled past is a warning that gets scrolled past, so an impossible
 // window now stops the save and an unusual one has to be read first.
 function checkWindow(startStr, endStr) {
   const a = startStr ? new Date(startStr) : null;
@@ -74,7 +74,7 @@ function checkWindow(startStr, endStr) {
     return {
       level: "stop", hours,
       message: "The window ends before it starts.",
-      fix: "Check which box holds which date — the picker shows the month first.",
+      fix: "Check which box holds which date. The picker shows the month first.",
     };
   }
   // Confirmed rather than forbidden. The month-first slip lands on exactly
@@ -124,7 +124,10 @@ const defaults = {
   site_conditions_note: "",
   project_name: "",
   client: "",
-  provider: "Bander Said Allehiany (BSA)",
+  // The trading name a new campaign starts with. Stored on the campaign, so
+  // a campaign created before the company was renamed keeps the name it was
+  // issued under and reissues correctly; only new ones start from here.
+  provider: "Biological System Analysis (BSA)",
   site_name: "",
   latitude: "",
   longitude: "",
@@ -162,7 +165,7 @@ function toIsoDate(value) {
  * A campaign saved before per-gas units existed carries only the single
  * `gas_units` value. Spreading that value across all seven gases reproduces
  * its current behaviour exactly, so opening an old campaign never changes
- * the numbers it would produce — it only makes the setting visible and
+ * the numbers it would produce. It only makes the setting visible and
  * editable.
  */
 function unitsMapFrom(campaign) {
@@ -178,7 +181,7 @@ function unitsMapFrom(campaign) {
  * Fold Arabic script into the ASCII the parser expects.
  *
  * A camera set to Arabic stamps the position as \u0662\u0664\u066B\u0665\u0665\u0663\u0664 \u0634\u0645\u0627\u0644 rather than
- * 24.5534N — different digits, a different decimal mark, and the compass
+ * 24.5534N, different digits, a different decimal mark, and the compass
  * point written as a word. Normalising here means one parser handles a
  * photograph taken on an Arabic handset and an English one alike.
  */
@@ -214,7 +217,7 @@ function normaliseArabic(text) {
  * Read a full coordinate pair out of one string.
  *
  * Field photographs carry the position stamped across the image as a single
- * line — "24.5534N 39.6027E". Split across two inputs that has to be read,
+ * line, "24.5534N 39.6027E". Split across two inputs that has to be read,
  * divided and typed twice, which is where a leading digit goes missing. Read
  * as one string it is entered the way it is written.
  *
@@ -272,7 +275,7 @@ export default function CampaignForm({ mode }) {
   const { id } = useParams();
   const nav = useNavigate();
   const [params] = useSearchParams();
-  // The type comes from the chooser card and never changes afterwards —
+  // The type comes from the chooser card and never changes afterwards, 
   // an air campaign cannot become a noise one, because its readings,
   // engine and report are different things.
   const urlType = params.get("type") === "noise" ? "noise" : "air";
@@ -407,7 +410,7 @@ export default function CampaignForm({ mode }) {
         longitude: parseFloat(form.longitude),
         inlet_height_m: parseFloat(form.inlet_height_m),
         gas_units_map: form.gas_units_map || {},
-        // Naive local time — the analyser logs local Saudi time and the
+        // Naive local time. The analyser logs local Saudi time and the
         // report is read in local time. Converting to UTC here shifted the
         // window 3 h against the readings and cost 3 h of data capture.
         monitoring_start: form.monitoring_start,
@@ -576,7 +579,7 @@ export default function CampaignForm({ mode }) {
           <p className="text-[11px] text-muted-foreground">
             Coordinates of the plant or source. If given, the report states the
             station's distance and bearing from it, alongside the prevailing
-            wind — as measurements only, with no upwind/downwind conclusion.
+            wind, as measurements only, with no upwind/downwind conclusion.
           </p>
         </div>
       </Section>
@@ -640,7 +643,7 @@ export default function CampaignForm({ mode }) {
                     className="w-full h-9 rounded-sm border border-border bg-background px-2 text-sm"
                     data-testid="construction-base-category"
                   >
-                    <option value="">Not stated — no verdict</option>
+                    <option value="">Not stated, no verdict</option>
                     {CONSTRUCTION_BASE_CATEGORIES.map((c) => (
                       <option key={c.value} value={c.value}>{c.label}</option>
                     ))}
@@ -655,7 +658,7 @@ export default function CampaignForm({ mode }) {
                     className="w-full h-9 rounded-sm border border-border bg-background px-2 text-sm"
                     data-testid="construction-hours"
                   >
-                    <option value="">Not stated — no verdict</option>
+                    <option value="">Not stated, no verdict</option>
                     {CONSTRUCTION_BANDS.map((c) => (
                       <option key={c.value} value={c.value}>{c.label}</option>
                     ))}
@@ -704,7 +707,7 @@ export default function CampaignForm({ mode }) {
           <Label>Site conditions noted during the survey</Label>
           <Input value={form.site_conditions_note}
                  onChange={(e) => setForm((f) => ({ ...f, site_conditions_note: e.target.value }))}
-                 placeholder="Optional — sources present, activities, interruptions" />
+                 placeholder="Optional, sources present, activities, interruptions" />
         </div>
       </Section>
       )}
@@ -746,8 +749,8 @@ export default function CampaignForm({ mode }) {
         <p className="text-[11px] text-muted-foreground -mt-1">
           The units of each gas column in the file you will upload. NCEC limits
           are µg/m³ at 25 °C and 101.3 kPa, so ppb and ppm columns are converted
-          on ingest. Analyser exports are commonly mixed — CO in ppm while the
-          other gases are in ppb — which is why each gas is set separately.
+          on ingest. Analyser exports are commonly mixed. CO in ppm while the
+          other gases are in ppb, which is why each gas is set separately.
         </p>
 
         <div
@@ -781,7 +784,7 @@ export default function CampaignForm({ mode }) {
           <p className="text-[11px] text-amber-500">
             Every gas is set to µg/m³, so no conversion will be applied and the
             file's numbers will be reported exactly as they appear. Confirm your
-            analyser really does export µg/m³ — most export ppb, and CO in ppm.
+            analyser really does export µg/m³, most export ppb, and CO in ppm.
           </p>
         )}
 
@@ -866,7 +869,7 @@ export default function CampaignForm({ mode }) {
                     {win.level === "stop" || win.level === "confirm"
                       ? "Stop" : win.level === "warn" ? "Check" : "OK"}
                   </span>
-                  {" — "}{win.message}
+                  {", "}{win.message}
                   {win.fix && (
                     <span className="mt-1 block opacity-80">{win.fix}</span>
                   )}
@@ -911,7 +914,7 @@ export default function CampaignForm({ mode }) {
           {/* Assigned by the server when the first report is generated, so a
               campaign that never produces one never consumes a number and the
               date inside the number is the issue date. A number already on the
-              campaign stays editable — an old job entered late still needs its
+              campaign stays editable. An old job entered late still needs its
               own number typed in. */}
           <Field label="Report number">
             {form.report_number ? (
