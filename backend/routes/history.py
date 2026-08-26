@@ -18,11 +18,18 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
-from auth import require_admin
+import logging
+
+from audit import audit
+from auth import current_username, require_admin
 from db import db
 import storage
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["history"])
 
@@ -231,6 +238,100 @@ def _report_stats(rows: List[dict]) -> Dict[str, int]:
                           if str(r.get("generated_at") or "").startswith(this_month)),
         "in_review": sum(1 for r in rows if r["status"] in ("in_review", "submitted")),
         "approved": sum(1 for r in rows if r["status"] == "approved"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Deleting reports
+#
+# The archive fills with test runs. Twenty versions of one campaign generated
+# while checking a chart is not a record of anything, and left in place they
+# sit beside genuine issued reports where someone searching a report number
+# in a year will find both and have no way to tell them apart.
+#
+# Two safeguards, because this deletes regulatory records:
+#
+#   * Admin only. Deleting an issued report is not routine work.
+#   * An approved report is refused unless the caller says so explicitly.
+#     Approved means a reviewing engineer signed it and it went to a client,
+#     which is exactly the thing the five-year retention obligation covers.
+#     Refusing by default makes the destructive case a deliberate act rather
+#     than a mis-click on the wrong row.
+#
+# Every deletion is written to the audit trail with what was removed, so the
+# archive can still show that a record existed and who removed it.
+# ---------------------------------------------------------------------------
+class DeleteReportsRequest(BaseModel):
+    report_ids: List[str] = Field(default_factory=list)
+    # Approved reports are protected unless this is set. Named for what it
+    # does rather than "force", so nobody sets it without reading it.
+    include_approved: bool = False
+
+
+@router.post("/reports/delete")
+async def delete_reports(payload: DeleteReportsRequest,
+                         _admin: dict = Depends(require_admin),
+                         x_user: str = Depends(current_username)):
+    """Delete report versions and their files."""
+    ids = [i for i in payload.report_ids if i]
+    if not ids:
+        raise HTTPException(status_code=400,
+                            detail="No reports were selected.")
+    if len(ids) > 500:
+        raise HTTPException(
+            status_code=400,
+            detail="Delete at most 500 reports at a time.")
+
+    docs = await db.report_logs.find({"id": {"$in": ids}},
+                                     {"_id": 0}).to_list(length=len(ids))
+    if not docs:
+        raise HTTPException(status_code=404,
+                            detail="None of those reports were found.")
+
+    # The status lives on the campaign, not on the report record, so the
+    # campaigns have to be read before anything is judged approved.
+    campaign_ids = sorted({d.get("campaign_id") for d in docs
+                           if d.get("campaign_id")})
+    statuses = {}
+    if campaign_ids:
+        for c in await db.campaigns.find(
+            {"id": {"$in": campaign_ids}},
+            {"_id": 0, "id": 1, "status": 1},
+        ).to_list(length=len(campaign_ids)):
+            statuses[c["id"]] = c.get("status")
+
+    protected = [d for d in docs
+                 if statuses.get(d.get("campaign_id")) == "approved"]
+    if protected and not payload.include_approved:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"{len(protected)} of these belong to approved campaigns "
+                    f"and were not deleted. Approved reports have been issued "
+                    f"to a client. Confirm again to include them."))
+
+    removed, file_errors = [], []
+    for d in docs:
+        result = await run_in_threadpool(storage.delete_report, d)
+        file_errors.extend(f"{d.get('filename', d['id'])}: {e}"
+                           for e in result["errors"])
+        removed.append(d["id"])
+
+    await db.report_logs.delete_many({"id": {"$in": removed}})
+    await audit("report.delete", "report", ",".join(removed[:20]), x_user, {
+        "count": len(removed),
+        "approved_included": len(protected) if payload.include_approved else 0,
+        "campaigns": campaign_ids[:20],
+    })
+    if file_errors:
+        log.warning("report files could not be removed: %s",
+                    "; ".join(file_errors[:10]))
+
+    return {
+        "deleted": len(removed),
+        "approved_deleted": len(protected) if payload.include_approved else 0,
+        # A record is gone whether or not its file could be removed. Saying
+        # so is more useful than a silent partial success.
+        "file_warnings": file_errors[:10],
     }
 
 @router.get("/search")
