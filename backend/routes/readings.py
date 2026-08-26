@@ -4,7 +4,7 @@ from __future__ import annotations
 import io
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -353,6 +353,72 @@ async def _load_dataframe(file: UploadFile) -> tuple[pd.DataFrame, str]:
     return df, file_type
 
 
+
+# ---------------------------------------------------------------------------
+# The monitoring window
+#
+# A campaign used to require its start and end before anyone had opened the
+# file, so the dates were typed from memory. A date a day out produces a
+# report with no readings inside its own window, and the operator finds out
+# only when generation refuses.
+#
+# The timestamps in the export are the record of when monitoring actually
+# happened, so they set the window. Three cases, and only one of them is a
+# question:
+#
+#   the campaign has no window   -> take the file's, silently
+#   the window matches the file  -> nothing to do
+#   the window disagrees         -> change nothing and say so
+#
+# The third case exists because an export can carry rows either side of the
+# survey proper: an instrument warming up, a technician checking the line.
+# Taking the first and last row of such a file would stretch a 24-hour survey
+# into 26 and quietly change every capture percentage in the report. Where a
+# window was set deliberately, the disagreement is shown rather than resolved.
+# ---------------------------------------------------------------------------
+WINDOW_TOLERANCE = timedelta(minutes=90)
+
+
+def _file_window(df) -> tuple:
+    """The first and last usable timestamp in the parsed file."""
+    if "timestamp" not in df.columns:
+        return None, None
+    ts = df["timestamp"].dropna()
+    if ts.empty:
+        return None, None
+    first, last = ts.min(), ts.max()
+    if hasattr(first, "to_pydatetime"):
+        first, last = first.to_pydatetime(), last.to_pydatetime()
+    if first.tzinfo is not None:
+        first = first.replace(tzinfo=None)
+    if last.tzinfo is not None:
+        last = last.replace(tzinfo=None)
+    # An hourly file's last row opens the final hour; the window closes at the
+    # end of it. Without the extra hour a 24-hour survey reads as 23.
+    return first, last + timedelta(hours=1)
+
+
+def _window_action(campaign: dict, start, end) -> str:
+    """What the upload should do about the campaign's window."""
+    if start is None or end is None:
+        return "none"
+    current_start = campaign.get("monitoring_start")
+    current_end = campaign.get("monitoring_end")
+    if not current_start or not current_end:
+        return "set"
+    if isinstance(current_start, str):
+        try:
+            current_start = datetime.fromisoformat(current_start.replace("Z", ""))
+            current_end = datetime.fromisoformat(str(current_end).replace("Z", ""))
+        except ValueError:
+            return "set"
+    cs = current_start.replace(tzinfo=None) if current_start.tzinfo else current_start
+    ce = current_end.replace(tzinfo=None) if current_end.tzinfo else current_end
+    close_enough = (abs(cs - start) <= WINDOW_TOLERANCE
+                    and abs(ce - end) <= WINDOW_TOLERANCE)
+    return "matches" if close_enough else "differs"
+
+
 @router.post(
     "/campaigns/{campaign_id}/upload",
     response_model=UploadResult,
@@ -511,12 +577,33 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
             skipped += 1
             errors.append(f"Row {idx + 2}: {exc}")
 
+    # The monitoring window, taken from the file that defines it.
+    data_start, data_end = _file_window(df)
+    window_action = _window_action(campaign, data_start, data_end)
+
     if to_insert:
         await db.readings.insert_many(to_insert)
         await db.campaigns.update_one(
             {"id": campaign_id, "status": "draft"},
             {"$set": {"status": "ingested"}},
         )
+        if window_action == "set":
+            await db.campaigns.update_one(
+                {"id": campaign_id},
+                {"$set": {"monitoring_start": data_start,
+                          "monitoring_end": data_end}},
+            )
+            log.info("campaign %s: monitoring window set from the file "
+                     "(%s to %s)", campaign_id, data_start, data_end)
+        elif window_action == "differs":
+            # Deliberately not changed. An export can carry rows either side
+            # of the survey proper, so a window someone set on purpose is not
+            # overwritten by the file's first and last row.
+            errors.insert(0,
+                          f"The monitoring window on this campaign does not "
+                          f"match the file. The file covers "
+                          f"{data_start:%d %b %Y %H:%M} to "
+                          f"{data_end:%d %b %Y %H:%M}. Nothing was changed.")
 
     if "timestamp" in df.columns:
         ts_ok = df["timestamp"].dropna()
@@ -551,6 +638,9 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
         auto_flagged_field_counts=auto_flagged_field_counts,
         units_applied=units_applied,
         units_warnings=units_warnings,
+        data_start=data_start,
+        data_end=data_end,
+        window_action=window_action,
     )
     await db.upload_logs.insert_one(to_mongo(upload_log.model_dump()))
 
@@ -564,6 +654,41 @@ async def upload_readings(campaign_id: str, file: UploadFile = File(...),
 
     return UploadResult(upload_log=upload_log, preview=ingested[:10])
 
+
+
+@router.post("/campaigns/{campaign_id}/adopt-data-window")
+async def adopt_data_window(campaign_id: str,
+                            x_user: str = Depends(current_username)) -> dict:
+    """Set the campaign's window to the range of its stored readings.
+
+    What the "use the file's dates" choice calls after an upload reported a
+    disagreement. Read from the readings already in the database rather than
+    from the file, so the window always describes the data a report will
+    actually be built from.
+    """
+    campaign = await db.campaigns.find_one({"id": campaign_id}, {"_id": 0})
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+
+    first = await db.readings.find({"campaign_id": campaign_id},
+                                   {"_id": 0, "timestamp": 1}) \
+        .sort("timestamp", 1).to_list(length=1)
+    last = await db.readings.find({"campaign_id": campaign_id},
+                                  {"_id": 0, "timestamp": 1}) \
+        .sort("timestamp", -1).to_list(length=1)
+    if not first or not last:
+        raise HTTPException(
+            status_code=400,
+            detail="This campaign has no readings to take a window from.")
+
+    start = first[0]["timestamp"]
+    end = last[0]["timestamp"] + timedelta(hours=1)
+    await db.campaigns.update_one(
+        {"id": campaign_id},
+        {"$set": {"monitoring_start": start, "monitoring_end": end}})
+    await audit("campaign.window_from_data", "campaign", campaign_id, x_user,
+                {"monitoring_start": str(start), "monitoring_end": str(end)})
+    return {"monitoring_start": start, "monitoring_end": end}
 
 @router.get("/campaigns/{campaign_id}/readings", response_model=List[Reading])
 async def list_readings(
