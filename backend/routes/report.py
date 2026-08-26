@@ -19,6 +19,7 @@ from db import db, to_mongo
 import storage
 from models import Campaign, PollutantLimit, Reading
 from report.generate import convert_to_pdf, generate_report
+from report_filename import report_filename
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["report"])
