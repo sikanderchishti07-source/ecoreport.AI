@@ -964,6 +964,10 @@ async def create_sample_report(campaign_id: str, format: str = "docx",
 
     campaign_doc = await _campaign_or_404(campaign_id)
     campaign = Campaign(**campaign_doc)
+    # Same resolution the air and noise reports use, so a linked client
+    # issues under one legal name whichever report type is generated.
+    from routes.report import resolve_client_name
+    await resolve_client_name(campaign)
     settings = _settings_of(campaign_doc)
     samples = await _samples_of(campaign_id)
     if not samples:
