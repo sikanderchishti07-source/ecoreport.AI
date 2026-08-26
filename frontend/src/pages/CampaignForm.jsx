@@ -449,9 +449,13 @@ export default function CampaignForm({ mode }) {
         // of the change — failed validation with a 422.
         monitoring_start: form.monitoring_start || null,
         monitoring_end: form.monitoring_end || null,
-        reporting_date: form.reporting_date
-          ? new Date(form.reporting_date).toISOString()
-          : null,
+        // Carried through so an existing value survives an edit, but never
+        // sent as null: the date is now set by the generator, and a campaign
+        // edited before its first report would otherwise clear a date that
+        // the next generation had already recorded.
+        ...(form.reporting_date
+          ? { reporting_date: new Date(form.reporting_date).toISOString() }
+          : {}),
       };
       if (mode === "edit") {
         const updated = await updateCampaign(id, payload);
@@ -984,15 +988,11 @@ export default function CampaignForm({ mode }) {
               className="rounded-sm font-mono"
             />
           </Field>
-          <Field label="Reporting date">
-            <Input
-              data-testid={CAMPAIGN_FORM.reportingDate}
-              type="date"
-              value={form.reporting_date}
-              onChange={set("reporting_date")}
-              className="rounded-sm font-mono"
-            />
-          </Field>
+          {/* The reporting date is set where the report is generated, beside
+              the Generate button, because that is the moment a document is
+              issued and the only moment the date is actually known. Asked for
+              here it was typed days early from memory, and could disagree
+              with the report number, which encodes the same date. */}
         </div>
       </Section>
 
