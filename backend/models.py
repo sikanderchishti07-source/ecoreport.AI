@@ -127,8 +127,13 @@ class CampaignBase(BaseModel):
     gas_units_map: Dict[str, str] = Field(default_factory=dict)
                                      # per-gas units, e.g. {"CO": "ppm", ...}
                                      # empty => fall back to gas_units
-    monitoring_start: datetime
-    monitoring_end: datetime
+    # Optional, and filled from the uploaded data. The timestamps in an
+    # analyser export are the record of when monitoring actually happened;
+    # a date typed from memory before anyone has opened the file is a guess,
+    # and a guess a day out produces a report with no readings inside its own
+    # window. Left blank here, the window is set by the first upload.
+    monitoring_start: Optional[datetime] = None
+    monitoring_end: Optional[datetime] = None
     prepared_by: Optional[str] = None
     project_supervision: Optional[str] = None
     report_number: Optional[str] = None
@@ -365,6 +370,16 @@ class UploadLog(BaseModel):
     # always be traced back to the conversion that produced its numbers.
     units_applied: Dict[str, str] = Field(default_factory=dict)
     units_warnings: List[str] = Field(default_factory=list)
+    # The first and last timestamp in the file, and what was done with them.
+    # Reported rather than merely applied, so the operator can see the window
+    # a report will be built against without opening the file.
+    data_start: Optional[datetime] = None
+    data_end: Optional[datetime] = None
+    # "set"        the campaign had no window and took the file's
+    # "matches"    the window already agreed with the file
+    # "differs"    the window was set deliberately and disagrees; nothing was
+    #              changed, and the operator is asked which to keep
+    window_action: Optional[str] = None
     uploaded_at: datetime = Field(default_factory=utcnow)
 
 
