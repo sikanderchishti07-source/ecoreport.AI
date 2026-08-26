@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Download, FileText, Loader2, Search } from "lucide-react";
+import { Download, FileText, Loader2, Search, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  downloadReportVersion, listClients, listReportArchive,
+  deleteReports, downloadReportVersion, listClients, listReportArchive,
 } from "@/lib/api";
 
 const TYPE_LABEL = { air: "Air", noise: "Noise", soil_water: "Soil & water" };
@@ -60,6 +60,11 @@ export default function ReportsPage() {
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(null);
+  // Selection is by report id, not by row index: the list re-sorts and
+  // re-filters underneath, and an index would silently point at a different
+  // report after either.
+  const [selected, setSelected] = useState(() => new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const [q, setQ] = useState("");
   const [clientId, setClientId] = useState(ANY);
@@ -88,6 +93,10 @@ export default function ReportsPage() {
     const t = setTimeout(load, 250);
     return () => clearTimeout(t);
   }, [load]);
+
+  // Filters change what is on screen, so a selection made before the change
+  // would delete reports the operator can no longer see.
+  useEffect(() => { setSelected(new Set()); }, [q, clientId, type, month]);
 
   useEffect(() => {
     listClients().then(setClients).catch(() => setClients([]));
@@ -119,6 +128,56 @@ export default function ReportsPage() {
       toast.error(detail);
     } finally {
       setDownloading(null);
+    }
+  };
+
+  const toggle = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    const visible = data.reports.map((r) => r.id);
+    const allOn = visible.length > 0 && visible.every((id) => selected.has(id));
+    setSelected(allOn ? new Set() : new Set(visible));
+  };
+
+  const removeSelected = async (includeApproved = false) => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    if (!includeApproved
+        && !window.confirm(`Delete ${ids.length} report version(s)? `
+                           + "The files are removed as well and this cannot "
+                           + "be undone.")) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      const out = await deleteReports(ids, includeApproved);
+      toast.success(`${out.deleted} report(s) deleted`);
+      if (out.file_warnings?.length) {
+        toast.info("Some files were already missing and could not be removed.");
+      }
+      setSelected(new Set());
+      await load();
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      // 409 means approved reports were in the selection. The server stopped
+      // rather than deleting them, so the second confirmation is a real
+      // decision and not a formality.
+      if (err?.response?.status === 409 && detail) {
+        if (window.confirm(`${detail}\n\nDelete them as well?`)) {
+          await removeSelected(true);
+          return;
+        }
+      } else {
+        toast.error(detail || "Could not delete");
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -204,10 +263,40 @@ export default function ReportsPage() {
         </p>
       )}
 
+      {selected.size > 0 && (
+        <div className="flex items-center justify-between gap-3 flex-wrap
+                        border border-border rounded-sm px-4 py-2.5 -mt-2">
+          <span className="text-sm">
+            {selected.size} selected
+            <button className="ml-3 text-xs underline text-muted-foreground"
+                    onClick={() => setSelected(new Set())}>
+              Clear
+            </button>
+          </span>
+          <Button variant="outline" size="sm" disabled={deleting}
+                  className="rounded-sm text-red-400 hover:text-red-300"
+                  onClick={() => removeSelected(false)}>
+            {deleting
+              ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+              : <Trash2 className="w-3.5 h-3.5 mr-1.5" />}
+            Delete
+          </Button>
+        </div>
+      )}
+
       <div className="border border-border rounded-sm overflow-x-auto">
-        <table className="w-full text-sm min-w-[720px]">
+        <table className="w-full text-sm min-w-[760px]">
           <thead>
             <tr className="bg-secondary/50 text-muted-foreground text-xs">
+              <th className="w-10 px-3 py-2">
+                <input
+                  type="checkbox"
+                  aria-label="Select every report shown"
+                  checked={data.reports.length > 0
+                           && data.reports.every((r) => selected.has(r.id))}
+                  onChange={toggleAll}
+                />
+              </th>
               <th className="text-left px-4 py-2 font-normal">Report</th>
               <th className="text-left px-4 py-2 font-normal">Client</th>
               <th className="text-left px-4 py-2 font-normal">Issued</th>
@@ -217,19 +306,29 @@ export default function ReportsPage() {
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                 <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading…
               </td></tr>
             )}
             {!loading && data.reports.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground text-sm">
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">
                 {data.total === 0
                   ? "No reports have been generated yet."
                   : "No reports match those filters."}
               </td></tr>
             )}
             {!loading && data.reports.map((r) => (
-              <tr key={r.id} className="border-t border-border">
+              <tr key={r.id}
+                  className={`border-t border-border ${
+                    selected.has(r.id) ? "bg-secondary/40" : ""}`}>
+                <td className="px-3 py-3 align-top">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${r.report_number} version ${r.version}`}
+                    checked={selected.has(r.id)}
+                    onChange={() => toggle(r.id)}
+                  />
+                </td>
                 <td className="px-4 py-3">
                   <div className="font-mono text-xs">{r.report_number}</div>
                   <div className="text-xs text-muted-foreground mt-0.5">
