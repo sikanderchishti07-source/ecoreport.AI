@@ -72,11 +72,27 @@ def _compliance_sentence(evals: List[PeriodEvaluation], periods_text: str,
 
 
 def _daily_avg(p: PollutantEvaluation) -> Optional[float]:
-    """'Daily average' in the gold-standard tables = period mean. Use the 24-hr
-    evaluation mean when available, else the hourly mean."""
-    e24 = _period(p, "24 Hour")
-    if e24 is not None and e24.mean_value is not None:
-        return e24.mean_value
+    """The 'Daily average' row of the summary tables: the period mean.
+
+    This previously returned the 24-hour evaluation's mean where one existed,
+    which is the mean of the calendar-day means rather than the mean of the
+    survey. The two are the same only when the survey covers whole calendar
+    days, and a monitoring window almost never does.
+
+    On the survey that exposed this, sampling ran from 13:00 on one day to
+    13:00 on the next: eleven hours falling on the first date and thirteen on
+    the second. Averaging the two day means with equal weight gave each of
+    those eleven hours more influence than each of the thirteen, and PM10 —
+    the most variable parameter in the survey, ranging from 130 to 296 µg/m³ —
+    came out 0.7 µg/m³ adrift of the true period mean. The parameters with no
+    24-hour standard fell through to the hourly mean and were right all along,
+    which is why only some rows disagreed.
+
+    Nothing here affects compliance. The calendar-day means remain exactly
+    what the 24-hour standard is assessed against, because that standard
+    applies to a calendar day and each day is judged on its own. They are
+    simply not what this row of the table means.
+    """
     return p.hourly_mean
 
 
