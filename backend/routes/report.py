@@ -426,10 +426,7 @@ async def create_report(campaign_id: str, lang: str = "en",
             "download": False,
             "report_id": report_id,
             "filename": fname,
-        # The readable name. Kept on the record so the archive and the
-        # client portal offer the same name the generator did, without
-        # having to rebuild it from a campaign that may since have changed.
-        "download_name": download_name,
+            "download_name": download_name,
             "version": version,
             "format": format,
             "lang": lang,
@@ -629,9 +626,13 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     fname = (f"Noise_Report_{campaign_id[:8]}_v{version:03d}_"
              f"{lang}_{stamp}.docx")
+    # The campaign object arrives with its client already resolved by
+    # create_report, so the name is taken from it directly. Referring to that
+    # function's local would be a NameError the first time a noise report was
+    # generated.
     download_name = report_filename(campaign, kind="noise", version=version,
                                     lang=lang, fmt="docx",
-                                    client_name=resolved_client)
+                                    client_name=campaign.client)
     out_path = os.path.join(out_dir, fname)
     charts_dir = os.path.join(out_dir, "charts")
 
@@ -769,19 +770,12 @@ async def _create_noise_report(campaign, campaign_id: str, lang: str,
     await audit("report.generate", "report", report_id, x_user,
                 {"campaign_id": campaign_id, "version": version,
                  "lang": lang, "format": format, "filename": fname,
-        # The readable name. Kept on the record so the archive and the
-        # client portal offer the same name the generator did, without
-        # having to rebuild it from a campaign that may since have changed.
-        "download_name": download_name,
                  "type": "noise"})
 
     if user.get("role") != "admin":
         return JSONResponse({
             "download": False, "report_id": report_id, "filename": fname,
-        # The readable name. Kept on the record so the archive and the
-        # client portal offer the same name the generator did, without
-        # having to rebuild it from a campaign that may since have changed.
-        "download_name": download_name,
+            "download_name": download_name,
             "version": version, "format": format, "lang": lang,
             "size_bytes": os.path.getsize(out_path),
             "detail": ("Report generated. Downloads are handled by the "
