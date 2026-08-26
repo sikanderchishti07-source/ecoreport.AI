@@ -16,7 +16,8 @@ import {
 import {
   createCampaign, createLabSample, deleteLabSample, generateSampleReport,
   getCampaign, getLandUseComparison, getSampleReadiness, getSampleSettings,
-  getSampleSummary, ingestResultsCsv, listAnalytes, listLabSamples,
+  getSampleSummary, ingestResultsCoa, ingestResultsCsv, listAnalytes,
+  listLabSamples,
   listParameterProfiles, listSampleStandards, saveSampleSettings,
   updateLabSample,
 } from "@/lib/api";
@@ -341,7 +342,13 @@ export default function SoilWaterCampaign() {
     if (!file) return;
     setBusy(true);
     try {
-      const rep = await ingestResultsCsv(campaignId, file, addToScope);
+      // A workbook is the laboratory's own certificate, one sheet per sample.
+      // A CSV is the results grid. The file itself decides which, so there is
+      // one upload box rather than two the operator has to choose between.
+      const isWorkbook = /\.xlsx?$/i.test(file.name || "");
+      const rep = isWorkbook
+        ? await ingestResultsCoa(campaignId, file, addToScope)
+        : await ingestResultsCsv(campaignId, file, addToScope);
       setIngest(rep);
       setSamples(await listLabSamples(campaignId));
       // The upload may have widened the campaign's parameter list, so the
@@ -710,16 +717,31 @@ export default function SoilWaterCampaign() {
       {step === 3 && (
         <section className="space-y-4">
           <div className="border border-border rounded-sm p-5 space-y-3">
-            <h2 className="text-sm font-semibold">Upload the results grid</h2>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              A CSV with parameters down and sample codes across. The first
-              column is the parameter name. Columns headed Unit, Method, LOQ or
-              MU% are read as metadata; every other heading is treated as a
-              sample code, and any code not already present is created.
-              Uploading a second file adds to what is already stored rather
-              than replacing it, so a laboratory that sends organics and
-              metals on separate sheets works.
-            </p>
+            <h2 className="text-sm font-semibold">Upload the laboratory results</h2>
+            <div className="text-xs text-muted-foreground leading-relaxed space-y-2">
+              <p>
+                <span className="text-foreground font-medium">
+                  The laboratory's own certificate (.xlsx).
+                </span>{" "}
+                The F-BR-29 Final Test Report, or the non-accredited variant,
+                one sheet per sample, exactly as the lab already produces it.
+                Sample code, dates and site are read from the header block.
+                Nothing needs retyping.
+              </p>
+              <p>
+                <span className="text-foreground font-medium">
+                  Or a results grid (.csv).
+                </span>{" "}
+                Parameters down, sample codes across. The first column is the
+                parameter name; columns headed Unit, Method, LOQ or MU% are
+                metadata, every other heading is a sample code.
+              </p>
+              <p>
+                Either way, a second upload adds to what is already stored
+                rather than replacing it, so a laboratory that sends organics
+                and metals separately works.
+              </p>
+            </div>
             <label className="flex items-start gap-2 cursor-pointer">
               <input type="checkbox" className="mt-0.5"
                      checked={addToScope}
@@ -732,7 +754,7 @@ export default function SoilWaterCampaign() {
               </span>
             </label>
             <div className="flex items-center gap-3 flex-wrap">
-              <Input type="file" accept=".csv,text/csv"
+              <Input type="file" accept=".csv,.xlsx,.xls,text/csv"
                      className="rounded-sm max-w-sm"
                      onChange={(e) => setFile(e.target.files?.[0] || null)} />
               <Button className="rounded-sm" disabled={!file || busy} onClick={upload}>
@@ -748,8 +770,9 @@ export default function SoilWaterCampaign() {
               <h3 className="text-sm font-semibold">What was read</h3>
               <p className="text-xs text-muted-foreground">
                 {ingest.values_stored} values across{" "}
-                {ingest.samples_matched.length + ingest.samples_created.length} samples.
-                {ingest.samples_created.length > 0
+                {(ingest.samples_matched?.length || 0)
+                 + (ingest.samples_created?.length || 0)} samples.
+                {ingest.samples_created?.length > 0
                   && ` ${ingest.samples_created.length} sample(s) created: ${ingest.samples_created.join(", ")}.`}
                 {ingest.values_replaced > 0
                   && ` ${ingest.values_replaced} replaced an earlier result for the same parameter.`}
@@ -765,6 +788,54 @@ export default function SoilWaterCampaign() {
                     {ingest.parameters_added.join(", ")}
                   </p>
                 </div>
+              )}
+              {ingest.limits_ignored && (
+                <p className="text-xs text-muted-foreground">
+                  The workbook carries its own limit columns. They were not
+                  imported: limits are read from the regulation, so a limit
+                  mistyped on a certificate cannot reach a report.
+                </p>
+              )}
+              {ingest.suggested_context?.length > 0 && (
+                <div className="border border-border rounded-sm p-3 bg-secondary/20">
+                  <p className="text-xs font-medium">
+                    Read from the sample description, confirm before issuing
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {ingest.suggested_context.map((c) => (
+                      <li key={c.sample_code}
+                          className="text-xs text-muted-foreground">
+                        {c.sample_code}: &ldquo;{c.description}&rdquo; suggests{" "}
+                        {[c.particle_size, c.depth].filter(Boolean).join(", ")}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    Not applied automatically. Set it on the samples step: it
+                    decides which column of the standard every result is judged
+                    against, and a guess there is the defect this system exists
+                    to prevent.
+                  </p>
+                </div>
+              )}
+              {ingest.warnings?.length > 0 && (
+                <div className="border border-amber-900/50 bg-amber-950/20 rounded-sm p-3">
+                  <p className="text-xs text-amber-300 font-medium">
+                    Worth checking
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {ingest.warnings.map((w) => (
+                      <li key={w} className="text-xs text-muted-foreground">
+                        &mdash; {w}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {ingest.sheets_skipped?.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Sheets skipped: {ingest.sheets_skipped.join(", ")}
+                </p>
               )}
               {ingest.parameters_wrong_medium?.length > 0 && (
                 <div className="border border-amber-900/50 bg-amber-950/20 rounded-sm p-3">
