@@ -3,6 +3,7 @@ import "@/App.css";
 import AppShell from "@/components/layout/AppShell";
 import CampaignsList from "@/pages/CampaignsList";
 import ClientsPage from "@/pages/ClientsPage";
+import ReportsPage from "@/pages/ReportsPage";
 import CampaignForm from "@/pages/CampaignForm";
 import CampaignDetail from "@/pages/CampaignDetail";
 import SoilWaterCampaign from "@/pages/SoilWaterCampaign";
@@ -65,6 +66,7 @@ export default function App() {
             <Route path="/campaigns/:id/edit" element={<CampaignForm mode="edit" />} />
             <Route path="/campaigns/:id/upload" element={<UploadPage />} />
             <Route path="/clients" element={<ClientsPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
             <Route path="/limits" element={<LimitsPage />} />
             <Route path="/labs" element={<StationsPage />} />
             <Route path="/cover-photos" element={<CoverPhotosPage />} />
