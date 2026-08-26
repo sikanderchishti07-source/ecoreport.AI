@@ -7,7 +7,7 @@ import shutil
 import tempfile
 import uuid
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
@@ -193,6 +193,35 @@ def _require_window(campaign) -> None:
                     "and end dates on the campaign."))
 
 
+
+async def _set_reporting_date(campaign, campaign_id: str,
+                              reporting_date: Optional[str]) -> None:
+    """Record the issue date carried with this generation.
+
+    The reporting date is the date the document is issued, which is known at
+    the moment Generate is pressed and not before. Asked for on the campaign
+    form it was typed days early from memory, and could then disagree with
+    the report number — which encodes the same date. Both now come from here,
+    so a cover cannot contradict itself.
+
+    Saved to the campaign, so a reissue as a new revision carries its own
+    date and the document control table describes the version in hand.
+    """
+    if not reporting_date:
+        return
+    try:
+        when = datetime.fromisoformat(str(reporting_date).replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Reporting date {reporting_date!r} is not a valid date.")
+    if when.tzinfo is not None:
+        when = when.replace(tzinfo=None)
+    campaign.reporting_date = when
+    await db.campaigns.update_one({"id": campaign_id},
+                                  {"$set": {"reporting_date": when}})
+
+
 async def resolve_client_name(campaign) -> None:
     """Print the client's recorded legal name where the campaign is linked.
 
@@ -217,6 +246,7 @@ async def resolve_client_name(campaign) -> None:
 @router.post("/campaigns/{campaign_id}/report")
 async def create_report(campaign_id: str, lang: str = "en",
                         format: str = "docx",
+                        reporting_date: Optional[str] = None,
                         x_user: str = Depends(current_username),
                         user: dict = Depends(current_user)):
     if lang not in ("en", "ar", "bilingual"):
@@ -231,6 +261,9 @@ async def create_report(campaign_id: str, lang: str = "en",
     campaign = Campaign(**campaign_doc)
     await resolve_client_name(campaign)
     _require_window(campaign)
+    # Before the number is allocated: the number encodes this date, so
+    # setting it afterwards would produce a number for the wrong day.
+    await _set_reporting_date(campaign, campaign_id, reporting_date)
     # After resolution this is the recorded legal name where the campaign is
     # linked to a client, and the typed text where it is not, so the saved
     # file is named the same way the report itself is.
