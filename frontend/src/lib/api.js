@@ -142,9 +142,19 @@ export const generateReport = async (campaignId, lang = "en", format = "docx") =
     } catch {}
     return { downloaded: false, ...meta };
   }
+  // Content-Disposition is only readable here because the server lists it in
+  // expose_headers; a browser hides every other response header from
+  // JavaScript, which is why every report arrived under the fallback name
+  // however carefully the server had named it.
+  //
+  // Both forms are handled: the plain one, and the RFC 5987 form the server
+  // switches to when a filename contains non-ASCII characters.
   const dispo = res.headers["content-disposition"] || "";
-  const m = dispo.match(/filename="?([^";]+)"?/);
-  const filename = m ? m[1] : `AAQ_Report.${format}`;
+  const utf8 = dispo.match(/filename\*=(?:utf-8'')?([^;]+)/i);
+  const plain = dispo.match(/filename="?([^";]+)"?/i);
+  const filename = utf8
+    ? decodeURIComponent(utf8[1].trim().replace(/^"|"$/g, ""))
+    : (plain ? plain[1].trim() : `AAQ_Report.${format}`);
   const url = URL.createObjectURL(res.data);
   const a = document.createElement("a");
   a.href = url;
@@ -162,10 +172,15 @@ export const downloadReportVersion = async (reportId, filename) => {
   const res = await api.get(`/reports/${reportId}/download`, {
     responseType: "blob", timeout: 300000,
   });
+  // The server's own name wins. A caller passing one is usually handing over
+  // the stored filename, which is the unique internal form rather than the
+  // readable one the report should be saved under.
+  const dispo = res.headers?.["content-disposition"] || "";
+  const m = /filename\*?=(?:utf-8'')?"?([^";]+)/i.exec(dispo);
   const url = URL.createObjectURL(res.data);
   const a = document.createElement("a");
   a.href = url;
-  a.download = filename || "report";
+  a.download = m ? decodeURIComponent(m[1].trim()) : (filename || "report");
   a.click();
   URL.revokeObjectURL(url);
 };
