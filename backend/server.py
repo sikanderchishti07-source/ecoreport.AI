@@ -7,6 +7,13 @@ import os
 from fastapi import APIRouter, FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
+# Started before the routers are imported. An exception raised while a module
+# is loading is precisely the kind that leaves nothing behind, and reporting
+# has to already be running to catch it. Without a SENTRY_DSN this is a no-op.
+from sentry_setup import init_sentry, note_user
+
+init_sentry()
+
 from db import create_indexes, seed_pollutant_limits
 from auth import current_user
 from routes import auth_routes as auth_router
@@ -49,7 +56,21 @@ async def health() -> dict:
 from fastapi import Depends as _Depends
 
 api.include_router(auth_router.router)  # open: setup/login
-_protected = [_Depends(current_user)]
+
+
+async def _signed_in(user: dict = _Depends(current_user)) -> dict:
+    """Resolve the signed-in user and tag any error that follows with it.
+
+    Wrapped here rather than changing auth.py: the authentication itself is
+    unchanged, and every protected router already depends on it, so one
+    wrapper covers the whole application. A username only — enough to ask the
+    person what they were doing, and nothing more.
+    """
+    note_user(user.get("name"))
+    return user
+
+
+_protected = [_Depends(_signed_in)]
 api.include_router(campaigns_router.router, dependencies=_protected)
 api.include_router(clients_router.router, dependencies=_protected)
 api.include_router(readings_router.router, dependencies=_protected)
