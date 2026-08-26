@@ -269,6 +269,41 @@ def _prevailing_text(summary) -> str:
     return prevailing_label(counts) or "no single prevailing direction"
 
 
+
+# ---------------------------------------------------------------------------
+# The reporting entity
+#
+# The legal name printed in the footer used to be a constant, while the
+# trading name in the body came from the campaign. That was fine until the
+# company was renamed: every reissue of an older campaign would have carried
+# the old trading name in its text and the new legal name in its footer, in
+# the same document.
+#
+# The legal name is now derived from the trading name the campaign stored, so
+# a report reissued today prints throughout under the entity that issued it.
+# Anything unrecognised falls through to the current name, which is the right
+# default for a campaign created from now on.
+# ---------------------------------------------------------------------------
+CURRENT_LEGAL_NAME = "Biological System Analysis for Environmental Consultancy"
+
+PROVIDER_LEGAL_NAMES = {
+    "biological system analysis": CURRENT_LEGAL_NAME,
+    # Campaigns created before the change. Their reports were issued under
+    # this name and must reissue under it.
+    "bander said allehiany": ("Bander Said Allehiany for Environmental "
+                              "Consultancy"),
+}
+
+
+def provider_legal_name(provider: str) -> str:
+    """The legal name matching the trading name a campaign recorded."""
+    text = (provider or "").split("(")[0].strip().lower()
+    for key, legal in PROVIDER_LEGAL_NAMES.items():
+        if text.startswith(key):
+            return legal
+    return CURRENT_LEGAL_NAME
+
+
 def build_context(campaign: Campaign, summary: CampaignSummary,
                   lang: str = "en") -> Dict:
     D = DYN[lang]
@@ -517,7 +552,7 @@ def build_context(campaign: Campaign, summary: CampaignSummary,
         "provider": campaign.provider,
         "provider_short": campaign.provider.split("(")[-1].rstrip(")")
         if "(" in campaign.provider else campaign.provider,
-        "provider_legal_name": "Bander Said Allehiany for Environmental Consultancy",
+        "provider_legal_name": provider_legal_name(campaign.provider),
         "provider_tel": "00966114611939",
         "provider_fax": "00966114659739",
         "provider_address": "Riyadh 11351 – Kingdom of Saudi Arabia",
