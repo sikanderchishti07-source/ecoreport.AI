@@ -443,6 +443,11 @@ export const ingestResultsCoa = (campaignId, file, addParametersToScope = true) 
   }).then((r) => r.data);
 };
 
+// Set a campaign's monitoring window to the range of its stored readings.
+// What "use the file's dates" calls after an upload reported a disagreement.
+export const adoptDataWindow = (campaignId) =>
+  api.post(`/campaigns/${campaignId}/adopt-data-window`).then((r) => r.data);
+
 export const getSampleSummary = (campaignId) =>
   api.get(`/campaigns/${campaignId}/sample-summary`).then((r) => r.data);
 export const getSampleReadiness = (campaignId) =>
