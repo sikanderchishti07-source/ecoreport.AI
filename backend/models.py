@@ -104,6 +104,11 @@ class CampaignBase(BaseModel):
     campaign_type: str = "air"
     project_name: str
     client: str
+    # Optional link to a client record. Added beside the free text rather
+    # than replacing it, the way gas_units_map was added beside gas_units:
+    # every campaign in the archive predates this field, and a report must
+    # print the same name whether or not anyone has got round to linking it.
+    client_id: Optional[str] = None
     provider: str = "Bander Said Allehiany (BSA)"
     site_name: str
     latitude: float
@@ -184,6 +189,7 @@ class CampaignUpdate(BaseModel):
 
     project_name: Optional[str] = None
     client: Optional[str] = None
+    client_id: Optional[str] = None
     provider: Optional[str] = None
     site_name: Optional[str] = None
     latitude: Optional[float] = None
