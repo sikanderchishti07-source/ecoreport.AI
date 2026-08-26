@@ -80,6 +80,15 @@ app.add_middleware(
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
+    # A browser hides every response header from JavaScript except a short
+    # safe list, and Content-Disposition is not on it. Without this line the
+    # frontend read an empty header, failed to find a filename in it, and
+    # fell back to a hardcoded name — which is why every report arrived as
+    # AAQ_Report.docx however carefully the server had named it.
+    #
+    # `allow_headers` does not cover this: that governs what the browser may
+    # send, not what it may read back.
+    expose_headers=["Content-Disposition"],
 )
 
 
