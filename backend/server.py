@@ -7,10 +7,23 @@ import os
 from fastapi import APIRouter, FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
-# Started before the routers are imported. An exception raised while a module
-# is loading is precisely the kind that leaves nothing behind, and reporting
-# has to already be running to catch it. Without a SENTRY_DSN this is a no-op.
-from sentry_setup import init_sentry, note_user
+# Logging is configured here, ahead of everything else, for two reasons.
+#
+# Until basicConfig runs, Python's default level is WARNING, so anything
+# logged at INFO is discarded without trace. Sentry's own "reporting is on"
+# confirmation vanished exactly that way, while its failure warning came
+# through — which made a working configuration look like a broken one.
+#
+# And Sentry has to start before the application modules are imported: an
+# exception raised while a module is loading is precisely the kind that
+# leaves nothing behind, and reporting must already be running to catch it.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+log = logging.getLogger("ecoreport")
+
+from sentry_setup import init_sentry, note_user  # noqa: E402
 
 init_sentry()
 
@@ -30,12 +43,6 @@ from routes import portal as portal_router
 from routes import report as report_router
 from routes import review as review_router
 from routes import summary as summary_router
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-log = logging.getLogger("ecoreport")
 
 app = FastAPI(title="EcoReport AI", version="0.1.0")
 
