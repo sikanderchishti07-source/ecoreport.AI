@@ -708,7 +708,7 @@ export default function LoginPage() {
           </div>
 
           <p className="text-[11px] text-muted-foreground text-center mt-5 leading-relaxed">
-            Bander Said Allehiany for Environmental Consultancy
+            Biological System Analysis for Environmental Consultancy
             <br />
             <span className="opacity-75">KSA NCEC 2020 · v0.1.0</span>
           </p>
