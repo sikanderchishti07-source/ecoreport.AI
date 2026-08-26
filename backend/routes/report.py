@@ -174,6 +174,25 @@ async def report_page(report_id: str, page: int):
 
 
 
+
+def _require_window(campaign) -> None:
+    """Refuse to build a report against a campaign with no window.
+
+    The window is normally set by the first upload, so this is reached only
+    where a campaign was created and never given data, or where the operator
+    kept a window they had not yet filled in. Refusing here with a plain
+    sentence is better than the alternative: every calculation downstream
+    assumes two datetimes, and without them the failure is a TypeError deep
+    in the engine that says nothing about what to do.
+    """
+    if not campaign.monitoring_start or not campaign.monitoring_end:
+        raise HTTPException(
+            status_code=400,
+            detail=("This campaign has no monitoring window. Upload the data "
+                    "file and the window is read from it, or set the start "
+                    "and end dates on the campaign."))
+
+
 async def resolve_client_name(campaign) -> None:
     """Print the client's recorded legal name where the campaign is linked.
 
@@ -211,6 +230,7 @@ async def create_report(campaign_id: str, lang: str = "en",
         raise HTTPException(status_code=404, detail="Campaign not found")
     campaign = Campaign(**campaign_doc)
     await resolve_client_name(campaign)
+    _require_window(campaign)
     # After resolution this is the recorded legal name where the campaign is
     # linked to a client, and the typed text where it is not, so the saved
     # file is named the same way the report itself is.
@@ -463,6 +483,7 @@ async def preview_report(campaign_id: str):
         raise HTTPException(status_code=404, detail="Campaign not found")
     campaign = Campaign(**campaign_doc)
     await resolve_client_name(campaign)
+    _require_window(campaign)
     resolved_client = campaign.client
 
     if getattr(campaign, "campaign_type", "air") == "noise":
