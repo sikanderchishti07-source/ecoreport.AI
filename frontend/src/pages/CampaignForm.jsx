@@ -63,6 +63,35 @@ const CONSTRUCTION_BANDS = [
 // once. Echoing the dates in words was not enough. A warning that can be
 // scrolled past is a warning that gets scrolled past, so an impossible
 // window now stops the save and an unusual one has to be read first.
+
+/**
+ * A server error as a sentence.
+ *
+ * `detail` is a string for the errors this application raises itself, but a
+ * validation failure returns a list of objects instead — one per field.
+ * Passing that straight to a toast renders an object as a React child, which
+ * throws, and the whole page goes white. A form losing everything typed into
+ * it because a field was rejected is a worse outcome than the rejection.
+ */
+function describeError(err) {
+  const detail = err?.response?.data?.detail;
+  if (typeof detail === "string" && detail) return detail;
+  if (Array.isArray(detail) && detail.length) {
+    return detail
+      .map((d) => {
+        // loc is ["body", "monitoring_start"]; the field is the useful part.
+        const field = Array.isArray(d?.loc)
+          ? d.loc.filter((p) => p !== "body").join(" ")
+          : "";
+        const msg = d?.msg || "is not valid";
+        return field ? `${field}: ${msg}` : msg;
+      })
+      .slice(0, 3)
+      .join("; ");
+  }
+  return err?.message || "Save failed";
+}
+
 function checkWindow(startStr, endStr) {
   const a = startStr ? new Date(startStr) : null;
   const b = endStr ? new Date(endStr) : null;
@@ -413,8 +442,13 @@ export default function CampaignForm({ mode }) {
         // Naive local time. The analyser logs local Saudi time and the
         // report is read in local time. Converting to UTC here shifted the
         // window 3 h against the readings and cost 3 h of data capture.
-        monitoring_start: form.monitoring_start,
-        monitoring_end: form.monitoring_end,
+        //
+        // An untouched date input holds an empty string, and the server
+        // accepts null for an absent window but rejects "" as a malformed
+        // datetime. Left as it was, leaving the dates blank — the whole point
+        // of the change — failed validation with a 422.
+        monitoring_start: form.monitoring_start || null,
+        monitoring_end: form.monitoring_end || null,
         reporting_date: form.reporting_date
           ? new Date(form.reporting_date).toISOString()
           : null,
@@ -429,7 +463,7 @@ export default function CampaignForm({ mode }) {
         nav(`/campaigns/${created.id}`);
       }
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Save failed");
+      toast.error(describeError(err));
     } finally {
       setSaving(false);
     }
