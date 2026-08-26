@@ -85,8 +85,12 @@ def compliance_rows(summary, lang: str = "en") -> List[Dict]:
             status, verdict = "ok", ("مطابق" if ar else "COMPLIANT")
 
         r8 = _fmt(p.rolling_8h_max) if p.pollutant in ("CO", "O3") else "—"
-        daily = next((e.mean_value for e in periods
-                      if e.averaging_period == "24 Hour"), None)
+        # The period mean, matching the "Daily average" row of the summary
+        # tables. This took the 24-hour evaluation's mean, which is the mean
+        # of the calendar-day means: on a window running 13:00 to 13:00 that
+        # weights an eleven-hour day the same as a thirteen-hour one, and the
+        # matrix printed a different figure from the table it summarises.
+        daily = p.hourly_mean
         rows.append({
             "status": status,
             # Fill for the whole row, so an exceedance is shaded across the
@@ -97,7 +101,7 @@ def compliance_rows(summary, lang: str = "en") -> List[Dict]:
             "pollutant": DISPLAY.get(p.pollutant, p.pollutant),
             "hourly_max": _fmt(p.hourly_max),
             "rolling_8h": r8,
-            "daily_avg": _fmt(daily if daily is not None else p.hourly_mean),
+            "daily_avg": _fmt(daily),
             "limit": (f"{_fmt(governing.limit_ugm3, 0)} "
                       f"({governing.averaging_period.replace(' (rolling)', '')})"
                       if governing.limit_ugm3 else "—"),
