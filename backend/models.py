@@ -109,7 +109,12 @@ class CampaignBase(BaseModel):
     # every campaign in the archive predates this field, and a report must
     # print the same name whether or not anyone has got round to linking it.
     client_id: Optional[str] = None
-    provider: str = "Bander Said Allehiany (BSA)"
+    # The trading name as it prints in the report body. Stored on the
+    # campaign, not read from a constant, so a campaign issued under a
+    # previous company name reissues under that name rather than silently
+    # acquiring the current one. Only campaigns created from here carry the
+    # new default.
+    provider: str = "Biological System Analysis (BSA)"
     site_name: str
     latitude: float
     longitude: float
