@@ -112,13 +112,19 @@ export const listLimits = () => api.get("/limits").then((r) => r.data);
 
 
 // Reports (Phase 5/6)
-export const generateReport = async (campaignId, lang = "en", format = "docx") => {
+export const generateReport = async (campaignId, lang = "en", format = "docx",
+                                    reportingDate = null) => {
   let res;
   try {
     res = await api.post(
       `/campaigns/${campaignId}/report`,
       null,
-      { params: { lang, format }, responseType: "blob", timeout: 600000 }
+      { params: { lang, format,
+                  // The issue date, carried with the generation that issues
+                  // it. The report number encodes the same date, so both are
+                  // decided here and cannot disagree.
+                  ...(reportingDate ? { reporting_date: reportingDate } : {}) },
+        responseType: "blob", timeout: 600000 }
     );
   } catch (e) {
     // Error bodies arrive as Blobs in blob mode — decode so the real
