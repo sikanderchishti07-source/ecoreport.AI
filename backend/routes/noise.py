@@ -245,6 +245,40 @@ def _fix_date_rollovers(pairs: List[Tuple[datetime, float]]
     return fixed
 
 
+
+# A window set to the nearest hour is not a disagreement with a file that
+# started at 13:04.
+WINDOW_TOLERANCE = timedelta(minutes=90)
+
+
+def _naive(value):
+    """A stored datetime without its timezone, for comparison."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return value.replace(tzinfo=None) if value.tzinfo else value
+
+
+def _row_interval(docs) -> timedelta:
+    """How long one row covers, from the gap between the first two.
+
+    A noise survey is logged at whatever interval the meter was set to — one
+    second, one minute, fifteen minutes. Assuming an hour, as the air ingest
+    can, would push the end of an 86,000-row one-second survey an hour past
+    where it actually finished.
+    """
+    if len(docs) < 2:
+        return timedelta(0)
+    gap = _naive(docs[1]["timestamp"]) - _naive(docs[0]["timestamp"])
+    # A negative or absurd gap means the rows are not evenly spaced; adding
+    # nothing is safer than adding a guess.
+    return gap if timedelta(0) < gap <= timedelta(hours=1) else timedelta(0)
+
+
 @router.post("/campaigns/{campaign_id}/noise-readings",
              status_code=status.HTTP_201_CREATED)
 async def upload_noise_readings(campaign_id: str,
@@ -284,16 +318,56 @@ async def upload_noise_readings(campaign_id: str,
     if docs:
         await db.noise_readings.insert_many(docs)
 
+    # The monitoring window, taken from the file that defines it.
+    #
+    # The air ingest already does this; the noise ingest did not, so a noise
+    # campaign created without dates stayed at "not set" however many rows
+    # were uploaded, and every capture figure read as zero because there was
+    # no window to measure against.
+    #
+    # Three cases, and only one of them is a question. Where the campaign has
+    # no window the file's is taken. Where it has one that agrees, nothing
+    # happens. Where it has one that disagrees, nothing is changed and the
+    # operator is told: an attended survey often runs longer than the period
+    # being reported, and a window set deliberately must not be widened by
+    # the meter having been left running.
+    window_action = "none"
+    data_start = data_end = None
+    if docs:
+        data_start = docs[0]["timestamp"]
+        # The last row records the final interval, which is still part of the
+        # survey; the window closes at the end of it, not at its start.
+        data_end = docs[-1]["timestamp"] + _row_interval(docs)
+        current_start = doc.get("monitoring_start")
+        current_end = doc.get("monitoring_end")
+        if not current_start or not current_end:
+            window_action = "set"
+            await db.campaigns.update_one(
+                {"id": campaign_id},
+                {"$set": {"monitoring_start": data_start,
+                          "monitoring_end": data_end}})
+            log.info("campaign %s: monitoring window set from the noise file "
+                     "(%s to %s)", campaign_id, data_start, data_end)
+        else:
+            cs = _naive(current_start)
+            ce = _naive(current_end)
+            close = (cs is not None and ce is not None
+                     and abs(cs - _naive(data_start)) <= WINDOW_TOLERANCE
+                     and abs(ce - _naive(data_end)) <= WINDOW_TOLERANCE)
+            window_action = "matches" if close else "differs"
+
     await db.campaigns.update_one(
         {"id": campaign_id},
         {"$set": {"status": "ingested",
                   "updated_at": datetime.utcnow()}})
     await audit("noise.upload", "campaign", campaign_id, user,
                 {"rows": len(docs), "auto_flagged": flagged,
-                 "filename": file.filename})
+                 "filename": file.filename, "window_action": window_action})
     return {"rows": len(docs), "auto_flagged": flagged,
             "first": docs[0]["timestamp"] if docs else None,
-            "last": docs[-1]["timestamp"] if docs else None}
+            "last": docs[-1]["timestamp"] if docs else None,
+            "data_start": data_start, "data_end": data_end,
+            "window_action": window_action}
 
 
 @router.get("/campaigns/{campaign_id}/noise-readings")
