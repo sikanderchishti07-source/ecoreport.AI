@@ -398,6 +398,17 @@ async def noise_summary(campaign_id: str):
     if not readings:
         raise HTTPException(status_code=400,
                             detail="No noise readings uploaded")
+    # Every calculation below subtracts one datetime from another, so a
+    # campaign with no window produces a TypeError deep in the engine that
+    # says nothing about what to do. Since the window is now set by the
+    # upload, reaching here without one means the readings arrived before
+    # that existed — which the same upload will repair.
+    if not campaign.monitoring_start or not campaign.monitoring_end:
+        raise HTTPException(
+            status_code=400,
+            detail=("This campaign has no monitoring window. Upload the "
+                    "noise file again and the window is read from it, or "
+                    "set the start and end dates on the campaign."))
     s = build_noise_summary(readings, campaign.monitoring_start,
                             campaign.monitoring_end,
                             campaign.day_start_hour, campaign.day_end_hour)
