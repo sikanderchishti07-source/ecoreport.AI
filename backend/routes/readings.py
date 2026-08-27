@@ -670,11 +670,19 @@ async def adopt_data_window(campaign_id: str,
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
-    first = await db.readings.find({"campaign_id": campaign_id},
-                                   {"_id": 0, "timestamp": 1}) \
-        .sort("timestamp", 1).to_list(length=1)
-    last = await db.readings.find({"campaign_id": campaign_id},
-                                  {"_id": 0, "timestamp": 1}) \
+    # A noise campaign stores its intervals in a different collection, so the
+    # right one is chosen by the campaign's type. Reading only the analyser
+    # collection meant this could never fix a noise campaign, which is the
+    # case it was most needed for.
+    source = (db.noise_readings
+              if campaign.get("campaign_type") == "noise"
+              else db.readings)
+
+    first = await source.find({"campaign_id": campaign_id},
+                              {"_id": 0, "timestamp": 1}) \
+        .sort("timestamp", 1).to_list(length=2)
+    last = await source.find({"campaign_id": campaign_id},
+                             {"_id": 0, "timestamp": 1}) \
         .sort("timestamp", -1).to_list(length=1)
     if not first or not last:
         raise HTTPException(
@@ -682,7 +690,17 @@ async def adopt_data_window(campaign_id: str,
             detail="This campaign has no readings to take a window from.")
 
     start = first[0]["timestamp"]
-    end = last[0]["timestamp"] + timedelta(hours=1)
+    # The last row records the final interval, which is still part of the
+    # survey, so the window closes at the end of it. How long that interval
+    # is comes from the data: an analyser logs hourly, but a sound level
+    # meter logs at whatever rate it was set to, and assuming an hour would
+    # push a one-second survey an hour past where it actually finished.
+    step = timedelta(hours=1)
+    if len(first) > 1:
+        gap = first[1]["timestamp"] - first[0]["timestamp"]
+        if timedelta(0) < gap <= timedelta(hours=1):
+            step = gap
+    end = last[0]["timestamp"] + step
     await db.campaigns.update_one(
         {"id": campaign_id},
         {"$set": {"monitoring_start": start, "monitoring_end": end}})
