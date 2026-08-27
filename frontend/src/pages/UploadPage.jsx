@@ -83,6 +83,20 @@ export default function UploadPage() {
             (res.auto_flagged
               ? ` — ${res.auto_flagged} flagged outside the plausible range`
               : ""));
+          // The window decides which intervals a report is built from and
+          // what its capture figure is, so it is stated rather than left to
+          // be discovered on the campaign screen.
+          if (res.window_action === "set") {
+            toast.info(
+              `Monitoring window set from the file: `
+              + `${fmtWindow(res.data_start)} to ${fmtWindow(res.data_end)}`);
+          } else if (res.window_action === "differs") {
+            toast.warning(
+              `The window on this campaign does not match the file, which `
+              + `covers ${fmtWindow(res.data_start)} to `
+              + `${fmtWindow(res.data_end)}. Nothing was changed.`,
+              { duration: 12000 });
+          }
           nav(`/campaigns/${id}`);
         } else {
           toast.warning("No rows ingested — check the file's columns");
