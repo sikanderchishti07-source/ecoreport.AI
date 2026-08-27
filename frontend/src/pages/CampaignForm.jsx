@@ -449,14 +449,26 @@ export default function CampaignForm({ mode }) {
         // of the change — failed validation with a 422.
         monitoring_start: form.monitoring_start || null,
         monitoring_end: form.monitoring_end || null,
-        // Carried through so an existing value survives an edit, but never
-        // sent as null: the date is now set by the generator, and a campaign
-        // edited before its first report would otherwise clear a date that
-        // the next generation had already recorded.
-        ...(form.reporting_date
-          ? { reporting_date: new Date(form.reporting_date).toISOString() }
-          : {}),
+        // The issue date, set where the report is generated rather than here.
+        //
+        // `...form` above has already put the field into the payload, so a
+        // conditional spread that only adds it cannot help: the empty string
+        // the form starts with survives, and the server rejects "" as a
+        // malformed date. It is set explicitly to a real value or to
+        // undefined, and undefined keys are dropped before the request is
+        // sent — so an existing date survives an edit while a blank one is
+        // never transmitted at all.
+        reporting_date: form.reporting_date
+          ? new Date(form.reporting_date).toISOString()
+          : undefined,
       };
+      // Undefined keys are removed rather than trusted to disappear in
+      // serialisation: a blank optional field must not reach the server as
+      // null either, or an edit would clear a value the generator had set.
+      Object.keys(payload).forEach((k) => {
+        if (payload[k] === undefined) delete payload[k];
+      });
+
       if (mode === "edit") {
         const updated = await updateCampaign(id, payload);
         toast.success("Campaign updated");
